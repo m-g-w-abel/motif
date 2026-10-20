@@ -1,0 +1,5 @@
+// A layout arranges the widgets of the music area. Copy a built-in, change
+// it, and drop it onto the window to install it. See docs/LAYOUT.md.
+layout version=1 name=Tracks description="Album-grouped track list" icon=list
+
+tracklist style=grouped max-width=1200

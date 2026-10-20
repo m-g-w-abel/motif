@@ -1,0 +1,3 @@
+layout version=1 name=Gallery description="Album covers only" icon=grid
+
+album-grid card-size=170

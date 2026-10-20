@@ -1,0 +1,202 @@
+<script lang="ts">
+  import { getApp } from '../../context';
+  import { demoLibrary } from '../../demo';
+  import type { Source } from '../../layout/store.svelte';
+  import Icon, { type IconName } from '../Icon.svelte';
+  import SettingsMenu from './SettingsMenu.svelte';
+
+  const { engine, layout, drawer, settings } = getApp();
+  const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
+
+  const sources: { id: Source; label: string; icon: IconName; count: () => number }[] = [
+    { id: 'library', label: 'Library', icon: 'library', count: () => demoLibrary.length },
+  ];
+</script>
+
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+{#if drawer.open}<div class="scrim" onclick={() => drawer.close()}></div>{/if}
+
+<nav class="nav" class:open={drawer.open} class:collapsed={settings.current.navCollapsed} aria-label="Browse">
+  <div class="scroll">
+    <ul class="sources">
+      {#each sources as source (source.id)}
+        <li>
+          <button
+            class:active={layout.source === source.id}
+            aria-current={layout.source === source.id ? 'page' : undefined}
+            onclick={() => {
+              layout.browse(source.id);
+              drawer.close();
+            }}
+          >
+            <Icon name={source.icon} size={16} />
+            <span class="label">{source.label}</span>
+            <span class="count">{source.count()}</span>
+          </button>
+        </li>
+      {/each}
+    </ul>
+
+    <h2>Playlists</h2>
+    <p class="note">Saved playlists arrive with the library in phase 1.</p>
+  </div>
+
+  <!-- Pinned to the bottom of the screen. -->
+  <div class="footer">
+    <span class="connection {engine.status}" title={statusLabel[engine.status]} role="status">
+      <span class="dot"></span>{statusLabel[engine.status]}
+    </span>
+    <SettingsMenu />
+  </div>
+</nav>
+
+<style>
+  .nav {
+    display: flex;
+    flex-direction: column;
+    width: var(--nav-width);
+    height: 100%;
+    border-right: 1px solid var(--divider);
+    background: var(--surface);
+    flex: none;
+  }
+
+  .scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .sources {
+    margin: 0;
+    padding: var(--space-1) 0;
+    list-style: none;
+  }
+
+  .sources button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    height: 32px;
+    padding: 0 var(--space-3);
+    border: 0;
+    border-left: 2px solid transparent;
+    background: none;
+    color: var(--text-muted);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .sources button:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .sources button.active {
+    border-left-color: var(--accent);
+    background: var(--selected);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .label {
+    flex: 1;
+  }
+
+  .count {
+    font-size: 11px;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+
+  h2 {
+    margin: var(--space-3) var(--space-3) var(--space-1);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .note {
+    margin: 0 var(--space-3);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    height: 40px;
+    padding: 0 var(--space-2) 0 var(--space-3);
+    border-top: 1px solid var(--border);
+    flex: none;
+  }
+
+  .connection {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+  }
+
+  .connection.open .dot {
+    background: var(--ok);
+  }
+
+  .connection.closed .dot {
+    background: var(--danger);
+  }
+
+  /* Desktop: folded away with the toolbar's menu button (or Ctrl+B). */
+  .nav.collapsed {
+    display: none;
+  }
+
+  .scrim {
+    display: none;
+  }
+
+  /* Phones: an off-screen drawer instead of a column. */
+  @media (max-width: 700px) {
+    .nav,
+    .nav.collapsed {
+      display: flex;
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 46;
+      width: min(280px, 85vw);
+      padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+      box-shadow: var(--shadow);
+      transform: translateX(-100%);
+      transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      touch-action: pan-y;
+    }
+
+    .nav.open {
+      transform: none;
+    }
+
+    .scrim {
+      display: block;
+      position: fixed;
+      inset: 0;
+      z-index: 46;
+      background: rgb(0 0 0 / 0.45);
+    }
+  }
+</style>

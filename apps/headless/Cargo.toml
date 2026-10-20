@@ -1,0 +1,21 @@
+[package]
+name = "headless"
+description = "Engine daemon without a window, for servers and web-only use"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "music-app-headless"
+path = "src/main.rs"
+
+[dependencies]
+engine.workspace = true
+server.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

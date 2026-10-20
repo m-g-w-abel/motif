@@ -1,0 +1,18 @@
+{
+  "name": "music-app",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "workspaces": [
+    "apps/ui"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w apps/ui",
+    "build": "npm run build -w apps/ui",
+    "check": "npm run check -w apps/ui",
+    "tauri": "tauri",
+    "test": "npm test -w apps/ui"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.1"
+  }
+}

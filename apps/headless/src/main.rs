@@ -1,0 +1,46 @@
+//! Runs the engine and server without a window.
+//!
+//! Environment:
+//! - `MUSIC_APP_ADDR`: listen address, default `127.0.0.1:7700`
+//! - `MUSIC_APP_UI_DIR`: built web UI to serve, default `apps/ui/dist` if present
+
+use std::{net::SocketAddr, path::PathBuf};
+
+use engine::Engine;
+use tracing_subscriber::EnvFilter;
+
+const DEFAULT_ADDR: &str = "127.0.0.1:7700";
+const DEFAULT_UI_DIR: &str = "apps/ui/dist";
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .init();
+
+    let addr: SocketAddr = std::env::var("MUSIC_APP_ADDR")
+        .unwrap_or_else(|_| DEFAULT_ADDR.into())
+        .parse()?;
+    if !addr.ip().is_loopback() {
+        tracing::warn!(%addr, "no authentication yet: anyone who can reach this address can control playback");
+    }
+    let ui_dir = std::env::var_os("MUSIC_APP_UI_DIR")
+        .map(PathBuf::from)
+        .or_else(|| Some(PathBuf::from(DEFAULT_UI_DIR)).filter(|p| p.is_dir()));
+
+    let config = server::Config {
+        addr,
+        ui_dir: ui_dir.clone(),
+    };
+    let (addr, serve) = server::bind(Engine::spawn(), config).await?;
+    match ui_dir {
+        Some(dir) => tracing::info!("serving {} at http://{addr}", dir.display()),
+        None => tracing::info!("listening on ws://{addr}/ws (no web UI found)"),
+    }
+
+    tokio::select! {
+        result = serve => result?,
+        _ = tokio::signal::ctrl_c() => tracing::info!("shutting down"),
+    }
+    Ok(())
+}

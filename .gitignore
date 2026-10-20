@@ -1,0 +1,6 @@
+/target
+node_modules/
+/apps/ui/dist
+/apps/desktop/gen/schemas
+.DS_Store
+*.log

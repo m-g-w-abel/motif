@@ -1,0 +1,6 @@
+layout version=1 name="Tracks + gallery" description="Track list beside a cover gallery" icon=split
+
+split row {
+    tracklist style=grouped size="38%"
+    album-grid card-size=190
+}

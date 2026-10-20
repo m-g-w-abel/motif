@@ -1,0 +1,11 @@
+layout version=1 name=Details description="Columns, artwork and a full metadata table" icon=columns
+
+split row {
+    tracklist {
+        columns index title artist album format duration
+    }
+    split column size=300 {
+        artwork
+        track-info style=table
+    }
+}

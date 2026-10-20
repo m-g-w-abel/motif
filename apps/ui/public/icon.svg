@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Monochrome mark: a disc whose ring breaks like a progress arc. -->
+  <rect width="512" height="512" rx="96" fill="#111113"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#f4f4f5" stroke-width="40"
+          stroke-dasharray="820 122.5" transform="rotate(-21.5 256 256)"/>
+  <circle cx="256" cy="256" r="46" fill="#f4f4f5"/>
+</svg>
