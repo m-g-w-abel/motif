@@ -1,10 +1,10 @@
-# Music App
+# Motif
 
 A music player for collectors and audio enthusiasts: plays anything, looks
 great, runs on desktop and Android, can be controlled remotely, and needs no
 central server. See [docs/PLAN.md](docs/PLAN.md) for the architecture and roadmap.
 
-> Working title. Phase 0 (foundations) — there is no audio output yet.
+> Phase 0 (foundations): there is no audio output yet.
 
 ## Layout
 

@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "music-app-headless"
+name = "motif-headless"
 path = "src/main.rs"
 
 [dependencies]

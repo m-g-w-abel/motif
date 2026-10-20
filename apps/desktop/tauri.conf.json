@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Music App",
-  "mainBinaryName": "music-app",
+  "productName": "Motif",
+  "mainBinaryName": "motif",
   "version": "0.1.0",
-  "identifier": "app.musicapp.player",
+  "identifier": "io.github.mgwabel.motif",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
   "app": {
     "windows": [
       {
-        "title": "Music App",
+        "title": "Motif",
         "width": 1200,
         "height": 800,
         "minWidth": 360,

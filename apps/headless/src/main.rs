@@ -1,8 +1,8 @@
 //! Runs the engine and server without a window.
 //!
 //! Environment:
-//! - `MUSIC_APP_ADDR`: listen address, default `127.0.0.1:7700`
-//! - `MUSIC_APP_UI_DIR`: built web UI to serve, default `apps/ui/dist` if present
+//! - `MOTIF_ADDR`: listen address, default `127.0.0.1:7700`
+//! - `MOTIF_UI_DIR`: built web UI to serve, default `apps/ui/dist` if present
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -18,13 +18,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
-    let addr: SocketAddr = std::env::var("MUSIC_APP_ADDR")
+    let addr: SocketAddr = std::env::var("MOTIF_ADDR")
         .unwrap_or_else(|_| DEFAULT_ADDR.into())
         .parse()?;
     if !addr.ip().is_loopback() {
         tracing::warn!(%addr, "no authentication yet: anyone who can reach this address can control playback");
     }
-    let ui_dir = std::env::var_os("MUSIC_APP_UI_DIR")
+    let ui_dir = std::env::var_os("MOTIF_UI_DIR")
         .map(PathBuf::from)
         .or_else(|| Some(PathBuf::from(DEFAULT_UI_DIR)).filter(|p| p.is_dir()));
 
