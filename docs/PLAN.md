@@ -102,6 +102,14 @@ code. Guests join from the app or from a browser; browser guests connect
 directly on LAN or through the relay, since iroh runs in WASM.
 - *Jam:* one shared queue with permissions (add / vote / skip / host approval).
   Audio plays on the host.
+- *Search:* guests find songs without leaving Motif. The jam page searches
+  everything the **host** can play: its local library plus its catalog
+  sources (YouTube Music, and Spotify if the host has signed in through a
+  Spotify source plugin). Results show where each track would play from.
+  This needs no guest account and works for browser guests. Guests' own
+  streaming libraries (e.g. their Spotify playlists) are deliberately not
+  supported: Spotify's official API caps third-party apps at five users, and
+  the alternatives break its terms.
 - *Listen-along:* every guest plays audio locally. The host broadcasts
   `(track, position, wall-clock)` and clocks align with an NTP-style offset
   estimate. Guests get audio either as an Opus stream from the host (local
@@ -118,6 +126,15 @@ every device merge into one queue.
 sidecar, on Android via rustypipe or by asking a paired desktop to resolve
 streams. The same plugin interface covers SoundCloud, Bandcamp purchases,
 internet radio and Subsonic/Jellyfin servers.
+
+Queue items are source-independent track references (source IDs plus title,
+artist, album, duration and ISRC), resolved to something playable by the
+device that plays them: a local copy first (collectors prefer their own
+files), then the original source, then a match on another source. A track
+nothing can play is reported, not silently dropped. This keeps jam and
+listen-along working when devices have different sources available. Design
+the reference format during phase 1 so the queue doesn't need reworking
+when sources arrive.
 
 **Soulseek acquisition.** Automatically finds and downloads music from
 Soulseek into the main library. This is permanent *acquisition* and is
