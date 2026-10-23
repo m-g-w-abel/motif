@@ -6,7 +6,7 @@ import type { ServerMessage } from './protocol/ServerMessage';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const MAX_BACKOFF_MS = 5000;
 
 /** Where the engine lives: the embedded one under Tauri, else the page's host. */
@@ -25,13 +25,15 @@ async function engineUrl(): Promise<string> {
 export class EngineClient {
   status = $state<ConnectionStatus>('connecting');
   player = $state<PlayerState | null>(null);
+  /** Raw (not deeply reactive): it can hold thousands of tracks and is only ever replaced. */
+  queue = $state.raw<QueueItem[]>([]);
   /** `performance.now()` when `player` arrived, for position extrapolation. */
   receivedAt = $state(0);
   error = $state<string | null>(null);
 
   /** The queue entry that is playing or paused, if any. */
   current: QueueItem | null = $derived(
-    this.player && this.player.current !== null ? this.player.queue[this.player.current] : null,
+    this.player && this.player.current !== null ? (this.queue[this.player.current] ?? null) : null,
   );
 
   #socket: WebSocket | null = null;
@@ -117,6 +119,8 @@ export class EngineClient {
         if (message.event.type === 'state') {
           this.player = message.event.state;
           this.receivedAt = performance.now();
+        } else {
+          this.queue = message.event.items;
         }
         break;
     }

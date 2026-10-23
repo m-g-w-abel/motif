@@ -58,6 +58,8 @@ Windows and macOS.
 - Dev builds read URL parameters to set up a state without clicking, e.g.
   `?dev-layout=builtin:details.kdl&dev-theme=paper&dev-play=5&dev-sheet=1`
   (also `dev-drawer`, `dev-player=floating`). See `App.svelte`.
+  `?dev-stress&dev-library=50000` runs the webview stress test (results in
+  `docs/PLAN.md`).
 - Avoid native `<input type="range">` (renders differently in WebKit); use
   `components/Slider.svelte`.
 - Vite injects component CSS from JS in dev (`emitCss` only for builds)

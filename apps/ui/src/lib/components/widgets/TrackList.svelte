@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
-  import { albumKey, groupConsecutive } from '../../albums';
+  import { albumKey, groupConsecutive, type Album } from '../../albums';
   import { getApp, getViewState } from '../../context';
   import { formatTime, trackFormat, trackTitle } from '../../format';
   import type { Column, TracklistStyle } from '../../layout/model';
   import { trackListData, type ListSource } from '../../sources.svelte';
+  import { DEFAULT_WIDTHS, fitColumns, flexReserve, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
 
   let {
@@ -21,11 +23,12 @@
     maxWidth?: number;
   } = $props();
 
-  const { engine } = getApp();
+  const { engine, settings } = getApp();
   const view = getViewState();
 
   const data = $derived(trackListData(engine, source ?? view.source));
   const groups = $derived(style === 'grouped' ? groupConsecutive(data.tracks) : null);
+  const currentIndex = $derived(data.currentIndex);
 
   // Phones drop secondary columns rather than squeezing everything.
   const narrow = new MediaQuery('(max-width: 700px)');
@@ -45,15 +48,6 @@
     duration: 'Time',
   };
 
-  const defaultWidths: Record<Column, number> = {
-    index: 44,
-    title: 300,
-    artist: 190,
-    album: 210,
-    format: 72,
-    duration: 64,
-  };
-
   // Column widths are a per-device preference, remembered per view and list.
   const widthsKey = $derived(`columns.${view.layoutId}.${style}.${columns.join(',')}`);
   let widths = $state<Partial<Record<Column, number>>>({});
@@ -65,27 +59,10 @@
     }
   });
 
-  /**
-   * Widths actually applied. In a narrow panel the flexible column keeps at
-   * least a quarter of the space: wide columns shrink proportionally (number, format and
-   * time columns are small and keep their size).
-   */
+  /** Widths actually applied: narrow panels shrink columns to fit. */
   let tableWidth = $state(0);
-  /** The least room the flexible column is given. */
-  const flexReserve = $derived(Math.max(100, tableWidth * 0.25));
-  const applied = $derived.by(() => {
-    const requested = (c: Column) => widths[c] ?? defaultWidths[c];
-    const fixed = shown.filter((c) => c !== flexColumn);
-    const compact = new Set<Column>(['index', 'format', 'duration']);
-    const reserved = flexReserve + (data.remove ? 28 : 0);
-    const compactSum = fixed.filter((c) => compact.has(c)).reduce((n, c) => n + requested(c), 0);
-    const wideSum = fixed.filter((c) => !compact.has(c)).reduce((n, c) => n + requested(c), 0);
-    const room = tableWidth - reserved - compactSum;
-    const scale = tableWidth && wideSum > room ? Math.max(0.3, room / wideSum) : 1;
-    return Object.fromEntries(
-      fixed.map((c) => [c, Math.round(compact.has(c) ? requested(c) : requested(c) * scale)]),
-    ) as Partial<Record<Column, number>>;
-  });
+  const reserve = $derived(flexReserve(tableWidth));
+  const applied = $derived(fitColumns(widths, shown, flexColumn, tableWidth, reserve + (data.remove ? 28 : 0)));
 
   function saveWidths() {
     try {
@@ -110,13 +87,13 @@
     // Start from what's on screen: if columns were shrunk to fit, adopting
     // those widths makes the boundary track the pointer exactly.
     widths = { ...widths, ...applied };
-    const startLeft = widths[left] ?? defaultWidths[left];
-    const startRight = widths[right] ?? defaultWidths[right];
+    const startLeft = widths[left] ?? DEFAULT_WIDTHS[left];
+    const startRight = widths[right] ?? DEFAULT_WIDTHS[right];
     const min = 36;
     // How far the boundary may move without squashing a fixed neighbour.
     // The flexible column can give up space only down to its reserve.
     const flexCell = handle.closest('tr')?.querySelector<HTMLElement>(`th.${flexColumn}`);
-    const flexRoom = Math.max(0, (flexCell?.offsetWidth ?? 0) - flexReserve);
+    const flexRoom = Math.max(0, (flexCell?.offsetWidth ?? 0) - reserve);
     const lo = left === flexColumn ? -flexRoom : min - startLeft;
     const hi = right === flexColumn ? flexRoom : startRight - min;
     handle.setPointerCapture(e.pointerId);
@@ -148,30 +125,75 @@
   const select = (key: string) => (view.browse.selected = key);
   let scroller = $state<HTMLElement>();
 
-  /** In grouped lists, the index of each track's album header row. */
-  const groupStart = $derived.by(() => {
-    const starts = new Map<number, number>();
-    for (const g of groups ?? []) for (const i of g.indices) starts.set(i, g.indices[0]);
-    return starts;
+  /** In grouped lists, the album each track belongs to. */
+  const groupOf = $derived.by(() => {
+    const of = new Map<number, Album>();
+    for (const g of groups ?? []) for (const i of g.indices) of.set(i, g);
+    return of;
   });
 
-  // An album picked in an album grid scrolls this list to it.
+  // Only the rows in view are in the DOM, so long libraries stay fast. Row
+  // heights come from the CSS (density) and are measured once rendered.
+  type Row = { group: Album } | { index: number };
+  let rowHeight = $state(26);
+  let groupHeight = $state(32);
+  let scrollTop = $state(0);
+  let viewHeight = $state(0);
+  let tbody = $state<HTMLElement>();
+  const rows = $derived.by(() => {
+    const list: Row[] = [];
+    const tops: number[] = [];
+    let y = 0;
+    for (let index = 0; index < data.tracks.length; index++) {
+      const group = groupOf.get(index);
+      if (group?.indices[0] === index) {
+        list.push({ group });
+        tops.push(y);
+        y += groupHeight;
+      }
+      list.push({ index });
+      tops.push(y);
+      y += rowHeight;
+    }
+    return { list, tops, height: y };
+  });
+  const OVERSCAN = 400;
+  const range = $derived(visibleRange(rows.tops, scrollTop - OVERSCAN, scrollTop + viewHeight + OVERSCAN));
+  const visible = $derived(rows.list.slice(range[0], range[1]));
+  const padTop = $derived(rows.tops[range[0]] ?? 0);
+  const padBottom = $derived(rows.height - (rows.tops[range[1]] ?? rows.height));
+  const rowKey = (row: Row) => ('group' in row ? `\0group${row.group.indices[0]}` : data.keys[row.index]);
+
+  $effect(() => {
+    void visible;
+    void settings.current.density;
+    // After the frame, once the density's CSS has applied everywhere.
+    const frame = requestAnimationFrame(() => {
+      const track = tbody?.querySelector<HTMLElement>('tr.track');
+      const group = tbody?.querySelector<HTMLElement>('tr.group');
+      if (track) rowHeight = track.offsetHeight;
+      if (group) groupHeight = group.offsetHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+
+  // An album picked in an album grid scrolls this list to it. Only the focus
+  // triggers this; list updates (e.g. a track change) must not move the user.
   $effect(() => {
     const key = view.browse.focusAlbum;
     if (!key || !scroller) return;
-    const index = data.tracks.findIndex((t) => albumKey(t) === key);
-    if (index < 0) return;
-    const row = scroller.querySelector<HTMLElement>(`[data-index="${index}"]`);
-    const target = (style === 'grouped' ? row?.previousElementSibling : row) as HTMLElement | null;
-    if (target) {
+    untrack(() => {
+      const index = data.tracks.findIndex((t) => albumKey(t) === key);
+      if (index < 0 || !scroller) return;
+      // Grouped lists scroll to the album header just above its first track.
+      const at = rows.list.findIndex((row) => 'index' in row && row.index === index);
+      const target = style === 'grouped' ? at - 1 : at;
       // Scroll this list only; scrollIntoView would also scroll every
       // scrollable ancestor, moving the whole window.
-      const header = scroller.querySelector('thead')?.offsetHeight ?? 0;
-      const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
       const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-      scroller.scrollTo({ top: top - header, behavior: reduceMotion ? 'auto' : 'smooth' });
-    }
-    view.browse.selected = data.keys[index];
+      scroller.scrollTo({ top: rows.tops[target], behavior: reduceMotion ? 'auto' : 'smooth' });
+      view.browse.selected = data.keys[index];
+    });
   });
 
   function cell(column: Column, index: number): string {
@@ -179,7 +201,7 @@
     switch (column) {
       case 'index':
         // Grouped lists number tracks within each album.
-        return String(index - (groups ? (groupStart.get(index) ?? 0) : 0) + 1);
+        return String(index - (groupOf.get(index)?.indices[0] ?? 0) + 1);
       case 'title':
         return trackTitle(t);
       case 'artist':
@@ -208,7 +230,13 @@
       <p class="hint">Double-click a track in the library to play it.</p>
     </div>
   {:else}
-    <div class="scroll" bind:this={scroller} bind:clientWidth={tableWidth}>
+    <div
+      class="scroll"
+      bind:this={scroller}
+      bind:clientWidth={tableWidth}
+      bind:clientHeight={viewHeight}
+      onscroll={() => (scrollTop = scroller?.scrollTop ?? 0)}
+    >
       <table aria-label={data.title} style:max-width="var(--max-width, none)">
         <colgroup>
           {#each shown as column (column)}
@@ -237,54 +265,61 @@
             </tr>
           </thead>
         {/if}
-        <tbody>
-          {#each data.tracks as track, i (data.keys[i])}
-            {#if groups && groupStart.get(i) === i}
-              {@const group = groups.find((g) => g.indices[0] === i)}
-              {#if group}
-                <tr class="group">
-                  <td colspan={columnCount}>
-                    <span class="group-title">{group.artist} – {group.title}</span>
-                    <span class="group-length">[{formatTime(group.durationMs)}]</span>
+        <tbody bind:this={tbody}>
+          {#if padTop}
+            <tr class="spacer" aria-hidden="true"><td colspan={columnCount} style:height="{padTop}px"></td></tr>
+          {/if}
+          {#each visible as row (rowKey(row))}
+            {#if 'group' in row}
+              <tr class="group">
+                <td colspan={columnCount}>
+                  <span class="group-title">{row.group.artist} – {row.group.title}</span>
+                  <span class="group-length">[{formatTime(row.group.durationMs)}]</span>
+                </td>
+              </tr>
+            {:else}
+              {@const i = row.index}
+              {@const track = data.tracks[i]}
+              <tr
+                class="track"
+                class:alt={i % 2 === 1}
+                class:current={i === currentIndex}
+                class:selected={selected === data.keys[i]}
+                tabindex="0"
+                aria-selected={selected === data.keys[i]}
+                onclick={() => select(data.keys[i])}
+                ondblclick={() => data.play(i)}
+                onkeydown={(e) => onKey(e, i)}
+              >
+                {#each shown as column (column)}
+                  <td class={column}>
+                    {#if column === 'index' && i === currentIndex}
+                      <Icon name={engine.player?.status === 'playing' ? 'play' : 'pause'} size={10} />
+                    {:else}
+                      {cell(column, i)}
+                    {/if}
                   </td>
-                </tr>
-              {/if}
+                {/each}
+                {#if data.remove}
+                  <td class="remove-cell">
+                    <button
+                      class="remove"
+                      aria-label="Remove {trackTitle(track)}"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        data.remove?.(i);
+                      }}
+                    >
+                      <Icon name="close" size={12} />
+                    </button>
+                  </td>
+                {/if}
+              </tr>
             {/if}
-            <tr
-              data-index={i}
-              class:current={i === data.currentIndex}
-              class:selected={selected === data.keys[i]}
-              tabindex="0"
-              aria-selected={selected === data.keys[i]}
-              onclick={() => select(data.keys[i])}
-              ondblclick={() => data.play(i)}
-              onkeydown={(e) => onKey(e, i)}
-            >
-              {#each shown as column (column)}
-                <td class={column}>
-                  {#if column === 'index' && i === data.currentIndex}
-                    <Icon name={engine.player?.status === 'playing' ? 'play' : 'pause'} size={10} />
-                  {:else}
-                    {cell(column, i)}
-                  {/if}
-                </td>
-              {/each}
-              {#if data.remove}
-                <td class="remove-cell">
-                  <button
-                    class="remove"
-                    aria-label="Remove {trackTitle(track)}"
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      data.remove?.(i);
-                    }}
-                  >
-                    <Icon name="close" size={12} />
-                  </button>
-                </td>
-              {/if}
-            </tr>
           {/each}
+          {#if padBottom}
+            <tr class="spacer" aria-hidden="true"><td colspan={columnCount} style:height="{padBottom}px"></td></tr>
+          {/if}
         </tbody>
       </table>
     </div>
@@ -362,11 +397,11 @@
     border-right-color: var(--accent);
   }
 
-  .table tbody tr:nth-child(even) {
+  .table tbody tr.alt {
     background: color-mix(in srgb, var(--surface) 45%, transparent);
   }
 
-  tbody tr:not(.group):hover {
+  tbody tr.track:hover {
     background: var(--hover);
   }
 
@@ -428,7 +463,8 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .remove-cell {
+  .remove-cell,
+  .spacer td {
     padding: 0;
   }
 

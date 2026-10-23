@@ -1,5 +1,3 @@
-import type { Corner } from './corner';
-
 /**
  * Appearance and player preferences. Client-side and per device; layouts
  * don't touch these.
@@ -11,7 +9,6 @@ export interface Settings {
   density: 'compact' | 'comfortable';
   /** The always-visible player: a bar along the bottom, or a floating widget. */
   player: 'bar' | 'floating';
-  floatingCorner: Corner;
   /** Desktop: the left panel folded away. */
   navCollapsed: boolean;
 }
@@ -21,7 +18,6 @@ export const DEFAULT_SETTINGS: Settings = {
   accent: '#e8a33d',
   density: 'compact',
   player: 'bar',
-  floatingCorner: 'bottom-right',
   navCollapsed: false,
 };
 

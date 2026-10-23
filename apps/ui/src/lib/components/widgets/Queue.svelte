@@ -8,7 +8,7 @@
   let { collapsible = false }: { collapsible?: boolean } = $props();
 
   const { engine } = getApp();
-  const queue = $derived(engine.player?.queue ?? []);
+  const queue = $derived(engine.queue);
   const remainingMs = $derived(
     queue.slice((engine.player?.current ?? -1) + 1).reduce((n, item) => n + (item.track.duration_ms ?? 0), 0),
   );

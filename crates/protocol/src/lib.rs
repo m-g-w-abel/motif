@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Bumped on any incompatible change to the types below.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// A message sent from a client to the engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -82,7 +82,14 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum Event {
-    State { state: PlayerState },
+    State {
+        state: PlayerState,
+    },
+    /// The whole queue, sent only when it changes (it can hold thousands of
+    /// tracks) and always before the [`Event::State`] that refers to it.
+    Queue {
+        items: Vec<QueueItem>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -105,7 +112,7 @@ pub enum RepeatMode {
     One,
 }
 
-/// Snapshot of everything a client needs to render the player.
+/// Snapshot of the transport. The queue comes separately in [`Event::Queue`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PlayerState {
@@ -119,9 +126,8 @@ pub struct PlayerState {
     /// can extrapolate the position without polling.
     #[ts(type = "number")]
     pub sampled_at_ms: u64,
-    /// Index into `queue` of the current track.
+    /// Index into the queue of the current track.
     pub current: Option<u32>,
-    pub queue: Vec<QueueItem>,
 }
 
 impl Default for PlayerState {
@@ -133,7 +139,6 @@ impl Default for PlayerState {
             position_ms: 0,
             sampled_at_ms: 0,
             current: None,
-            queue: Vec::new(),
         }
     }
 }

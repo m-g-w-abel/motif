@@ -31,7 +31,7 @@ const albums: { artist: string; album: string; ext: string; tracks: [string, num
   },
 ];
 
-export const demoLibrary: TrackInfo[] = albums.flatMap(({ artist, album, ext, tracks }) =>
+const baseLibrary: TrackInfo[] = albums.flatMap(({ artist, album, ext, tracks }) =>
   tracks.map(([title, seconds], i) => ({
     uri: `file:///demo/${encodeURIComponent(album)}/${String(i + 1).padStart(2, '0')}.${ext}`,
     title,
@@ -40,3 +40,17 @@ export const demoLibrary: TrackInfo[] = albums.flatMap(({ artist, album, ext, tr
     duration_ms: seconds * 1000,
   })),
 );
+
+// Development only: ?dev-library=50000 repeats the albums to stress-test long lists.
+const devSize =
+  import.meta.env.DEV && typeof location !== 'undefined'
+    ? Number(new URLSearchParams(location.search).get('dev-library'))
+    : 0;
+
+export const demoLibrary: TrackInfo[] = devSize
+  ? Array.from({ length: devSize }, (_, i) => {
+      const track = baseLibrary[i % baseLibrary.length];
+      const copy = Math.floor(i / baseLibrary.length);
+      return copy ? { ...track, uri: `${track.uri}?copy=${copy}`, album: `${track.album} ${copy + 1}` } : track;
+    })
+  : baseLibrary;

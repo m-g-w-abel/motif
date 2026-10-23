@@ -219,4 +219,27 @@ be saved back to the file or a sidecar.
 - [x] Tauri desktop shell embedding engine + server
 - [x] CI (fmt, clippy, tests, binding freshness, UI check/build)
 - [x] Music-area layouts (KDL) with built-in presets and drag-and-drop install; widgets: track list (table/grouped, resizable columns), album grid, artwork, track info, queue; settings (theme, accent, density, bar/floating player); expanding now-playing sheet
+- [x] Webview stress test on WebKitGTK (results below)
 - [ ] Android background-audio spike (needs Android SDK/NDK)
+
+### Webview stress test (2026-10-23)
+
+`?dev-stress&dev-library=50000` scrolls the track list every frame under a
+panel with `backdrop-filter` blur, a blurred artwork layer and a 64-bar canvas
+visualiser, and shows the frame rate. WebKitGTK 2.52.6, X11, RTX 3060, 1280×800:
+
+| Music area | fps | Worst frame |
+|---|---|---|
+| Grouped track list, 50k tracks (windowed) | 67 | 17 ms |
+| Album grid, 18 tracks (one row of cards) | 62 | 18 ms |
+| Album grid, 50k tracks (11k albums, windowed) | 37–40 | 31–37 ms |
+| Track list + album grid, 50k tracks | 23 | 49 ms |
+
+Windowing the album grid took the last two from 20 and 13 fps. What's left is
+paint cost: turning off either blur, or giving the panel its own compositing
+layer, changed little, and WebKit drew no compositing borders, so it is
+probably painting the large gradient cards under the panel in software.
+Conclusion: the design holds on WebKitGTK as long as animated, blurred
+surfaces don't sit over busy, art-heavy areas. The visualiser belongs in the
+now-playing sheet. Revisit with real artwork in phase 2. Android is untested
+until it has a build.

@@ -13,12 +13,45 @@
   const data = $derived(trackListData(engine, view.source));
   const albums = $derived(distinctAlbums(data.tracks));
   const playingKey = $derived(engine.current ? albumKey(engine.current.track) : null);
+
+  // Only the rows of cards in view are in the DOM. Columns follow the CSS
+  // grid's auto-fill rule; the card height is measured once rendered.
+  const GAP = 16;
+  let width = $state(0);
+  let viewHeight = $state(0);
+  let scrollTop = $state(0);
+  let cardHeight = $state(0);
+  let list = $state<HTMLElement>();
+  // `width` includes the 16px side padding.
+  const columns = $derived(Math.max(1, Math.floor((width - 2 * GAP + GAP) / (cardSize + GAP))));
+  const rowHeight = $derived((cardHeight || cardSize + 48) + GAP);
+  const rowCount = $derived(Math.ceil(albums.length / columns));
+  const firstRow = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - 1));
+  const lastRow = $derived(Math.min(rowCount, Math.ceil((scrollTop + viewHeight) / rowHeight) + 1));
+  const visible = $derived(albums.slice(firstRow * columns, lastRow * columns));
+
+  $effect(() => {
+    void visible;
+    void width;
+    const frame = requestAnimationFrame(() => (cardHeight = list?.querySelector('li')?.offsetHeight ?? 0));
+    return () => cancelAnimationFrame(frame);
+  });
 </script>
 
 <section class="album-grid">
-  <div class="scroll">
-    <ul style:--card="{cardSize}px">
-      {#each albums as album (album.key)}
+  <div
+    class="scroll"
+    bind:clientHeight={viewHeight}
+    onscroll={(e) => (scrollTop = (e.currentTarget as HTMLElement).scrollTop)}
+  >
+    <ul
+      bind:this={list}
+      bind:clientWidth={width}
+      style:--card="{cardSize}px"
+      style:padding-top="{GAP + firstRow * rowHeight}px"
+      style:padding-bottom="{GAP + (rowCount - lastRow) * rowHeight}px"
+    >
+      {#each visible as album (album.key)}
         <li>
           <button
             class="card"
@@ -55,9 +88,9 @@
   ul {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(var(--card), 100%), 1fr));
-    gap: var(--space-4);
+    gap: 16px;
     margin: 0;
-    padding: var(--space-4);
+    padding: 0 16px;
     list-style: none;
   }
 

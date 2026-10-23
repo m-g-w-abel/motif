@@ -1,20 +1,17 @@
 <script lang="ts">
   import { getApp } from '../../context';
-  import type { Corner } from '../../corner';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
   import SeekBar from './SeekBar.svelte';
   import TrackLabel from './TrackLabel.svelte';
   import Transport from './Transport.svelte';
 
-  let { corner }: { corner: Corner } = $props();
-
   const { engine, sheet } = getApp();
   const MARGIN = 16;
   const POSITION_KEY = 'floating-player.position';
 
   let el = $state<HTMLElement>();
-  /** Top-left in px once dragged; until then the layout's corner applies. */
+  /** Top-left in px once dragged; until then it sits bottom-right. */
   let dragged = $state<{ x: number; y: number } | null>(loadPosition());
 
   function loadPosition(): { x: number; y: number } | null {
@@ -55,9 +52,11 @@
     el.addEventListener('pointercancel', end, { once: true });
   }
 
-  // Keep a dragged widget on screen when the window shrinks.
+  // Keep a dragged widget on screen when the window shrinks, or when it
+  // opens smaller than when the position was saved.
   $effect(() => {
     const onResize = () => dragged && (dragged = clamp(dragged));
+    onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   });
@@ -70,18 +69,16 @@
       // Nothing stored.
     }
   }
-
-  const [vertical, horizontal] = $derived(corner.split('-') as ['top' | 'bottom', 'left' | 'right']);
 </script>
 
 <section
   bind:this={el}
   class="floating"
   aria-label="Now playing"
-  style:left={dragged ? `${dragged.x}px` : horizontal === 'left' ? `${MARGIN}px` : undefined}
-  style:right={!dragged && horizontal === 'right' ? `${MARGIN}px` : undefined}
-  style:top={dragged ? `${dragged.y}px` : vertical === 'top' ? `${MARGIN}px` : undefined}
-  style:bottom={!dragged && vertical === 'bottom' ? `calc(${MARGIN}px + var(--bottom-inset, 0px))` : undefined}
+  style:left={dragged ? `${dragged.x}px` : undefined}
+  style:right={dragged ? undefined : `${MARGIN}px`}
+  style:top={dragged ? `${dragged.y}px` : undefined}
+  style:bottom={dragged ? undefined : `calc(${MARGIN}px + var(--bottom-inset, 0px))`}
   onpointerdown={startDrag}
   ondblclick={resetPosition}
 >

@@ -11,35 +11,41 @@ export interface TrackListData {
   tracks: TrackInfo[];
   /** Stable per-row keys. */
   keys: string[];
-  /** Index of the playing track in `tracks`, or -1. */
-  currentIndex: number;
+  /** Index of the playing track in `tracks`, or -1. A getter, so lists stay put when only playback changes. */
+  readonly currentIndex: number;
   play(index: number): void;
   /** Plays a subset (e.g. one album) from its first track. */
   playIndices(indices: number[]): void;
   remove?(index: number): void;
 }
 
+const libraryKeys = demoLibrary.map((t) => t.uri);
+
 export function trackListData(engine: EngineClient, kind: ListSource): TrackListData {
   if (kind === 'library') {
-    const currentUri = engine.current?.track.uri;
     return {
       title: 'Library',
       kind,
       tracks: demoLibrary,
-      keys: demoLibrary.map((t) => t.uri),
-      currentIndex: demoLibrary.findIndex((t) => t.uri === currentUri),
+      keys: libraryKeys,
+      get currentIndex() {
+        const uri = engine.current?.track.uri;
+        return demoLibrary.findIndex((t) => t.uri === uri);
+      },
       play: (start) => engine.run({ type: 'set_queue', tracks: demoLibrary, start }),
       playIndices: (indices) =>
         engine.run({ type: 'set_queue', tracks: indices.map((i) => demoLibrary[i]), start: 0 }),
     };
   }
-  const queue = engine.player?.queue ?? [];
+  const queue = engine.queue;
   return {
     title: 'Queue',
     kind,
     tracks: queue.map((item) => item.track),
     keys: queue.map((item) => String(item.id)),
-    currentIndex: engine.player?.current ?? -1,
+    get currentIndex() {
+      return engine.player?.current ?? -1;
+    },
     play: (i) => engine.run({ type: 'play_item', item_id: queue[i].id }),
     playIndices: (indices) => {
       if (indices.length) engine.run({ type: 'play_item', item_id: queue[indices[0]].id });

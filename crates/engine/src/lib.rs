@@ -2,7 +2,8 @@
 //!
 //! [`Engine::spawn`] starts an actor task that owns all player state. Clients
 //! talk to it through a cloneable [`Engine`] handle: commands go in over a
-//! channel, and state snapshots come out through a `watch` channel.
+//! channel, and state snapshots come out through `watch` channels: one for
+//! the transport and one for the queue, which changes rarely but can be big.
 //!
 //! Phase 0 has no audio output yet; [`Player`] advances position on a clock so
 //! the protocol and UIs can be built against realistic behaviour.
@@ -11,7 +12,7 @@ mod player;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use protocol::{Command, PlayerState};
+use protocol::{Command, PlayerState, QueueItem};
 use tokio::sync::{mpsc, oneshot, watch};
 
 pub use player::Player;
@@ -38,6 +39,7 @@ struct Request {
 pub struct Engine {
     requests: mpsc::Sender<Request>,
     state: watch::Receiver<PlayerState>,
+    queue: watch::Receiver<Vec<QueueItem>>,
 }
 
 /// How often the engine checks for the end of the current track.
@@ -49,6 +51,7 @@ impl Engine {
         let (requests, mut rx) = mpsc::channel::<Request>(64);
         let mut player = Player::default();
         let (state_tx, state) = watch::channel(snapshot(&player));
+        let (queue_tx, queue) = watch::channel(Vec::new());
 
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(TICK);
@@ -66,13 +69,26 @@ impl Engine {
                     _ = tick.tick() => player.tick(Instant::now()),
                 };
                 if changed {
+                    // Queue first, so a state never points into a queue
+                    // subscribers haven't seen.
+                    queue_tx.send_if_modified(|queue| {
+                        let modified = queue.as_slice() != player.queue();
+                        if modified {
+                            *queue = player.queue().to_vec();
+                        }
+                        modified
+                    });
                     state_tx.send_replace(snapshot(&player));
                 }
             }
             tracing::debug!("engine stopped");
         });
 
-        Self { requests, state }
+        Self {
+            requests,
+            state,
+            queue,
+        }
     }
 
     /// Applies a command and waits for the engine to accept or reject it.
@@ -93,6 +109,11 @@ impl Engine {
     /// A receiver that is notified on every state change.
     pub fn subscribe(&self) -> watch::Receiver<PlayerState> {
         self.state.clone()
+    }
+
+    /// A receiver that is notified when the queue changes.
+    pub fn subscribe_queue(&self) -> watch::Receiver<Vec<QueueItem>> {
+        self.queue.clone()
     }
 }
 
@@ -128,6 +149,30 @@ mod tests {
         let state = engine.state();
         assert_eq!(state.status, PlaybackStatus::Playing);
         assert_eq!(state.current, Some(0));
+        assert_eq!(engine.subscribe_queue().borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn queue_is_published_only_when_it_changes() {
+        let engine = Engine::spawn();
+        let mut queue = engine.subscribe_queue();
+        let mut states = engine.subscribe();
+        engine
+            .send(Command::Enqueue {
+                tracks: vec![TrackInfo::default()],
+            })
+            .await
+            .unwrap();
+        queue.changed().await.unwrap();
+        states.changed().await.unwrap();
+        states.mark_unchanged();
+        engine
+            .send(Command::SetVolume { volume: 0.5 })
+            .await
+            .unwrap();
+        // The state goes out after the queue would have.
+        states.changed().await.unwrap();
+        assert!(!queue.has_changed().unwrap());
     }
 
     #[tokio::test]

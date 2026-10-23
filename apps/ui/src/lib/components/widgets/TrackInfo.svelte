@@ -7,7 +7,7 @@
 
   const { engine } = getApp();
   const track = $derived(engine.current?.track);
-  const queue = $derived(engine.player?.queue ?? []);
+  const queue = $derived(engine.queue);
   const position = $derived(engine.player?.current ?? null);
 
   // Codec details (bitrate, sample rate, bit depth…) arrive with the decoder

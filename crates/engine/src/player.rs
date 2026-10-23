@@ -119,8 +119,11 @@ impl Player {
             position_ms: self.position(now).as_millis() as u64,
             sampled_at_ms: wall_ms,
             current: self.current.map(|i| i as u32),
-            queue: self.queue.clone(),
         }
+    }
+
+    pub fn queue(&self) -> &[QueueItem] {
+        &self.queue
     }
 
     fn position(&self, now: Instant) -> Duration {

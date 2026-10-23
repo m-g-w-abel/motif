@@ -18,7 +18,7 @@
   <button
     class="icon-button play"
     aria-label={playing ? 'Pause' : 'Play'}
-    disabled={!engine.player?.queue.length}
+    disabled={!engine.queue.length}
     onclick={() => engine.run({ type: 'toggle_playback' })}
   >
     <Icon name={playing ? 'pause' : 'play'} size={size * 1.35} />

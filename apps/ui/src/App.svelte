@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, type Component } from 'svelte';
   import { setApp } from './lib/context';
   import { demoLibrary } from './lib/demo';
   import { Drawer } from './lib/drawer.svelte';
@@ -95,6 +95,7 @@
   // Development only (stripped from builds): URL parameters that set up a
   // state for visual checks in other webviews, e.g.
   // ?dev-layout=builtin:details.kdl&dev-theme=light&dev-play=5&dev-sheet=1
+  let StressTest = $state<Component | null>(null);
   if (import.meta.env.DEV) {
     const params = new URLSearchParams(location.search);
     const devLayout = params.get('dev-layout');
@@ -104,6 +105,7 @@
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     if (params.has('dev-sheet')) sheet.expand();
     if (params.has('dev-drawer')) drawer.open = true;
+    if (params.has('dev-stress')) import('./lib/components/StressTest.svelte').then((m) => (StressTest = m.default));
     const devPlay = params.get('dev-play');
     if (devPlay !== null) {
       $effect(() => {
@@ -143,8 +145,10 @@
     <ExpandedPlayer />
   </div>
 
-  {#if player === 'floating' && !sheet.open}<FloatingPlayer corner={settings.current.floatingCorner} />{/if}
+  {#if player === 'floating' && !sheet.open}<FloatingPlayer />{/if}
 </div>
+
+{#if StressTest}<StressTest />{/if}
 
 {#if editing}<LayoutEditor onClose={() => (editing = false)} />{/if}
 

@@ -138,7 +138,13 @@ export class LayoutStore {
    * become a user copy named "<name> (custom)".
    */
   saveEdit(text: string): InstallResult {
-    if (!this.active.builtin) return this.install(text, this.active.fileName);
+    if (!this.active.builtin) {
+      // The file name follows the layout name, so a rename installs a new file.
+      const previous = this.active.id;
+      const result = this.install(text, this.active.fileName);
+      if (result.ok && result.entry.id !== previous) this.remove(previous);
+      return result;
+    }
     const result = parseLayout(text, this.active.layout.name);
     if (!result.ok) return result;
     const renamed =

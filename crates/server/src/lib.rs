@@ -1,6 +1,7 @@
 //! Exposes an [`Engine`] over WebSocket at `/ws` and serves the web UI.
 //!
-//! Phase 0 has no authentication, so callers must bind to loopback only.
+//! Phase 0 has no authentication, so callers must bind to loopback only, and
+//! browsers may only connect from pages served by this machine.
 //! Pairing tokens arrive in phase 4 before the server is exposed on the LAN.
 
 use std::{net::SocketAddr, path::PathBuf};
@@ -11,7 +12,8 @@ use axum::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    response::Response,
+    http::{HeaderMap, StatusCode, Uri, header::ORIGIN},
+    response::{IntoResponse, Response},
     routing::get,
 };
 use engine::Engine;
@@ -50,8 +52,31 @@ pub fn router(engine: Engine, ui_dir: Option<PathBuf>) -> Router {
     }
 }
 
-async fn upgrade(ws: WebSocketUpgrade, State(engine): State<Engine>) -> Response {
+async fn upgrade(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    State(engine): State<Engine>,
+) -> Response {
+    if !origin_allowed(headers.get(ORIGIN).map(|v| v.to_str().unwrap_or(""))) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     ws.on_upgrade(move |socket| session(socket, engine))
+}
+
+/// Browsers let any website open a WebSocket to localhost, so a page must come
+/// from this machine or be the Tauri window. Clients that send no `Origin`
+/// are not browsers and can't be driven by a website.
+// shortcut: trusts every local origin (other localhost apps too), replace with pairing tokens in phase 4.
+fn origin_allowed(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else { return true };
+    let Ok(uri) = origin.parse::<Uri>() else {
+        return false;
+    };
+    uri.scheme_str() == Some("tauri")
+        || matches!(
+            uri.host(),
+            Some("localhost" | "127.0.0.1" | "[::1]" | "tauri.localhost")
+        )
 }
 
 /// One connected client: forwards state changes out and commands in.
@@ -75,15 +100,21 @@ async fn session(socket: WebSocket, engine: Engine) {
     let _ = out_tx.send(hello).await;
 
     let mut states = engine.subscribe();
+    let mut queue = engine.subscribe_queue();
     states.mark_changed();
-    let state_tx = out_tx.clone();
+    queue.mark_changed();
+    let event_tx = out_tx.clone();
     let publisher = tokio::spawn(async move {
-        while states.changed().await.is_ok() {
-            let state = states.borrow_and_update().clone();
-            let msg = ServerMessage::Event {
-                event: Event::State { state },
+        loop {
+            // Biased towards the queue: the engine updates it before the
+            // state that indexes into it.
+            let event = tokio::select! {
+                biased;
+                Ok(()) = queue.changed() => Event::Queue { items: queue.borrow_and_update().clone() },
+                Ok(()) = states.changed() => Event::State { state: states.borrow_and_update().clone() },
+                else => break,
             };
-            if state_tx.send(msg).await.is_err() {
+            if event_tx.send(ServerMessage::Event { event }).await.is_err() {
                 break;
             }
         }
@@ -156,7 +187,9 @@ mod tests {
         ));
         assert!(matches!(
             next_message(&mut ws).await,
-            ServerMessage::Event { .. }
+            ServerMessage::Event {
+                event: Event::Queue { .. }
+            }
         ));
 
         for (id, command) in [
@@ -186,8 +219,33 @@ mod tests {
                 ServerMessage::Event {
                     event: Event::State { state },
                 } => playing = state.status == PlaybackStatus::Playing,
+                ServerMessage::Event {
+                    event: Event::Queue { .. },
+                } => {}
                 other => panic!("unexpected {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn only_local_pages_may_connect() {
+        for origin in [
+            None,
+            Some("http://localhost:5173"),
+            Some("http://127.0.0.1:7700"),
+            Some("http://[::1]:7700"),
+            Some("tauri://localhost"),
+            Some("http://tauri.localhost"),
+        ] {
+            assert!(origin_allowed(origin), "{origin:?}");
+        }
+        for origin in [
+            "https://evil.example",
+            "http://localhost.evil.example",
+            "http://evil.example:7700",
+            "null",
+        ] {
+            assert!(!origin_allowed(Some(origin)), "{origin}");
         }
     }
 }
