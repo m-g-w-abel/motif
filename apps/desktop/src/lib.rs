@@ -19,6 +19,8 @@ fn engine_url(url: tauri::State<'_, EngineUrl>) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    keep_gpu_rendering_on_nvidia();
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
@@ -33,6 +35,35 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![engine_url])
         .run(tauri::generate_context!())
         .expect("error while running the app");
+}
+
+/// WebKitGTK turns GPU rendering off on NVIDIA's driver because its GBM
+/// buffers fail there, which leaves every frame to the CPU: the album grid
+/// drops from 60 to under 20 fps. Rendering on the GPU into shared memory
+/// works, so restart with that set. A user's own setting of any of these
+/// variables wins.
+#[cfg(target_os = "linux")]
+fn keep_gpu_rendering_on_nvidia() {
+    use std::os::unix::process::CommandExt;
+
+    const VARS: [&str; 2] = [
+        "WEBKIT_FORCE_DMABUF_RENDERER",
+        "WEBKIT_DMABUF_RENDERER_FORCE_SHM",
+    ];
+    let nvidia = std::path::Path::new("/proc/driver/nvidia").exists();
+    let user_set = VARS.iter().any(|v| std::env::var_os(v).is_some())
+        || std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some();
+    if !nvidia || user_set {
+        return;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        // `exec` only returns if the restart failed; carry on without it.
+        let err = std::process::Command::new(exe)
+            .args(std::env::args_os().skip(1))
+            .envs(VARS.map(|v| (v, "1")))
+            .exec();
+        eprintln!("could not restart with GPU rendering: {err}");
+    }
 }
 
 async fn start_engine() -> std::io::Result<SocketAddr> {

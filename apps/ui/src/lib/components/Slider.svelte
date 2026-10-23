@@ -11,6 +11,7 @@
     valueText,
     disabled = false,
     variant = 'normal',
+    running = false,
     oninput,
     onchange,
   }: {
@@ -22,6 +23,8 @@
     disabled?: boolean;
     /** `strip`: a thin edge-to-edge bar that thickens on hover. */
     variant?: 'normal' | 'strip' | 'muted';
+    /** The value is advancing by 1 per millisecond (playback), so animate towards `max` between updates. */
+    running?: boolean;
     oninput?: (value: number) => void;
     onchange?: (value: number) => void;
   } = $props();
@@ -31,6 +34,26 @@
   let dragValue = $state<number | null>(null);
   const shown = $derived(dragValue ?? value);
   const fraction = $derived(max > 0 ? Math.min(1, Math.max(0, shown / max)) : 0);
+
+  // While running, the fill and thumb animate on their own to `max`, so the
+  // value only needs updating occasionally. Transforms keep it to repaints.
+  let fill = $state<HTMLElement>();
+  let thumb = $state<HTMLElement>();
+  $effect(() => {
+    if (!running || dragValue !== null || !fill || !thumb || !track || max <= 0) return;
+    const duration = max - shown;
+    if (duration <= 0) return;
+    // One step per pixel left to cover: a bar moving a few px a second then
+    // repaints a few times a second instead of every frame.
+    // shortcut: the pixel count is taken when the animation starts, so a resize is corrected only at the next value update (≤1 s).
+    const pixels = Math.max(1, Math.round(track.clientWidth * (1 - fraction)));
+    const timing = { duration, fill: 'forwards', easing: `steps(${pixels}, end)` } as const;
+    const animations = [
+      fill.animate([{ transform: `scaleX(${fraction})` }, { transform: 'scaleX(1)' }], timing),
+      thumb.animate([{ transform: `translateX(${fraction * 100}%)` }, { transform: 'translateX(100%)' }], timing),
+    ];
+    return () => animations.forEach((a) => a.cancel());
+  });
 
   function valueAt(clientX: number): number {
     if (!track) return 0;
@@ -100,8 +123,8 @@
   onpointercancel={onPointerUp}
   onkeydown={onKey}
 >
-  <div class="rail"><div class="fill"></div></div>
-  <div class="thumb"></div>
+  <div class="rail"><div class="fill" bind:this={fill}></div></div>
+  <div class="thumb-track" bind:this={thumb}><div class="thumb"></div></div>
 </div>
 
 <style>
@@ -133,7 +156,8 @@
 
   .fill {
     height: 100%;
-    width: calc(var(--fraction) * 100%);
+    transform: scaleX(var(--fraction));
+    transform-origin: left;
     background: var(--accent);
   }
 
@@ -141,9 +165,21 @@
     background: var(--text-muted);
   }
 
-  .thumb {
+  /* Full width, so translateX(100%) moves the thumb to the end. */
+  .thumb-track {
     position: absolute;
-    left: calc(var(--fraction) * 100%);
+    inset: 0;
+    display: flex;
+    align-items: center;
+    transform: translateX(calc(var(--fraction) * 100%));
+    pointer-events: none;
+  }
+
+  .strip .thumb-track {
+    align-items: flex-start;
+  }
+
+  .thumb {
     width: 10px;
     height: 10px;
     margin-left: -5px;

@@ -128,8 +128,10 @@ export class EngineClient {
 }
 
 /**
- * Playback position extrapolated between engine snapshots, so progress bars
- * move smoothly without the engine streaming updates.
+ * Playback position extrapolated between engine snapshots, so the UI shows
+ * progress without the engine streaming updates. It ticks once per second of
+ * playback (enough for time labels); progress bars animate in between on
+ * their own (see Slider's `running`), so nothing runs every frame.
  */
 export class PlaybackPosition {
   #now = $state(performance.now());
@@ -147,14 +149,15 @@ export class PlaybackPosition {
     return Math.min(position, this.engine.current?.track.duration_ms ?? Infinity);
   }
 
-  /** Call from an `$effect`; ticks once per frame while playing. */
+  /** Call from an `$effect`; ticks on each whole second of playback while playing. */
   track(): (() => void) | undefined {
     if (this.engine.player?.status !== 'playing') return;
-    const tick = (t: number) => {
-      this.#now = t;
-      frame = requestAnimationFrame(tick);
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      this.#now = performance.now();
+      timer = setTimeout(tick, 1000 - (this.ms % 1000));
     };
-    let frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
+    tick();
+    return () => clearTimeout(timer);
   }
 }

@@ -222,24 +222,37 @@ be saved back to the file or a sidecar.
 - [x] Webview stress test on WebKitGTK (results below)
 - [ ] Android background-audio spike (needs Android SDK/NDK)
 
-### Webview stress test (2026-10-23)
+### Webview stress test (2026-10-24)
 
-`?dev-stress&dev-library=50000` scrolls the track list every frame under a
-panel with `backdrop-filter` blur, a blurred artwork layer and a 64-bar canvas
-visualiser, and shows the frame rate. WebKitGTK 2.52.6, X11, RTX 3060, 1280×800:
+`?dev-stress&dev-library=50000` scrolls every track list and album grid each
+frame under a panel with `backdrop-filter` blur, a blurred artwork layer and a
+64-bar canvas visualiser, and shows the frame rate (`window.stress` for
+scripts). `?dev-stress=scroll` leaves the panel out. WebKitGTK 2.52.6, X11,
+RTX 3060 (NVIDIA driver), 1280×800, 50k tracks:
 
-| Music area | fps | Worst frame |
-|---|---|---|
-| Grouped track list, 50k tracks (windowed) | 67 | 17 ms |
-| Album grid, 18 tracks (one row of cards) | 62 | 18 ms |
-| Album grid, 50k tracks (11k albums, windowed) | 37–40 | 31–37 ms |
-| Track list + album grid, 50k tracks | 23 | 49 ms |
+| | Track list | Album grid | List + grid |
+|---|---|---|---|
+| Software rendering, before | 62 | 12 | 18 |
+| Software rendering, after | 62 | 62 | 62 |
+| GPU rendering (SHM) | 60 | 60 | 60 |
 
-Windowing the album grid took the last two from 20 and 13 fps. What's left is
-paint cost: turning off either blur, or giving the panel its own compositing
-layer, changed little, and WebKit drew no compositing borders, so it is
-probably painting the large gradient cards under the panel in software.
-Conclusion: the design holds on WebKitGTK as long as animated, blurred
-surfaces don't sit over busy, art-heavy areas. The visualiser belongs in the
-now-playing sheet. Revisit with real artwork in phase 2. Android is untested
-until it has a build.
+With the blurred panel on top, software rendering now gives 54–59 fps.
+
+What was wrong, and the fixes:
+- **WebKitGTK turns GPU rendering off on NVIDIA's driver.** Its GBM buffers
+  fail there, so the hardware acceleration policy is forced to "never" and
+  the CPU draws everything. The desktop shell restarts itself with
+  `WEBKIT_FORCE_DMABUF_RENDERER=1 WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` when it
+  finds the NVIDIA driver, unless the user set those variables. The
+  surfaceless mode (`WEBKIT_DMABUF_RENDERER_DISABLE_GBM`) draws a blank window.
+- **Blurred `box-shadow` is slow on CPU rendering.** Album cards had one, and
+  the grid repaints on every scroll; a 1px border took the grid from 12 to
+  62 fps. Keep shadows to popups that don't sit over scrolling content.
+- **The playback clock ran every frame.** It changed `--fraction` (forcing
+  layout) and `aria-valuenow` on every progress bar 60 times a second: 9% of
+  a core while playing, 43% with the now-playing sheet open. The clock now
+  ticks once per second; bars animate with the Web Animations API using
+  transforms, stepped once per pixel. Playing now costs 1.4%, and 2% with the
+  sheet open.
+
+Android is untested until it has a build.

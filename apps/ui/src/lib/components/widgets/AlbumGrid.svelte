@@ -99,10 +99,11 @@
     flex-direction: column;
     width: 100%;
     padding: 0 0 var(--space-2);
-    border: 0;
+    /* A border, not a box-shadow: blurred shadows are slow to repaint when
+       WebKitGTK draws on the CPU, and the grid repaints on every scroll. */
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--surface);
-    box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
     text-align: left;
     cursor: pointer;
     outline: 2px solid transparent;

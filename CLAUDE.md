@@ -59,7 +59,13 @@ Windows and macOS.
   `?dev-layout=builtin:details.kdl&dev-theme=paper&dev-play=5&dev-sheet=1`
   (also `dev-drawer`, `dev-player=floating`). See `App.svelte`.
   `?dev-stress&dev-library=50000` runs the webview stress test (results in
-  `docs/PLAN.md`).
+  `docs/PLAN.md`); `dev-stress=scroll` measures plain scrolling.
+- Performance rules from that test: nothing may run every frame while idle
+  (animate with CSS/Web Animations transforms, not per-frame state); no
+  blurred `box-shadow`/`filter` on things that scroll or sit over scrolling
+  content; render only the rows in view. WebKitGTK may draw on the CPU (it
+  does on NVIDIA unless the desktop shell's GPU workaround applies), so check
+  performance there too.
 - Avoid native `<input type="range">` (renders differently in WebKit); use
   `components/Slider.svelte`.
 - Vite injects component CSS from JS in dev (`emitCss` only for builds)

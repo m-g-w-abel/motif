@@ -23,6 +23,7 @@
     valueText="{formatTime(shown)} of {formatTime(duration)}"
     disabled={!duration}
     variant={variant === 'strip' ? 'strip' : 'normal'}
+    running={engine.player?.status === 'playing'}
     oninput={(v) => (scrubbing = v)}
     onchange={(v) => {
       scrubbing = null;
