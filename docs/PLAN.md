@@ -283,3 +283,91 @@ the navigation bar and the toolbar under the status bar. Not tested yet:
 real (not forced) overnight Doze, Sony's STAMINA mode, other vendors'
 battery killers, and release builds.
 
+## Phase 1 plan: desktop player
+
+Goal: point Motif at your music folders on Linux, Windows or macOS and it
+plays them: gapless, every common format, real library browsing with
+artwork, and the OS media keys and widgets work. Android keeps compiling
+(the engine's audio code is cross-platform) but is tested in phase 5.
+
+### Where things live
+
+- **`crates/engine`**: the audio pipeline (decode → resample → volume →
+  output) and the queue. Still playback-only.
+- **`crates/library`** (new): folder scanning, tags, the SQLite database,
+  artwork extraction, file watching. It knows nothing about playback; the
+  engine knows nothing about it.
+- **`crates/protocol` / `crates/server`**: library queries go over the same
+  WebSocket; artwork is served over HTTP (`/art/<id>`) so the UI can use
+  plain `<img>` tags and the browser cache. Library data is not a UI concern,
+  so this fits the engine rule; layouts, themes and view state still stay out.
+- **`apps/desktop` / `apps/headless`**: wire engine + library + server
+  together and own OS integration (media controls).
+
+### Milestones
+
+Each milestone ends with every check passing, a commit, and something you can
+try.
+
+1. **Track references.** Replace `TrackInfo` in queue items with the
+   source-independent reference the streaming design needs: `source` + `id`
+   (for local files, a library ID and the path), plus title, artist, album,
+   duration, ISRC when known. A track that can't be resolved is reported, not
+   dropped. Protocol v4.
+2. **It makes sound.** One decode thread per playing track (Symphonia) feeds
+   a lock-free ring buffer that the cpal output callback drains. Play,
+   pause, seek and volume act on real audio; position comes from samples
+   actually played, replacing the simulated clock. Volume is a smoothed
+   software gain. Output runs in shared mode at the device's rate, and
+   tracks at other rates go through rubato.
+3. **Gapless.** Decode the next queue item ahead of time and splice it into
+   the same buffer at the exact sample, honouring encoder delay and padding
+   (LAME/iTunSMPB). A rate or channel change between tracks reopens the
+   stream at the boundary instead. Test: two halves of one sine wave played
+   back to back show no discontinuity.
+4. **FFmpeg fallback.** Anything Symphonia can't open (Opus, WavPack, APE,
+   DSD, WMA, TTA…) is decoded by an `ffmpeg` process piping raw PCM, behind
+   the same decoder trait. Seeking restarts the process at the new position.
+   Its absence is reported per file ("needs FFmpeg"), never a crash.
+5. **Library scan.** `library` walks the configured folders, reads tags with
+   lofty, and stores tracks/albums/artists in SQLite (rusqlite with its
+   bundled SQLite, FTS5 for search). Rescans are incremental by path, size
+   and mtime; `notify` picks up changes while running. Embedded and
+   folder artwork (`cover.jpg`, `folder.png`…) is extracted once into a
+   cache with thumbnails. Targets: 50k tracks scan in under 2 minutes on
+   an SSD and rescan unchanged in seconds.
+6. **Library in the UI.** The demo library goes (it stays as the
+   `dev-library` stress-test generator). Track lists and the album grid
+   fetch windows of rows from the server, with sorting, grouping and search
+   done in SQL, so 50k tracks never cross the wire at once. Settings get a
+   Library section: folders (native picker under Tauri, a path field in a
+   browser), rescan, scan progress. Album art replaces the placeholder
+   gradients.
+7. **OS media controls.** souvlaki in the desktop and headless apps: MPRIS
+   on Linux, SMTC on Windows, Now Playing on macOS, so media keys, the
+   lock screen and desktop widgets show and control Motif.
+8. **Hardening.**
+   - Unreadable, missing or corrupt files are skipped with a visible reason.
+   - A lost output device (headphones unplugged) pauses rather than
+     erroring, and an output device picker is added.
+   - CI installs ALSA headers for cpal on Linux and runs decode and gapless
+     tests against small generated fixture files.
+   - Performance budgets: playback stays glitch-free while scanning, and
+     idle CPU stays under 1%.
+
+### Deferred on purpose
+
+Bit-perfect/exclusive output, sample-rate switching, DSD native, crossfade
+and EQ (phase 9); ReplayGain (phase 3); CUE sheets and tracker/game/MIDI
+formats (later in phase 1 if time allows, otherwise phase 10); tag editing
+(phase 10); libsoxr (phase 9, rubato until then).
+
+### Open questions
+
+- **FFmpeg:** use one from the system PATH and bundle a GPL static build
+  with releases, or link the FFmpeg libraries? Planned: the process
+  approach, because linking makes builds on three OSes much harder.
+- **Library location:** one shared database per machine for the desktop app
+  and headless engine, or one each? Planned: one per machine, in the OS data
+  directory.
+
