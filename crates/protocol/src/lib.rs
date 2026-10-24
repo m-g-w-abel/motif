@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Bumped on any incompatible change to the types below.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// A message sent from a client to the engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -28,6 +28,10 @@ pub enum ServerMessage {
     Hello {
         protocol_version: u32,
         engine_version: String,
+        /// Engine wall clock (Unix ms), so clients can convert
+        /// [`PlayerState::sampled_at_ms`] to their own clock.
+        #[ts(type = "number")]
+        now_ms: u64,
     },
     /// The outcome of the [`ClientMessage`] with the same `id`.
     Response { id: u32, error: Option<String> },

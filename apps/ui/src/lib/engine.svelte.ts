@@ -6,7 +6,7 @@ import type { ServerMessage } from './protocol/ServerMessage';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const MAX_BACKOFF_MS = 5000;
 
 /** Where the engine lives: the embedded one under Tauri, else the page's host. */
@@ -27,8 +27,8 @@ export class EngineClient {
   player = $state<PlayerState | null>(null);
   /** Raw (not deeply reactive): it can hold thousands of tracks and is only ever replaced. */
   queue = $state.raw<QueueItem[]>([]);
-  /** `performance.now()` when `player` arrived, for position extrapolation. */
-  receivedAt = $state(0);
+  /** Engine clock minus ours, so snapshot times (`sampled_at_ms`) can be read on our clock. */
+  clockOffset = $state(0);
   error = $state<string | null>(null);
 
   /** The queue entry that is playing or paused, if any. */
@@ -103,6 +103,8 @@ export class EngineClient {
   #handle(message: ServerMessage) {
     switch (message.type) {
       case 'hello':
+        // shortcut: ignores network latency (ms on a LAN), measure round trips when listen-along needs tighter sync (phase 7).
+        this.clockOffset = message.now_ms - Date.now();
         if (message.protocol_version !== PROTOCOL_VERSION) {
           this.error = `engine speaks protocol v${message.protocol_version}, this UI expects v${PROTOCOL_VERSION}`;
         }
@@ -118,7 +120,6 @@ export class EngineClient {
       case 'event':
         if (message.event.type === 'state') {
           this.player = message.event.state;
-          this.receivedAt = performance.now();
         } else {
           this.queue = message.event.items;
         }
@@ -130,11 +131,12 @@ export class EngineClient {
 /**
  * Playback position extrapolated between engine snapshots, so the UI shows
  * progress without the engine streaming updates. It ticks once per second of
- * playback (enough for time labels); progress bars animate in between on
- * their own (see Slider's `running`), so nothing runs every frame.
+ * playback (enough for time labels); progress bars step a pixel at a time in
+ * between on their own (see Slider's `running`), so nothing runs every frame.
  */
 export class PlaybackPosition {
-  #now = $state(performance.now());
+  /** Our wall clock (`Date.now()`) at the last tick. */
+  #now = $state(Date.now());
   private engine: EngineClient;
 
   constructor(engine: EngineClient) {
@@ -145,7 +147,9 @@ export class PlaybackPosition {
     const player = this.engine.player;
     if (!player) return 0;
     if (player.status !== 'playing') return player.position_ms;
-    const position = player.position_ms + Math.max(0, this.#now - this.engine.receivedAt);
+    // Snapshots are taken when something changes, so one can be old: a client
+    // that connects mid-track gets the one from when the track started.
+    const position = player.position_ms + Math.max(0, this.#now + this.engine.clockOffset - player.sampled_at_ms);
     return Math.min(position, this.engine.current?.track.duration_ms ?? Infinity);
   }
 
@@ -154,7 +158,7 @@ export class PlaybackPosition {
     if (this.engine.player?.status !== 'playing') return;
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
-      this.#now = performance.now();
+      this.#now = Date.now();
       timer = setTimeout(tick, 1000 - (this.ms % 1000));
     };
     tick();

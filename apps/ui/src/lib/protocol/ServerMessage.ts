@@ -4,4 +4,9 @@ import type { Event } from "./Event";
 /**
  * A message sent from the engine to a client.
  */
-export type ServerMessage = { "type": "hello", protocol_version: number, engine_version: string, } | { "type": "response", id: number, error: string | null, } | { "type": "event", event: Event, };
+export type ServerMessage = { "type": "hello", protocol_version: number, engine_version: string, 
+/**
+ * Engine wall clock (Unix ms), so clients can convert
+ * [`PlayerState::sampled_at_ms`] to their own clock.
+ */
+now_ms: number, } | { "type": "response", id: number, error: string | null, } | { "type": "event", event: Event, };

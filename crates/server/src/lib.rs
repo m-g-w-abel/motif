@@ -96,6 +96,7 @@ async fn session(socket: WebSocket, engine: Engine) {
     let hello = ServerMessage::Hello {
         protocol_version: PROTOCOL_VERSION,
         engine_version: env!("CARGO_PKG_VERSION").into(),
+        now_ms: engine::wall_clock_ms(),
     };
     let _ = out_tx.send(hello).await;
 

@@ -118,10 +118,14 @@ impl Engine {
 }
 
 fn snapshot(player: &Player) -> PlayerState {
-    let wall_ms = SystemTime::now()
+    player.snapshot(Instant::now(), wall_clock_ms())
+}
+
+/// The clock `PlayerState::sampled_at_ms` is measured on (Unix ms).
+pub fn wall_clock_ms() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64);
-    player.snapshot(Instant::now(), wall_ms)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 #[cfg(test)]
