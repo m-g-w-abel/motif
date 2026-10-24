@@ -220,7 +220,7 @@ be saved back to the file or a sidecar.
 - [x] CI (fmt, clippy, tests, binding freshness, UI check/build)
 - [x] Music-area layouts (KDL) with built-in presets and drag-and-drop install; widgets: track list (table/grouped, resizable columns), album grid, artwork, track info, queue; settings (theme, accent, density, bar/floating player); expanding now-playing sheet
 - [x] Webview stress test on WebKitGTK (results below)
-- [ ] Android background-audio spike (needs Android SDK/NDK)
+- [x] Android background-audio spike (results below; branch `spike/android-audio`)
 
 ### Webview stress test (2026-10-24)
 
@@ -258,3 +258,24 @@ What was wrong, and the fixes:
   layout then froze for ~1.4 s every 2 s. Plain timer updates don't.
 
 Android is untested until it has a build.
+
+### Android background-audio spike (2026-10-24)
+
+Branch `spike/android-audio`: the generated Tauri Android project (minSdk 26,
+for AAudio), a foreground `mediaPlayback` service with a media session and
+notification, and a quiet 440 Hz cpal tone while the engine plays. Sony
+Xperia XQ-DC54, Android 15, debug build:
+
+- The UI loads from the APK and talks to the in-process engine over its
+  loopback WebSocket (the server's origin check accepts the Android WebView).
+- Screen off, battery unplugged (simulated) and Doze forced into deep idle
+  for 30 minutes: same process the whole time and the AAudio stream stayed
+  `started`. Android froze other background apps (WhatsApp, Snapchat) during
+  the run but not Motif.
+
+Still to do in phase 5: wire the media session's buttons to the engine (a
+Tauri plugin), and apply the system bar insets: the player bar sits under
+the navigation bar and the toolbar under the status bar. Not tested yet:
+real (not forced) overnight Doze, Sony's STAMINA mode, other vendors'
+battery killers, and release builds.
+
