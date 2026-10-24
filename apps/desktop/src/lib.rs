@@ -4,6 +4,9 @@
 //! The window's UI then connects to it exactly as a remote client would; the
 //! only Tauri-specific call is [`engine_url`], which tells it where to connect.
 
+#[cfg(target_os = "android")]
+mod spike_tone;
+
 use std::net::SocketAddr;
 
 use engine::Engine;
@@ -72,7 +75,10 @@ async fn start_engine() -> std::io::Result<SocketAddr> {
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         ui_dir: None,
     };
-    let (addr, serve) = server::bind(Engine::spawn(), config).await?;
+    let engine = Engine::spawn();
+    #[cfg(target_os = "android")]
+    spike_tone::spawn(engine.clone());
+    let (addr, serve) = server::bind(engine, config).await?;
     tauri::async_runtime::spawn(async move {
         if let Err(err) = serve.await {
             tracing::error!(%err, "engine server stopped");
