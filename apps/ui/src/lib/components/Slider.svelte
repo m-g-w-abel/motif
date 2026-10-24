@@ -23,7 +23,7 @@
     disabled?: boolean;
     /** `strip`: a thin edge-to-edge bar that thickens on hover. */
     variant?: 'normal' | 'strip' | 'muted';
-    /** The value is advancing by 1 per millisecond (playback), so animate towards `max` between updates. */
+    /** The value is advancing by 1 per millisecond (playback), so keep moving between updates. */
     running?: boolean;
     oninput?: (value: number) => void;
     onchange?: (value: number) => void;
@@ -32,27 +32,26 @@
   let track = $state<HTMLElement>();
   /** Set while dragging, so outside updates don't fight the pointer. */
   let dragValue = $state<number | null>(null);
-  const shown = $derived(dragValue ?? value);
+  /** How far playback has moved since `value` last changed (see below). */
+  let advance = $state(0);
+  const shown = $derived(dragValue ?? Math.min(max, value + advance));
   const fraction = $derived(max > 0 ? Math.min(1, Math.max(0, shown / max)) : 0);
 
-  // While running, the fill and thumb animate on their own to `max`, so the
-  // value only needs updating occasionally. Transforms keep it to repaints.
-  let fill = $state<HTMLElement>();
-  let thumb = $state<HTMLElement>();
+  // While running, advance one pixel at a time on a timer (a few times a
+  // second for a track) rather than every frame. Plain main-thread updates:
+  // WebKitGTK's GPU renderer stalls for seconds on composited animations in
+  // the phone layout.
   $effect(() => {
-    if (!running || dragValue !== null || !fill || !thumb || !track || max <= 0) return;
-    const duration = max - shown;
-    if (duration <= 0) return;
-    // One step per pixel left to cover: a bar moving a few px a second then
-    // repaints a few times a second instead of every frame.
-    // shortcut: the pixel count is taken when the animation starts, so a resize is corrected only at the next value update (≤1 s).
-    const pixels = Math.max(1, Math.round(track.clientWidth * (1 - fraction)));
-    const timing = { duration, fill: 'forwards', easing: `steps(${pixels}, end)` } as const;
-    const animations = [
-      fill.animate([{ transform: `scaleX(${fraction})` }, { transform: 'scaleX(1)' }], timing),
-      thumb.animate([{ transform: `translateX(${fraction * 100}%)` }, { transform: 'translateX(100%)' }], timing),
-    ];
-    return () => animations.forEach((a) => a.cancel());
+    void value; // restart from each new value
+    advance = 0;
+    if (!running || !track || max <= 0) return;
+    const step = Math.max(16, max / Math.max(1, track.clientWidth));
+    const start = performance.now();
+    let timer = setTimeout(function tick() {
+      advance = performance.now() - start;
+      timer = setTimeout(tick, step);
+    }, step);
+    return () => clearTimeout(timer);
   });
 
   function valueAt(clientX: number): number {
@@ -113,7 +112,7 @@
   aria-label={label}
   aria-valuemin={0}
   aria-valuemax={max}
-  aria-valuenow={Math.round(shown)}
+  aria-valuenow={Math.round(dragValue ?? value)}
   aria-valuetext={valueText}
   aria-disabled={disabled}
   style:--fraction={fraction}
@@ -123,8 +122,8 @@
   onpointercancel={onPointerUp}
   onkeydown={onKey}
 >
-  <div class="rail"><div class="fill" bind:this={fill}></div></div>
-  <div class="thumb-track" bind:this={thumb}><div class="thumb"></div></div>
+  <div class="rail"><div class="fill"></div></div>
+  <div class="thumb-track"><div class="thumb"></div></div>
 </div>
 
 <style>
@@ -165,7 +164,8 @@
     background: var(--text-muted);
   }
 
-  /* Full width, so translateX(100%) moves the thumb to the end. */
+  /* Full width, so translateX(100%) moves the thumb to the end. Transforms
+     keep progress updates to repaints, without layout. */
   .thumb-track {
     position: absolute;
     inset: 0;

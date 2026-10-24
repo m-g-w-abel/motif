@@ -251,8 +251,10 @@ What was wrong, and the fixes:
 - **The playback clock ran every frame.** It changed `--fraction` (forcing
   layout) and `aria-valuenow` on every progress bar 60 times a second: 9% of
   a core while playing, 43% with the now-playing sheet open. The clock now
-  ticks once per second; bars animate with the Web Animations API using
-  transforms, stepped once per pixel. Playing now costs 1.4%, and 2% with the
-  sheet open.
+  ticks once per second, and bars advance a pixel at a time on a timer,
+  moved with transforms. Playing now costs 1.4–2.2%.
+- **Composited animations stall WebKit's GPU renderer.** A first version of
+  the bars used the Web Animations API; with GPU rendering on, the phone
+  layout then froze for ~1.4 s every 2 s. Plain timer updates don't.
 
 Android is untested until it has a build.

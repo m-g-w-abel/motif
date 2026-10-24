@@ -10,8 +10,8 @@ on a clock and the library is demo data (`apps/ui/src/lib/demo.ts`). Phase 1
 
 ## Rules
 
-- **Commit only when the user explicitly asks.** Answering a question (e.g.
-  about branches) is not permission. Never push without being asked.
+- **Commit whenever a coherent, checked piece of work is done** (all the
+  commands below pass), with a clear message. Don't push without being asked.
 - **The main branch is `master`**, not `main`.
 - **The engine is playback-only.** Never put UI concerns (layouts, themes, view
   state, settings) into `crates/engine`, `crates/protocol` or `crates/server`.
@@ -61,7 +61,9 @@ Windows and macOS.
   `?dev-stress&dev-library=50000` runs the webview stress test (results in
   `docs/PLAN.md`); `dev-stress=scroll` measures plain scrolling.
 - Performance rules from that test: nothing may run every frame while idle
-  (animate with CSS/Web Animations transforms, not per-frame state); no
+  (update on a timer only as often as the change is visible, and move things
+  with `transform`); no long-running CSS/Web Animations, which stall
+  WebKitGTK's GPU renderer for seconds; no
   blurred `box-shadow`/`filter` on things that scroll or sit over scrolling
   content; render only the rows in view. WebKitGTK may draw on the CPU (it
   does on NVIDIA unless the desktop shell's GPU workaround applies), so check
