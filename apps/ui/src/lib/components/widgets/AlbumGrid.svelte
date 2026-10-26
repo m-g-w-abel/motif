@@ -8,6 +8,8 @@
   import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto } from '../../keynav';
+  import { menu } from '../../contextMenu.svelte';
+  import { albumMenu } from '../../menus';
   import { sortLabel, viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
@@ -214,6 +216,7 @@
               tabindex={i === tabStop ? 0 : -1}
               onfocus={() => (cursor = i)}
               onkeydown={(e) => onKey(e, i, album)}
+              use:menu={() => albumMenu(album, () => play(album))}
               class:playing={album.key === playingKey}
               class:focused={album.key === view.browse.focusAlbum}
               title="{album.title} — {album.artist} · {album.tracks} tracks · {formatTime(album.duration_ms)}"

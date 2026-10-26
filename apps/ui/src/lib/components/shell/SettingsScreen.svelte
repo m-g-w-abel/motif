@@ -9,6 +9,7 @@
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import ShortcutList from './ShortcutList.svelte';
 
   const { settings, themes, engine, library, settingsView } = getApp();
   let panel = $state<HTMLElement>();
@@ -17,6 +18,7 @@
     { id: 'interface', label: 'Interface' },
     { id: 'library', label: 'Library' },
     { id: 'playback', label: 'Playback' },
+    { id: 'keyboard', label: 'Keyboard' },
     { id: 'technical', label: 'Technical' },
     { id: 'about', label: 'About' },
   ];
@@ -271,6 +273,8 @@
         {:else if !engine.player}
           <p class="status">Not connected to the engine.</p>
         {/if}
+      {:else if group === 'keyboard'}
+        <ShortcutList />
       {:else if group === 'technical'}
         <div class="row">
           <span class="label">Engine connection</span>
