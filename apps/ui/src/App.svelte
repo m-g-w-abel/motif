@@ -162,7 +162,8 @@
     <ExpandedPlayer />
   </div>
 
-  {#if player === 'floating' && !sheet.open}<FloatingPlayer />{/if}
+  <!-- Hidden, not unmounted, while the sheet is open: it collapses back into it. -->
+  {#if player === 'floating'}<FloatingPlayer />{/if}
 </div>
 
 {#if StressTest}<StressTest />{/if}
