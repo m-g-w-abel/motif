@@ -10,6 +10,7 @@
   import type { TrackGroup } from '../../protocol/TrackGroup';
   import { nextOneOff, viewSort } from '../../sort.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
+  import { navTarget, scrollInto } from '../../keynav';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
 
@@ -268,7 +269,38 @@
     }
   }
 
+  // Roving focus: one row is in the tab order. If it is virtualised away, the
+  // first rendered row stands in so Tab still lands in the list.
+  let cursor = $state(0);
+  const tabStop = $derived.by(() => {
+    const tracks = visible.filter((r): r is { index: number } => 'index' in r);
+    return tracks.some((r) => r.index === cursor) ? cursor : (tracks[0]?.index ?? -1);
+  });
+
+  async function moveTo(index: number) {
+    const at = rows.list.findIndex((row) => 'index' in row && row.index === index);
+    if (at < 0 || !scroller) return;
+    cursor = index;
+    viewHeight = scroller.clientHeight; // the bound value can lag a layout change
+    // The sticky column header covers the top of the scroller; a grouped
+    // list also shows its album header above the first track.
+    const head = scroller.querySelector('thead')?.offsetHeight ?? 0;
+    const top = rows.tops[at] - ('group' in (rows.list[at - 1] ?? {}) ? groupHeight : 0);
+    scroller.scrollTop = scrollInto(scroller.scrollTop, scroller.clientHeight - head, top, rows.tops[at] + rowHeight);
+    scrollTop = scroller.scrollTop;
+    await tick();
+    const row = () => scroller?.querySelector<HTMLElement>(`tr.track[data-index="${index}"]`);
+    if (!row()) await new Promise(requestAnimationFrame); // the range follows the scroll event
+    row()?.focus({ preventScroll: true });
+  }
+
   function onKey(e: KeyboardEvent, index: number) {
+    if (e.target !== e.currentTarget) return; // keys on the remove button
+    const to = navTarget(e, index, data.count, 1, Math.max(1, Math.floor((scroller?.clientHeight ?? viewHeight) / rowHeight) - 1));
+    if (to !== null) {
+      e.preventDefault();
+      moveTo(to);
+    }
     if (e.key === 'Enter') data.play(index);
     if ((e.key === 'Delete' || e.key === 'Backspace') && data.remove) data.remove(index);
   }
@@ -354,7 +386,9 @@
                 class:current={key === currentKey}
                 class:unplayable={!!error}
                 class:selected={selected === key}
-                tabindex="0"
+                tabindex={i === tabStop ? 0 : -1}
+                data-index={i}
+                onfocus={() => (cursor = i)}
                 aria-selected={selected === key}
                 onclick={() => select(key)}
                 ondblclick={() => data.play(i)}
@@ -374,6 +408,7 @@
                   <td class="remove-cell">
                     <button
                       class="remove"
+                      tabindex={i === tabStop ? 0 : -1}
                       aria-label="Remove {track ? trackTitle(track) : 'track'}"
                       onclick={(e) => {
                         e.stopPropagation();
@@ -497,8 +532,8 @@
   }
 
   tr:focus-visible {
-    outline: 1px solid var(--accent);
-    outline-offset: -1px;
+    outline: 2px solid var(--text);
+    outline-offset: -2px;
   }
 
   tr.current td {
