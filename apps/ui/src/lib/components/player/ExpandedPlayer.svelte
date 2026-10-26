@@ -1,12 +1,14 @@
 <script lang="ts">
   import { getApp, setViewState } from '../../context';
   import Icon from '../Icon.svelte';
+  import Scrollbar from '../Scrollbar.svelte';
   import ArtworkWidget from '../widgets/Artwork.svelte';
   import Controls from '../widgets/Controls.svelte';
   import Queue from '../widgets/Queue.svelte';
   import TrackInfo from '../widgets/TrackInfo.svelte';
 
   const { layout, sheet } = getApp();
+  let body = $state<HTMLElement>();
   setViewState({ source: 'library', layoutId: 'now-playing', browse: layout.browseState('now-playing') });
 
   function onKey(e: KeyboardEvent) {
@@ -37,7 +39,7 @@
     </button>
   </header>
 
-  <div class="body">
+  <div class="body" bind:this={body}>
     <div class="now">
       <div class="art"><ArtworkWidget expands={false} /></div>
       <div class="details">
@@ -49,6 +51,7 @@
       <Queue collapsible />
     </div>
   </div>
+  <Scrollbar target={body} />
 </section>
 
 <style>
@@ -140,6 +143,8 @@
     }
 
     .body {
+      /* Holds the bars of the scroll areas inside it, so they scroll with it. */
+      position: relative;
       overflow-y: auto;
     }
 

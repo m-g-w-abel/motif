@@ -57,3 +57,18 @@ export function visibleRange(tops: number[], from: number, to: number): [number,
   while (end < tops.length && tops[end] < to) end++;
   return [start, end];
 }
+
+/** The value in sorted `points` closest to `x`, or `x` if there are none. */
+export function nearest(points: number[], x: number): number {
+  let lo = 0;
+  let hi = points.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  const below = points[lo - 1] ?? -Infinity;
+  const above = points[lo] ?? Infinity;
+  if (below === -Infinity && above === Infinity) return x;
+  return x - below <= above - x ? below : above;
+}

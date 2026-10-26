@@ -2,10 +2,12 @@
   import { getApp } from '../../context';
   import { formatTime, trackFormat, trackTitle } from '../../format';
   import type { InfoStyle } from '../../layout/model';
+  import Scrollbar from '../Scrollbar.svelte';
 
   let { style }: { style: InfoStyle } = $props();
 
   const { engine, library } = getApp();
+  let scroller = $state<HTMLElement>();
   const track = $derived(engine.current?.track);
   const queue = $derived(engine.queue);
   const position = $derived(engine.player?.current ?? null);
@@ -35,7 +37,7 @@
   );
 </script>
 
-<section class="info selectable {style}">
+<section class="info selectable {style}" bind:this={scroller}>
   {#if style === 'hero'}
     <h1>{track ? trackTitle(track) : 'Nothing playing'}</h1>
     {#if track}
@@ -70,6 +72,7 @@
     </table>
   {/if}
 </section>
+<Scrollbar target={scroller} />
 
 <style>
   .info {
