@@ -171,8 +171,11 @@
     justify-content: space-between;
     gap: var(--space-3);
     /* Never wider than the window: focusing the search box would otherwise
-       scroll the whole view sideways. */
-    overflow: hidden;
+       scroll the whole view sideways. Only x is clipped so popovers can hang
+       below; the z-index lifts them (and any later toolbar menu) over the area. */
+    overflow-x: clip;
+    position: relative;
+    z-index: 1;
     height: 36px;
     padding: 0 var(--space-2) 0 var(--space-3);
     border-bottom: 1px solid var(--border);
