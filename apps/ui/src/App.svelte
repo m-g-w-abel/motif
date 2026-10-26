@@ -169,7 +169,7 @@
 
 <div class="toasts" role="status">
   {#each toasts.items as toast (toast.id)}
-    <button class="toast selectable {toast.kind}" onclick={() => toasts.dismiss(toast.id)}>{toast.message}</button>
+    <button class="toast selectable {toast.kind}" onclick={() => !getSelection()?.toString() && toasts.dismiss(toast.id)}>{toast.message}</button>
   {/each}
 </div>
 
