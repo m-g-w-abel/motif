@@ -2,10 +2,12 @@
   import { getApp } from '../../context';
   import { addFolder } from '../../folders';
   import { installTheme } from '../../layout/install';
+  import { moveItem } from '../../reorder';
   import type { Settings } from '../../settings.svelte';
   import type { SettingsGroup } from '../../settingsView.svelte';
   import { SYSTEM_THEMES, THEMES, themeById } from '../../themes';
   import Icon from '../Icon.svelte';
+  import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
 
   const { settings, themes, engine, library, settingsView } = getApp();
@@ -38,16 +40,10 @@
     return [...player.decoders.map((name) => ({ name, on: true })), ...disabled.map((name) => ({ name, on: false }))];
   });
 
+  const enabledDecoders = $derived(decoders.filter((d) => d.on));
+
   function setDecoders(order: string[]) {
     engine.run({ type: 'set_decoders', order });
-  }
-
-  function moveDecoder(name: string, by: -1 | 1) {
-    const order = [...(engine.player?.decoders ?? [])];
-    const i = order.indexOf(name);
-    if (i < 0 || i + by < 0 || i + by >= order.length) return;
-    [order[i], order[i + by]] = [order[i + by], order[i]];
-    setDecoders(order);
   }
 
   function toggleDecoder(name: string, on: boolean) {
@@ -257,21 +253,18 @@
         {#if decoders.length}
           <div class="row">
             <span class="label">Decoders</span>
-            {#each decoders as decoder, i (decoder.name)}
-              <div class="item">
-                <label class="decoder">
-                  <input type="checkbox" checked={decoder.on} onchange={(e) => toggleDecoder(decoder.name, e.currentTarget.checked)} />
-                  {decoderLabels[decoder.name] ?? decoder.name}
-                </label>
-                {#if decoder.on}
-                  <button class="icon-button small" aria-label="Try {decoder.name} earlier" disabled={i === 0} onclick={() => moveDecoder(decoder.name, -1)}>
-                    <Icon name="chevron-up" size={12} />
-                  </button>
-                  <button class="icon-button small" aria-label="Try {decoder.name} later" disabled={!decoders[i + 1]?.on} onclick={() => moveDecoder(decoder.name, 1)}>
-                    <Icon name="chevron-down" size={12} />
-                  </button>
-                {/if}
-              </div>
+            <ReorderList
+              items={enabledDecoders}
+              label="Decoders"
+              key={(d) => d.name}
+              onmove={(from, to) => setDecoders(moveItem(enabledDecoders, from, to).map((d) => d.name))}
+            >
+              {#snippet row(decoder)}
+                {@render decoderLabel(decoder)}
+              {/snippet}
+            </ReorderList>
+            {#each decoders.filter((d) => !d.on) as decoder (decoder.name)}
+              <div class="item off">{@render decoderLabel(decoder)}</div>
             {/each}
             <p class="status">Each file plays with the first of these that can open it.</p>
           </div>
@@ -293,6 +286,13 @@
     <Scrollbar target={panel} />
   </div>
 </section>
+
+{#snippet decoderLabel(decoder: { name: string; on: boolean })}
+  <label class="decoder">
+    <input type="checkbox" checked={decoder.on} onchange={(e) => toggleDecoder(decoder.name, e.currentTarget.checked)} />
+    {decoderLabels[decoder.name] ?? decoder.name}
+  </label>
+{/snippet}
 
 <style>
   .screen {
@@ -391,6 +391,10 @@
     align-items: center;
     gap: var(--space-2);
     cursor: pointer;
+  }
+
+  .off {
+    padding-left: 22px;
   }
 
   .icon-button.small {

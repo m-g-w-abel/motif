@@ -6,10 +6,14 @@
   import { installLayoutFiles } from '../../layout/install';
   import type { SortKey } from '../../protocol/SortKey';
   import type { SortRule } from '../../protocol/SortRule';
+  import { moveItem } from '../../reorder';
   import { DEFAULT_RULES, isDefault, SORT_KEYS, sortRules, viewSort } from '../../sort.svelte';
+  import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData } from '../../sources.svelte';
   import Icon from '../Icon.svelte';
+  import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import { rootPath } from '../../layout/overlay';
   import LayoutNode from './LayoutNode.svelte';
 
   let { onEditLayout }: { onEditLayout: () => void } = $props();
@@ -29,7 +33,10 @@
   );
   setViewState(view);
 
-  const data = $derived(trackListData(engine, library, view.source, view.browse.search || null, viewSort(view)));
+  const shownList: Shown<LibraryTracks> = {};
+  const data = $derived(
+    trackListData(engine, library, view.source, view.browse.search || null, viewSort(view), shownList),
+  );
   $effect(() => data.sync?.());
 
   // The search box filters the library once typing pauses.
@@ -62,7 +69,6 @@
     sortRules.set(view.source, next);
   }
   const change = (i: number, rule: Partial<SortRule>) => setRules(rules.map((r, j) => (j === i ? { ...r, ...rule } : r)));
-  const moveUp = (i: number) => setRules([...rules.slice(0, i - 1), rules[i], rules[i - 1], ...rules.slice(i + 1)]);
   const remove = (i: number) => setRules(rules.filter((_, j) => j !== i));
   const add = () =>
     setRules([...rules, { key: sortKeys.find((k) => !rules.some((r) => r.key === k)) ?? 'title', descending: false }]);
@@ -124,40 +130,39 @@
               <button class="link" onclick={() => (view.browse.oneOff = null)}>Use these rules</button>
             </p>
           {/if}
-          <ol>
-            {#each rules as rule, i (i)}
-              <li>
-                <select
-                  aria-label="Sort tier {i + 1}"
-                  value={rule.key}
-                  onchange={(e) => change(i, { key: e.currentTarget.value as SortKey })}
-                >
-                  {#each sortKeys as key (key)}
-                    <option value={key}>{SORT_KEYS[key]}</option>
-                  {/each}
-                </select>
-                <button
-                  class="direction"
-                  title={rule.descending ? 'Descending: click for ascending' : 'Ascending: click for descending'}
-                  onclick={() => change(i, { descending: !rule.descending })}
-                >
-                  {rule.descending ? 'Desc' : 'Asc'}
-                </button>
-                <button class="icon" aria-label="Move up" title="Move up" disabled={i === 0} onclick={() => moveUp(i)}>
-                  ▲
-                </button>
-                <button
-                  class="icon"
-                  aria-label="Remove tier"
-                  title="Remove tier"
-                  disabled={rules.length === 1}
-                  onclick={() => remove(i)}
-                >
-                  <Icon name="close" size={12} />
-                </button>
-              </li>
-            {/each}
-          </ol>
+          <div class="tiers">
+            <ReorderList items={rules} label="Sort tiers" onmove={(from, to) => setRules(moveItem(rules, from, to))}>
+              {#snippet row(rule, i)}
+                <div class="tier">
+                  <select
+                    aria-label="Sort tier {i + 1}"
+                    value={rule.key}
+                    onchange={(e) => change(i, { key: e.currentTarget.value as SortKey })}
+                  >
+                    {#each sortKeys as key (key)}
+                      <option value={key}>{SORT_KEYS[key]}</option>
+                    {/each}
+                  </select>
+                  <button
+                    class="direction"
+                    title={rule.descending ? 'Descending: click for ascending' : 'Ascending: click for descending'}
+                    onclick={() => change(i, { descending: !rule.descending })}
+                  >
+                    {rule.descending ? 'Desc' : 'Asc'}
+                  </button>
+                  <button
+                    class="icon"
+                    aria-label="Remove tier"
+                    title="Remove tier"
+                    disabled={rules.length === 1}
+                    onclick={() => remove(i)}
+                  >
+                    <Icon name="close" size={12} />
+                  </button>
+                </div>
+              {/snippet}
+            </ReorderList>
+          </div>
           {#if rules.length < sortKeys.length}<button onclick={add}>Add a tier</button>{/if}
           {#if !isDefault(rules)}<button onclick={() => setRules([...DEFAULT_RULES])}>Reset to default</button>{/if}
           <p class="tip">Click a column header to sort by it once; this order stays saved.</p>
@@ -165,6 +170,9 @@
       {/if}
     </div>
 
+    {#if layout.arranging}
+      <button class="button primary" onclick={() => (layout.arranging = false)}>Done</button>
+    {/if}
     <div class="layouts" role="radiogroup" aria-label="Layout">
       {#each layout.all as entry (entry.id)}
         <button
@@ -194,6 +202,26 @@
         {#if menuOpen}
           <div class="popover" role="menu">
             <div class="current">{layout.layout.name}</div>
+            <button
+              role="menuitem"
+              onclick={() => {
+                menuOpen = false;
+                layout.arranging = !layout.arranging;
+              }}
+            >
+              {layout.arranging ? 'Stop arranging' : 'Arrange widgets'}
+            </button>
+            {#if layout.edited}
+              <button
+                role="menuitem"
+                onclick={() => {
+                  menuOpen = false;
+                  layout.resetEdits();
+                }}
+              >
+                Reset layout
+              </button>
+            {/if}
             <button role="menuitem" onclick={() => fileInput?.click()}>Add layout file…</button>
             <button
               role="menuitem"
@@ -224,7 +252,7 @@
   </header>
 
   <div class="area" bind:this={area}>
-    <LayoutNode node={layout.layout.root} />
+    <LayoutNode node={layout.root} path={rootPath(layout.root)} />
   </div>
   <Scrollbar target={area} />
 
@@ -391,13 +419,13 @@
     width: 300px;
   }
 
-  .sorting ol {
-    margin: 0;
+  .tiers {
     padding: 0 var(--space-3) var(--space-1);
-    list-style: none;
   }
 
-  .sorting li {
+  .tier {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: var(--space-1);
@@ -415,7 +443,7 @@
     font: inherit;
   }
 
-  .popover li button {
+  .popover .tier button {
     display: grid;
     place-items: center;
     width: 24px;
@@ -426,12 +454,12 @@
     font-size: 10px;
   }
 
-  .popover li .direction {
+  .popover .tier .direction {
     width: 40px;
     font-size: 11px;
   }
 
-  .popover li button:disabled {
+  .popover .tier button:disabled {
     opacity: 0.35;
     cursor: default;
   }

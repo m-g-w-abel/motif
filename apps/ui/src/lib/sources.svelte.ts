@@ -1,7 +1,7 @@
 import { groupConsecutive } from './albums';
 import { demoLibrary, isDemo } from './demo';
 import type { EngineClient } from './engine.svelte';
-import type { LibraryClient } from './library.svelte';
+import { hold, type LibraryClient, type LibraryTracks, type Shown } from './library.svelte';
 import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
@@ -24,6 +24,8 @@ export interface TrackListData {
   details?(index: number): LibraryTrack | undefined;
   /** Stable per-row key. */
   key(index: number): string;
+  /** Changes when the rows are replaced by another order or search, not when they refetch. */
+  readonly order?: object;
   /** Album runs in list order. */
   readonly groups: TrackGroup[];
   readonly totalMs: number;
@@ -48,10 +50,11 @@ export function trackListData(
   kind: ListSource,
   search: string | null = null,
   sort: SortRule[] = [],
+  shown: Shown<LibraryTracks> = {},
 ): TrackListData {
   if (kind === 'queue') return queueData(engine);
   if (isDemo) return demoData(engine);
-  return libraryData(engine, library, search, sort);
+  return libraryData(engine, library, search, sort, shown);
 }
 
 /** Memoises a value computed from the data object's inputs. */
@@ -117,24 +120,30 @@ function libraryData(
   library: LibraryClient,
   search: string | null,
   sort: SortRule[],
+  shown: Shown<LibraryTracks>,
 ): TrackListData {
-  const list = library.tracks(search, sort);
+  const next = library.tracks(search, sort);
+  // Chosen on each read, so the swap follows `next.loaded` wherever the rows are drawn.
+  const list = () => hold(next, shown);
   const run = (query: Parameters<EngineClient['query']>[0]) =>
     engine.query(query).catch((e: Error) => (engine.error = e.message));
   return {
     title: 'Library',
     kind: 'library',
-    get count() {
-      return list.total;
+    get order() {
+      return list();
     },
-    track: (i) => list.get(i)?.track,
-    details: (i) => list.get(i),
-    key: (i) => list.get(i)?.track.id ?? `#${i}`,
+    get count() {
+      return list().total;
+    },
+    track: (i) => list().get(i)?.track,
+    details: (i) => list().get(i),
+    key: (i) => list().get(i)?.track.id ?? `#${i}`,
     get groups() {
-      return list.groups;
+      return list().groups;
     },
     get totalMs() {
-      return list.groups.reduce((n, g) => n + g.duration_ms, 0);
+      return list().groups.reduce((n, g) => n + g.duration_ms, 0);
     },
     get currentKey() {
       const track = engine.current?.track;
@@ -145,7 +154,7 @@ function libraryData(
     // The library keeps tracks whose files are gone or damaged, so they can
     // be found or replaced later; they show why they won't play.
     error: (i) => {
-      const t = list.get(i);
+      const t = list().get(i);
       return t?.missing ? 'File missing' : (t?.problem ?? null);
     },
     get empty() {
@@ -158,10 +167,10 @@ function libraryData(
       if (status.scanning) return { message: 'Scanning your music…', hint: `${status.scanned} files so far` };
       return { message: 'No music found in your folders.', addFolder: true };
     },
-    sync: () => list.sync(),
+    sync: () => list().sync(),
     anchor: (index, onShift) => {
-      list.onShift = onShift;
-      list.setAnchor(index);
+      list().onShift = onShift;
+      list().setAnchor(index);
     },
   };
 }

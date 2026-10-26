@@ -51,6 +51,10 @@ export function parseLayout(text: string, fallbackName = 'Untitled'): ParseResul
   return reader.errors.length || !layout ? { ok: false, errors: reader.errors } : { ok: true, layout };
 }
 
+// Several top-level widgets stack top to bottom.
+const stack = (nodes: LayoutNode[]): LayoutNode =>
+  nodes.length === 1 ? nodes[0] : { kind: 'split', direction: 'column', children: nodes };
+
 const list = (items: readonly string[]) => items.map((i) => `\`${i}\``).join(', ');
 
 class Reader {
@@ -77,14 +81,29 @@ class Reader {
     const description = this.string(header, 'description', '');
     const icon = this.oneOf(header, 'icon', LAYOUT_ICONS, 'list');
 
-    const content = rest.flatMap((node) => {
+    const content: LayoutNode[] = [];
+    let phone: LayoutNode[] | undefined;
+    for (const node of rest) {
       if (node.getName() === 'layout') {
         this.error(node, '`layout` can only appear once, at the top');
-        return [];
+      } else if (node.getName() !== 'when') {
+        const widget = this.contentNode(node);
+        if (widget) content.push(widget);
+      } else {
+        this.check(node, [], 1, true);
+        if (node.getArgument(0) !== 'phone') this.error(node, '`when` takes a device: `when phone { ... }`');
+        else if (phone) this.error(node, '`when phone` can only appear once');
+        else if (!(phone = this.content(node)).length) this.error(node, '`when phone` is empty');
       }
-      return this.contentNode(node) ?? [];
-    });
-    if (rest.length === 0) this.error(header, 'the layout is empty; add a widget such as `tracklist`');
+    }
+    if (content.length === 0 && this.errors.length === 0) {
+      this.error(
+        header,
+        phone
+          ? 'add widgets outside `when phone` too; they are used on wider screens'
+          : 'the layout is empty; add a widget such as `tracklist`',
+      );
+    }
     if (content.length === 0) return null;
 
     return {
@@ -92,8 +111,8 @@ class Reader {
       name,
       description,
       icon,
-      // Several top-level widgets stack top to bottom.
-      root: content.length === 1 ? content[0] : { kind: 'split', direction: 'column', children: content },
+      root: stack(content),
+      phone: phone && stack(phone),
     };
   }
 
@@ -157,6 +176,9 @@ class Reader {
       case 'controls':
         this.check(node, ['size']);
         return { kind: 'panel', panel: name, size: this.size(node) };
+      case 'when':
+        this.error(node, '`when` can only appear at the top of the file, not inside a widget');
+        return null;
       default:
         this.error(node, `unknown widget \`${name}\`; expected one of ${list(CONTENT_NODES)}`);
         return null;

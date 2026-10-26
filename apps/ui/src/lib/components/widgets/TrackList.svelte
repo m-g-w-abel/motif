@@ -9,6 +9,7 @@
   import type { SortKey } from '../../protocol/SortKey';
   import type { TrackGroup } from '../../protocol/TrackGroup';
   import { nextOneOff, sortLabel, viewSort } from '../../sort.svelte';
+  import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
   import { navTarget, scrollInto } from '../../keynav';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, visibleRange } from '../../table';
@@ -34,8 +35,9 @@
 
   const kind = $derived(source ?? view.source);
   const browsing = $derived(kind === 'library');
+  const shownList: Shown<LibraryTracks> = {};
   const data = $derived(
-    trackListData(engine, library, kind, browsing ? view.browse.search || null : null, browsing ? viewSort(view) : []),
+    trackListData(engine, library, kind, browsing ? view.browse.search || null : null, browsing ? viewSort(view) : [], shownList),
   );
   $effect(() => data.sync?.());
   const groups = $derived(style === 'grouped' ? data.groups : null);
@@ -199,6 +201,15 @@
   const visible = $derived(rows.list.slice(range[0], range[1]));
   const padTop = $derived(rows.tops[range[0]] ?? 0);
   const padBottom = $derived(rows.height - (rows.tops[range[1]] ?? rows.height));
+  // A new order or search starts at the top.
+  let order: object | undefined;
+  $effect(() => {
+    const next = data.order;
+    untrack(() => {
+      if (order && next !== order && scroller) scroller.scrollTop = 0;
+      order = next;
+    });
+  });
   // Rows inserted above the first visible one (a scan) must not push it away.
   // Re-pinned on scroll only: a refetch changes `rows` before the shift is reported.
   let anchorOffset = 0;

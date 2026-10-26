@@ -5,6 +5,7 @@
   import { demoLibrary, isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
+  import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto } from '../../keynav';
   import { sortLabel, viewSort } from '../../sort.svelte';
@@ -33,7 +34,9 @@
     ? groupConsecutive(demoLibrary).map((g) => ({ ...g, tracks: g.count, track: demoLibrary[g.start] }))
     : [];
   const sort = $derived(viewSort(view));
-  const albums = $derived(isDemo ? null : library.albums(view.browse.search || null, sort));
+  const shownList: Shown<LibraryAlbums> = {};
+  const nextAlbums = $derived(isDemo ? null : library.albums(view.browse.search || null, sort));
+  const albums = $derived(nextAlbums && hold(nextAlbums, shownList));
   $effect(() => albums?.sync());
   const count = $derived(albums ? albums.total : demoAlbums.length);
   const card = (i: number): Card | undefined => (albums ? albums.get(i) : demoAlbums[i]);
@@ -108,6 +111,16 @@
     const indices = [];
     for (let i = firstRow * columns; i < Math.min(count, lastRow * columns); i++) indices.push(i);
     return indices;
+  });
+
+  // A new order or search starts at the top.
+  let shownAlbums: object | null | undefined;
+  $effect(() => {
+    const next = albums;
+    untrack(() => {
+      if (shownAlbums && next !== shownAlbums && scroller) scroller.scrollTop = 0;
+      shownAlbums = next;
+    });
   });
 
   // Roving focus: one card is in the tab order. If it is virtualised away, the
