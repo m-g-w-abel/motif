@@ -129,12 +129,13 @@ class Reader {
         };
       }
       case 'album-grid':
-        this.check(node, ['card-size', 'size']);
+        this.check(node, ['card-size', 'columns', 'size']);
         return {
           kind: 'panel',
           panel: 'album-grid',
           size: this.size(node),
           cardSize: this.pixels(node, 'card-size', 80, 600) ?? DEFAULT_CARD_SIZE,
+          columns: this.count(node, 'columns', 1, 24),
         };
       case 'track-info':
         this.check(node, ['style', 'size']);
@@ -199,6 +200,14 @@ class Reader {
     if (value === undefined) return undefined;
     if (typeof value === 'number' && value >= min && value <= max) return value;
     this.error(node, `\`${prop}\` must be a number of pixels between ${min} and ${max}, got ${fmt(value)}`);
+    return undefined;
+  }
+
+  count(node: Node, prop: string, min: number, max: number): number | undefined {
+    const value = node.getProperty(prop);
+    if (value === undefined) return undefined;
+    if (typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max) return value;
+    this.error(node, `\`${prop}\` must be a whole number between ${min} and ${max}, got ${fmt(value)}`);
     return undefined;
   }
 

@@ -36,7 +36,7 @@ export type PanelNode = {
   size?: Size;
 } & (
   | { panel: 'tracklist'; style: TracklistStyle; columns: Column[]; maxWidth?: number }
-  | { panel: 'album-grid'; cardSize: number }
+  | { panel: 'album-grid'; cardSize: number; columns?: number }
   | { panel: 'artwork' }
   | { panel: 'track-info'; style: InfoStyle }
   | { panel: 'controls' }
