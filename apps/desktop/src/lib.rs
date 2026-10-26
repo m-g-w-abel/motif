@@ -33,7 +33,7 @@ pub fn run() {
             let hwnd = app
                 .get_webview_window("main")
                 .and_then(|window| window.hwnd().ok())
-                .map(|hwnd| hwnd.0 as *mut std::ffi::c_void);
+                .map(|hwnd| hwnd.0);
             #[cfg(not(windows))]
             let hwnd = None;
             let url = tauri::async_runtime::block_on(start_engine(hwnd))?;

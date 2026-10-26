@@ -221,6 +221,12 @@ impl Library {
                 QueryResult::Done
             }
             LibraryQuery::RemoveRoot { path } => {
+                // Roots are stored resolved (AddRoot canonicalizes), so resolve this
+                // one too; a folder that no longer exists is matched as given.
+                let path = fs::canonicalize(&path)
+                    .ok()
+                    .and_then(|p| p.to_str().map(str::to_string))
+                    .unwrap_or(path);
                 // Removing a folder in Motif is the one way tracks leave the library.
                 conn.execute("DELETE FROM roots WHERE path = ?1", [&path])?;
                 conn.execute(
