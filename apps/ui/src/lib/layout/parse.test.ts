@@ -125,6 +125,50 @@ describe('parseLayout', () => {
     ]);
   });
 
+  it('reads a phone variant', () => {
+    const result = parseLayout(`
+      layout version=1
+      split row {
+        tracklist
+        artwork size=300
+      }
+      when phone {
+        artwork size="40%"
+        tracklist
+      }
+    `);
+    if (!result.ok) throw new Error(JSON.stringify(result.errors));
+    expect(result.layout.root).toMatchObject({ kind: 'split', direction: 'row' });
+    expect(result.layout.phone).toEqual({
+      kind: 'split',
+      direction: 'column',
+      children: [
+        { kind: 'panel', panel: 'artwork', size: { percent: 40 } },
+        { kind: 'panel', panel: 'tracklist', style: 'table', columns: ['index', 'title', 'artist', 'album', 'duration'] },
+      ],
+    });
+  });
+
+  it('leaves out the phone variant when there is none', () => {
+    const result = parseLayout('layout version=1\ntracklist');
+    expect(result.ok && result.layout.phone).toBeUndefined();
+  });
+
+  it('rejects bad variants', () => {
+    const messages = (text: string) => errorsOf(`layout version=1\n${text}`).map((e) => e.message);
+    expect(messages('tracklist\nwhen tablet { tracklist }')).toEqual(['`when` takes a device: `when phone { ... }`']);
+    expect(messages('tracklist\nwhen phone { queue }\nwhen phone { queue }')).toEqual([
+      '`when phone` can only appear once',
+    ]);
+    expect(messages('tracklist\nwhen phone')).toEqual(['`when phone` is empty']);
+    expect(messages('split row { when phone { queue } }')).toEqual([
+      '`when` can only appear at the top of the file, not inside a widget',
+    ]);
+    expect(messages('when phone { queue }')).toEqual([
+      'add widgets outside `when phone` too; they are used on wider screens',
+    ]);
+  });
+
   it('rejects bad sizes and pixel values', () => {
     const messages = errorsOf('layout version=1\nqueue size="150%"\nalbum-grid card-size=20').map((e) => e.message);
     expect(messages).toEqual([

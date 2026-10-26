@@ -41,3 +41,25 @@ describe('LayoutStore', () => {
     expect(store.builtins).toContain(builtin);
   });
 });
+
+describe('LayoutStore edits', () => {
+  it('resizes, reorders and resets the layout on screen', () => {
+    const store = new LayoutStore();
+    store.install('layout version=1 name=Edits\nsplit row { tracklist; artwork size=200 }\n', 'edits.kdl');
+    store.resize('split-row/1.artwork', { px: 320 });
+    store.move('split-row', 2, 1, 0);
+    expect(store.edits).toEqual({ sizes: { 'split-row/1.artwork': { px: 320 } }, order: { 'split-row': [1, 0] } });
+    expect(store.edited).toBe(true);
+    store.resetEdits();
+    expect(store.edited).toBe(false);
+  });
+
+  it('drops edits that no longer fit after the file changes', () => {
+    const store = new LayoutStore();
+    store.install('layout version=1 name=Edits\nsplit row { tracklist; artwork }\n', 'edits.kdl');
+    store.resize('split-row/0.tracklist', { px: 400 });
+    store.resize('split-row/1.artwork', { px: 300 });
+    store.saveEdit('layout version=1 name=Edits\nsplit row { tracklist; queue }\n');
+    expect(store.edits).toEqual({ sizes: { 'split-row/0.tracklist': { px: 400 } } });
+  });
+});
