@@ -4,6 +4,9 @@
   import { isDemo } from '../../demo';
   import { formatTime } from '../../format';
   import { installLayoutFiles } from '../../layout/install';
+  import type { SortKey } from '../../protocol/SortKey';
+  import type { SortRule } from '../../protocol/SortRule';
+  import { DEFAULT_RULES, isDefault, SORT_KEYS, sortRules, viewSort } from '../../sort.svelte';
   import { trackListData } from '../../sources.svelte';
   import Icon from '../Icon.svelte';
   import LayoutNode from './LayoutNode.svelte';
@@ -25,7 +28,7 @@
   );
   setViewState(view);
 
-  const data = $derived(trackListData(engine, library, view.source, view.browse.search || null));
+  const data = $derived(trackListData(engine, library, view.source, view.browse.search || null, viewSort(view)));
   $effect(() => data.sync?.());
 
   // The search box filters the library once typing pauses.
@@ -42,13 +45,31 @@
 
   function onWindowPointer(e: PointerEvent) {
     if (menuOpen && menu && !menu.contains(e.target as Node)) menuOpen = false;
+    if (sortOpen && sortMenu && !sortMenu.contains(e.target as Node)) sortOpen = false;
   }
+
+  // The view's saved sort rules, tier by tier. Editing them drops a one-off
+  // column sort so the edit shows.
+  let sortOpen = $state(false);
+  let sortMenu = $state<HTMLElement>();
+  const rules = $derived(sortRules.rules[view.source]);
+  const sortKeys = Object.keys(SORT_KEYS) as SortKey[];
+
+  function setRules(next: SortRule[]) {
+    view.browse.oneOff = null;
+    sortRules.set(view.source, next);
+  }
+  const change = (i: number, rule: Partial<SortRule>) => setRules(rules.map((r, j) => (j === i ? { ...r, ...rule } : r)));
+  const moveUp = (i: number) => setRules([...rules.slice(0, i - 1), rules[i], rules[i - 1], ...rules.slice(i + 1)]);
+  const remove = (i: number) => setRules(rules.filter((_, j) => j !== i));
+  const add = () =>
+    setRules([...rules, { key: sortKeys.find((k) => !rules.some((r) => r.key === k)) ?? 'title', descending: false }]);
 </script>
 
 <svelte:window
   onpointerdown={onWindowPointer}
   onkeydown={(e) => {
-    if (e.key === 'Escape') menuOpen = false;
+    if (e.key === 'Escape') menuOpen = sortOpen = false;
     if (e.key === 'b' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       toggleNav();
@@ -78,6 +99,68 @@
     <div class="search">
       <Icon name="search" size={14} />
       <input type="search" placeholder="Search" aria-label="Search the library" bind:value={search} />
+    </div>
+
+    <div class="menu" bind:this={sortMenu}>
+      <button
+        class="icon-button"
+        class:active={!isDefault(rules) || view.browse.oneOff}
+        aria-haspopup="dialog"
+        aria-expanded={sortOpen}
+        aria-label="Sort order"
+        title="Sort order"
+        onclick={() => (sortOpen = !sortOpen)}
+      >
+        <Icon name="sort" size={16} />
+      </button>
+      {#if sortOpen}
+        <div class="popover sorting" role="dialog" aria-label="Sort order">
+          <div class="current">Sort by</div>
+          {#if view.browse.oneOff}
+            <p class="tip">
+              Sorted by {SORT_KEYS[view.browse.oneOff.key].toLowerCase()} from a column header for now.
+              <button class="link" onclick={() => (view.browse.oneOff = null)}>Use these rules</button>
+            </p>
+          {/if}
+          <ol>
+            {#each rules as rule, i (i)}
+              <li>
+                <select
+                  aria-label="Sort tier {i + 1}"
+                  value={rule.key}
+                  onchange={(e) => change(i, { key: e.currentTarget.value as SortKey })}
+                >
+                  {#each sortKeys as key (key)}
+                    <option value={key}>{SORT_KEYS[key]}</option>
+                  {/each}
+                </select>
+                <button
+                  class="direction"
+                  title={rule.descending ? 'Descending: click for ascending' : 'Ascending: click for descending'}
+                  onclick={() => change(i, { descending: !rule.descending })}
+                >
+                  {rule.descending ? 'Desc' : 'Asc'}
+                </button>
+                <button class="icon" aria-label="Move up" title="Move up" disabled={i === 0} onclick={() => moveUp(i)}>
+                  ▲
+                </button>
+                <button
+                  class="icon"
+                  aria-label="Remove tier"
+                  title="Remove tier"
+                  disabled={rules.length === 1}
+                  onclick={() => remove(i)}
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </li>
+            {/each}
+          </ol>
+          {#if rules.length < sortKeys.length}<button onclick={add}>Add a tier</button>{/if}
+          {#if !isDefault(rules)}<button onclick={() => setRules([...DEFAULT_RULES])}>Reset to default</button>{/if}
+          <p class="tip">Click a column header to sort by it once; this order stays saved.</p>
+        </div>
+      {/if}
     </div>
 
     <div class="layouts" role="radiogroup" aria-label="Layout">
@@ -299,6 +382,62 @@
 
   .popover button:hover {
     background: var(--hover);
+  }
+
+  .sorting {
+    width: 300px;
+  }
+
+  .sorting ol {
+    margin: 0;
+    padding: 0 var(--space-3) var(--space-1);
+    list-style: none;
+  }
+
+  .sorting li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 2px 0;
+  }
+
+  .sorting select {
+    flex: 1;
+    min-width: 0;
+    height: 24px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .popover li button {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: var(--radius-sm);
+    text-align: center;
+    font-size: 10px;
+  }
+
+  .popover li .direction {
+    width: 40px;
+    font-size: 11px;
+  }
+
+  .popover li button:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .popover .link {
+    display: inline;
+    width: auto;
+    padding: 0;
+    color: var(--accent);
   }
 
   .popover .danger {

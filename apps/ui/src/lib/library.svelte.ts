@@ -3,6 +3,7 @@ import type { EngineClient } from './engine.svelte';
 import type { LibraryAlbum } from './protocol/LibraryAlbum';
 import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { QueryResult } from './protocol/QueryResult';
+import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
 import type { TrackRef } from './protocol/TrackRef';
 
@@ -35,6 +36,7 @@ abstract class PagedList<T> {
   constructor(
     protected engine: EngineClient,
     readonly search: string | null,
+    readonly sort: SortRule[] = [],
   ) {}
 
   /** Refetches if the library changed. Call from an `$effect`. */
@@ -156,13 +158,13 @@ export class LibraryTracks extends PagedList<LibraryTrack> {
   }
 
   protected async fetch(offset: number, limit: number) {
-    const result = await this.engine.query({ type: 'tracks', search: this.search, offset, limit });
+    const result = await this.engine.query({ type: 'tracks', search: this.search, sort: this.sort, offset, limit });
     if (result.type !== 'tracks') throw new Error(`unexpected ${result.type}`);
     return { total: result.total, rows: result.tracks };
   }
 
   protected refresh() {
-    this.engine.query({ type: 'groups', search: this.search }).then((result: QueryResult) => {
+    this.engine.query({ type: 'groups', search: this.search, sort: this.sort }).then((result: QueryResult) => {
       if (result.type === 'groups') this.groups = result.groups;
     });
   }
@@ -174,14 +176,14 @@ export class LibraryAlbums extends PagedList<LibraryAlbum> {
   }
 
   protected async fetch(offset: number, limit: number) {
-    const result = await this.engine.query({ type: 'albums', search: this.search, offset, limit });
+    const result = await this.engine.query({ type: 'albums', search: this.search, sort: this.sort, offset, limit });
     if (result.type !== 'albums') throw new Error(`unexpected ${result.type}`);
     return { total: result.total, rows: result.albums };
   }
 }
 
 /**
- * Shared library state for the UI: list views (cached per search, so
+ * Shared library state for the UI: list views (cached per search and order, so
  * switching layouts reuses fetched pages) and details looked up per track.
  */
 export class LibraryClient {
@@ -202,12 +204,12 @@ export class LibraryClient {
     return this.engine.library;
   }
 
-  tracks(search: string | null): LibraryTracks {
-    return cached(this.#tracks, search, () => new LibraryTracks(this.engine, search));
+  tracks(search: string | null, sort: SortRule[] = []): LibraryTracks {
+    return cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort));
   }
 
-  albums(search: string | null): LibraryAlbums {
-    return cached(this.#albums, search, () => new LibraryAlbums(this.engine, search));
+  albums(search: string | null, sort: SortRule[] = []): LibraryAlbums {
+    return cached(this.#albums, search, sort, () => new LibraryAlbums(this.engine, search, sort));
   }
 
   /** Library details for a queued or playing track; `undefined` while being looked up. */
@@ -256,11 +258,11 @@ export class LibraryClient {
   }
 }
 
-function cached<T>(map: Map<string, T>, search: string | null, make: () => T): T {
-  const key = search ?? '';
+function cached<T>(map: Map<string, T>, search: string | null, sort: SortRule[], make: () => T): T {
+  const key = JSON.stringify([search ?? '', sort]);
   let value = map.get(key);
   if (!value) {
-    // Keep a handful of searches; the oldest go first.
+    // Keep a handful of searches and orders; the oldest go first.
     if (map.size > 8) map.delete(map.keys().next().value!);
     value = make();
     map.set(key, value);

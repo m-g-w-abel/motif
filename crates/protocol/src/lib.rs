@@ -234,9 +234,38 @@ pub struct TrackKeys {
     pub audio_hash: Option<String>,
 }
 
+/// What a library list can be ordered by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SortKey {
+    AlbumArtist,
+    Artist,
+    Album,
+    Year,
+    /// When the track first entered the library.
+    Added,
+    Title,
+    Genre,
+    Disc,
+    Track,
+    Duration,
+    Format,
+    Path,
+}
+
+/// One tier of a list's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SortRule {
+    pub key: SortKey,
+    pub descending: bool,
+}
+
 /// Questions and requests for the library. Lists are paged so a large
-/// library never crosses the wire at once; all use the same order (album
-/// artist, album, disc, track) and an optional search.
+/// library never crosses the wire at once. Each takes an optional search and
+/// `sort`, tiered rules applied in turn (empty for the default: album artist,
+/// album, disc, track); queries that should agree must send the same rules.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
@@ -244,21 +273,29 @@ pub enum LibraryQuery {
     Status,
     Tracks {
         search: Option<String>,
+        #[serde(default)]
+        sort: Vec<SortRule>,
         offset: u32,
         limit: u32,
     },
     /// Runs of consecutive tracks from one album, for album headers.
     Groups {
         search: Option<String>,
+        #[serde(default)]
+        sort: Vec<SortRule>,
     },
     Albums {
         search: Option<String>,
+        #[serde(default)]
+        sort: Vec<SortRule>,
         offset: u32,
         limit: u32,
     },
     /// Index of an album's first track in [`LibraryQuery::Tracks`].
     AlbumPosition {
         search: Option<String>,
+        #[serde(default)]
+        sort: Vec<SortRule>,
         album: String,
     },
     /// Library details (artwork, format…) for tracks by path, e.g. the queue
@@ -269,10 +306,14 @@ pub enum LibraryQuery {
     /// Replaces the queue with the matching tracks and plays from `start`.
     Play {
         search: Option<String>,
+        #[serde(default)]
+        sort: Vec<SortRule>,
         start: u32,
     },
     PlayAlbum {
         album: String,
+        #[serde(default)]
+        sort: Vec<SortRule>,
     },
     AddRoot {
         path: String,

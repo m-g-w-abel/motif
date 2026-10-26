@@ -1,6 +1,7 @@
 import { format, parse } from '@bgotink/kdl';
 import type { Layout } from './model';
 import { parseLayout, type LayoutError } from './parse';
+import type { SortRule } from '../protocol/SortRule';
 import { builtinLayouts, type LayoutSource } from './presets';
 
 // Layouts are a client-side concern: user layouts and the choice of layout
@@ -22,6 +23,8 @@ export interface BrowseState {
   focusAlbum: string | null;
   /** What the library is filtered to; empty for everything. */
   search: string;
+  /** A column header's sort, used instead of the saved rules until clicked away; never saved. */
+  oneOff: SortRule | null;
 }
 
 function load(key: string): string | null {
@@ -103,7 +106,7 @@ export class LayoutStore {
   browseState(key: string): BrowseState {
     const existing = this.#browse.get(key);
     if (existing) return existing;
-    const created: BrowseState = $state({ selected: null, focusAlbum: null, search: '' });
+    const created: BrowseState = $state({ selected: null, focusAlbum: null, search: '', oneOff: null });
     this.#browse.set(key, created);
     return created;
   }

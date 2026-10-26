@@ -6,6 +6,7 @@
   import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
   import type { TrackRef } from '../../protocol/TrackRef';
+  import { viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
 
   let { cardSize }: { cardSize: number } = $props();
@@ -28,7 +29,8 @@
   const demoAlbums: Card[] = isDemo
     ? groupConsecutive(demoLibrary).map((g) => ({ ...g, tracks: g.count, track: demoLibrary[g.start] }))
     : [];
-  const albums = $derived(isDemo ? null : library.albums(view.browse.search || null));
+  const sort = $derived(viewSort(view));
+  const albums = $derived(isDemo ? null : library.albums(view.browse.search || null, sort));
   $effect(() => albums?.sync());
   const count = $derived(albums ? albums.total : demoAlbums.length);
   const card = (i: number): Card | undefined => (albums ? albums.get(i) : demoAlbums[i]);
@@ -38,7 +40,7 @@
       const start = demoLibrary.indexOf(album.track);
       engine.run({ type: 'set_queue', tracks: demoLibrary.slice(start, start + album.tracks), start: 0 });
     } else {
-      engine.query({ type: 'play_album', album: album.key }).catch((e: Error) => (engine.error = e.message));
+      engine.query({ type: 'play_album', album: album.key, sort }).catch((e: Error) => (engine.error = e.message));
     }
   }
 

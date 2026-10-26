@@ -17,8 +17,8 @@ use std::{
 };
 
 use protocol::{
-    LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack, QueryResult, TrackGroup, TrackKeys,
-    TrackRef,
+    LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack, QueryResult, SortRule, TrackGroup,
+    TrackKeys, TrackRef,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
@@ -113,6 +113,7 @@ impl Library {
             },
             LibraryQuery::Tracks {
                 search,
+                sort,
                 offset,
                 limit,
             } => {
@@ -125,7 +126,7 @@ impl Library {
                 let mut stmt = conn.prepare(&format!(
                     "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} {} LIMIT ?2 OFFSET ?3",
                     db::SEARCH,
-                    db::ORDER
+                    db::order(&sort)
                 ))?;
                 let tracks = stmt
                     .query_map(params![fts, limit, offset], library_track)?
@@ -136,11 +137,12 @@ impl Library {
                     tracks,
                 }
             }
-            LibraryQuery::Groups { search } => QueryResult::Groups {
-                groups: groups(&conn, search.as_deref())?,
+            LibraryQuery::Groups { search, sort } => QueryResult::Groups {
+                groups: groups(&conn, search.as_deref(), &sort)?,
             },
             LibraryQuery::Albums {
                 search,
+                sort,
                 offset,
                 limit,
             } => {
@@ -157,11 +159,10 @@ impl Library {
                 let mut stmt = conn.prepare(&format!(
                     "SELECT {key} AS k, coalesce(album, ''), coalesce(album_artist, artist, ''), min(year),
                             count(*), sum(coalesce(duration_ms, 0)), max(art)
-                     FROM tracks WHERE {search} GROUP BY k
-                     ORDER BY lower(coalesce(album_artist, artist, '')), lower(coalesce(album, ''))
-                     LIMIT ?2 OFFSET ?3",
+                     FROM tracks WHERE {search} GROUP BY k {order} LIMIT ?2 OFFSET ?3",
                     key = db::ALBUM_KEY,
-                    search = db::SEARCH
+                    search = db::SEARCH,
+                    order = db::album_order(&sort)
                 ))?;
                 let albums = stmt
                     .query_map(params![fts, limit, offset], |r| {
@@ -182,8 +183,12 @@ impl Library {
                     albums,
                 }
             }
-            LibraryQuery::AlbumPosition { search, album } => QueryResult::Position {
-                index: groups(&conn, search.as_deref())?
+            LibraryQuery::AlbumPosition {
+                search,
+                sort,
+                album,
+            } => QueryResult::Position {
+                index: groups(&conn, search.as_deref(), &sort)?
                     .into_iter()
                     .find(|g| g.key == album)
                     .map(|g| g.start),
@@ -265,20 +270,24 @@ impl Library {
     pub fn selection(&self, query: &LibraryQuery) -> Result<(Vec<TrackRef>, u32)> {
         let conn = self.db();
         let (sql, arg, start) = match query {
-            LibraryQuery::Play { search, start } => (
+            LibraryQuery::Play {
+                search,
+                sort,
+                start,
+            } => (
                 format!(
                     "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} {}",
                     db::SEARCH,
-                    db::ORDER
+                    db::order(sort)
                 ),
                 db::fts_query(search.as_deref()),
                 *start,
             ),
-            LibraryQuery::PlayAlbum { album } => (
+            LibraryQuery::PlayAlbum { album, sort } => (
                 format!(
                     "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 {}",
                     db::ALBUM_KEY,
-                    db::ORDER
+                    db::order(sort)
                 ),
                 Some(album.clone()),
                 0,
@@ -400,13 +409,13 @@ fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
 }
 
 /// Runs of consecutive tracks from the same album, in list order.
-fn groups(conn: &Connection, search: Option<&str>) -> Result<Vec<TrackGroup>> {
+fn groups(conn: &Connection, search: Option<&str>, sort: &[SortRule]) -> Result<Vec<TrackGroup>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {}, coalesce(album, ''), coalesce(album_artist, artist, ''), coalesce(duration_ms, 0)
          FROM tracks WHERE {} {}",
         db::ALBUM_KEY,
         db::SEARCH,
-        db::ORDER
+        db::order(sort)
     ))?;
     let mut rows = stmt.query([db::fts_query(search)])?;
     let mut groups: Vec<TrackGroup> = Vec::new();
