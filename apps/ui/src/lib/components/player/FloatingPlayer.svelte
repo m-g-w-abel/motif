@@ -55,25 +55,13 @@
     const dx = e.clientX - rect.left;
     const dy = e.clientY - rect.top;
     const b = box();
+    // Otherwise the drag also selects text across the page.
+    e.preventDefault();
     el.setPointerCapture(e.pointerId);
 
-    // Pointer events can outpace the screen: apply at most one move per frame.
-    let last = e;
-    let frame = 0;
-    const apply = () => {
-      frame = 0;
-      pos = place(last.clientX - dx, last.clientY - dy, b);
-    };
-    const move = (ev: PointerEvent) => {
-      last = ev;
-      frame ||= requestAnimationFrame(apply);
-    };
+    const move = (ev: PointerEvent) => (pos = place(ev.clientX - dx, ev.clientY - dy, b));
     const end = () => {
       el?.removeEventListener('pointermove', move);
-      if (frame) {
-        cancelAnimationFrame(frame);
-        apply();
-      }
       pos = snap(pos, b);
       save();
     };
