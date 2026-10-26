@@ -39,7 +39,10 @@
     img.src = src(next);
     img.decode().then(
       () => (shown = next),
-      () => (failed = next),
+      () => {
+        failed = next;
+        shown = null;
+      },
     );
     return () => (img.src = '');
   });
