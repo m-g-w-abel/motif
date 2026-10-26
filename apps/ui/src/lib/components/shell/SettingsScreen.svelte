@@ -1,13 +1,14 @@
 <script lang="ts">
   import { getApp } from '../../context';
   import { addFolder } from '../../folders';
+  import { installTheme } from '../../layout/install';
   import type { Settings } from '../../settings.svelte';
   import type { SettingsGroup } from '../../settingsView.svelte';
   import { SYSTEM_THEMES, THEMES, themeById } from '../../themes';
   import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
 
-  const { settings, engine, library, settingsView } = getApp();
+  const { settings, themes, engine, library, settingsView } = getApp();
   let panel = $state<HTMLElement>();
 
   const groups: { id: SettingsGroup; label: string }[] = [
@@ -66,8 +67,19 @@
     { key: 'player', label: 'Player', options: [['bar', 'Bar'], ['floating', 'Floating']] },
   ] as [Choice<'density'>, Choice<'player'>];
 
-  const themeOptions = [
-    ...THEMES.map((t) => ({ id: t.id, name: t.name, preview: t, split: null })),
+  let themeInput = $state<HTMLInputElement>();
+  const activeUserTheme = $derived(themes.byId(settings.current.theme));
+
+  async function pickThemes(files: FileList | null) {
+    for (const file of files ?? []) {
+      const id = installTheme(themes, await file.text(), file.name);
+      if (id) settings.set('theme', id);
+    }
+    if (themeInput) themeInput.value = '';
+  }
+
+  const themeOptions = $derived([
+    ...[...THEMES, ...themes.list].map((t) => ({ id: t.id, name: t.name, preview: t, split: null })),
     // "System" previews both of its themes, half and half.
     {
       id: 'system',
@@ -75,7 +87,7 @@
       preview: themeById(SYSTEM_THEMES.light),
       split: themeById(SYSTEM_THEMES.dark),
     },
-  ];
+  ]);
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && settingsView.close()} />
@@ -126,6 +138,22 @@
               </button>
             {/each}
           </div>
+          <div class="actions">
+            <button class="button" onclick={() => themeInput?.click()}>Install theme…</button>
+            {#if activeUserTheme}
+              <button
+                class="button"
+                onclick={() => {
+                  themes.remove(activeUserTheme.id);
+                  settings.set('theme', 'graphite');
+                }}
+              >
+                Remove “{activeUserTheme.name}”
+              </button>
+            {/if}
+            <input bind:this={themeInput} type="file" accept=".kdl" multiple hidden onchange={(e) => pickThemes(e.currentTarget.files)} />
+          </div>
+          <p class="status">Or drop a theme .kdl file onto the window.</p>
         </div>
 
         {#each choices as choice (choice.key)}
