@@ -1,10 +1,15 @@
 //! The scanner thread: walks the library folders, stores what changed, then
-//! fills in audio hashes in the background. A file watcher triggers rescans.
+//! fills in audio hashes in the background. A file watcher (optional)
+//! triggers rescans when files change outside Motif.
+//!
+//! The database is the source of truth for the library: a file that
+//! disappears is marked missing, never forgotten, so it can be found or
+//! fetched again later. Only removing a folder in Motif deletes tracks.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, mpsc},
     time::{Duration, Instant, UNIX_EPOCH},
 };
@@ -20,7 +25,7 @@ pub enum Request {
     Rescan,
     /// Something changed on disk; rescan once things settle.
     Changed,
-    /// The set of roots changed: rewatch and rescan.
+    /// The roots or the watch setting changed: rewatch and rescan.
     Roots,
 }
 
@@ -28,14 +33,18 @@ pub enum Request {
 /// an album triggers one scan, not one per file.
 const SETTLE: Duration = Duration::from_secs(3);
 
+/// Scan progress is published every this many files, not every file, so a
+/// fast disk doesn't flood every screen with updates.
+const PROGRESS_STEP: u32 = 100;
+
 pub fn run(
     shared: Arc<Shared>,
     mut conn: Connection,
     requests: mpsc::Receiver<Request>,
     notify_tx: mpsc::Sender<Request>,
 ) {
-    let mut watcher = make_watcher(notify_tx);
-    rewatch(&mut watcher, &conn);
+    let mut watcher = None;
+    rewatch(&mut watcher, &notify_tx, &conn);
     let mut pending = true; // scan at start-up
     let mut changed_at: Option<Instant> = None;
     loop {
@@ -62,7 +71,7 @@ pub fn run(
             Ok(Request::Rescan) => pending = true,
             Ok(Request::Changed) => changed_at = Some(Instant::now()),
             Ok(Request::Roots) => {
-                rewatch(&mut watcher, &conn);
+                rewatch(&mut watcher, &notify_tx, &conn);
                 pending = true;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -74,25 +83,33 @@ pub fn run(
     }
 }
 
-fn make_watcher(tx: mpsc::Sender<Request>) -> Option<notify::RecommendedWatcher> {
-    notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+/// Watches every root for outside changes, or nothing if watching is off.
+fn rewatch(
+    watcher: &mut Option<notify::RecommendedWatcher>,
+    tx: &mpsc::Sender<Request>,
+    conn: &Connection,
+) {
+    // Recreated each time: notify has no "unwatch everything".
+    *watcher = None;
+    if !db::watching(conn) {
+        return;
+    }
+    let tx = tx.clone();
+    let made = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if event.is_ok_and(|e| !e.kind.is_access()) {
             let _ = tx.send(Request::Changed);
         }
-    })
-    .inspect_err(|err| tracing::warn!(%err, "can't watch library folders"))
-    .ok()
-}
-
-fn rewatch(watcher: &mut Option<notify::RecommendedWatcher>, conn: &Connection) {
-    let Some(watcher) = watcher else { return };
-    // notify has no "unwatch all"; recreating per root change is overkill, so
-    // just add every root (adding twice is harmless).
+    });
+    let Ok(mut new) = made.inspect_err(|err| tracing::warn!(%err, "can't watch library folders"))
+    else {
+        return;
+    };
     for root in db::roots(conn).unwrap_or_default() {
-        if let Err(err) = watcher.watch(Path::new(&root), RecursiveMode::Recursive) {
+        if let Err(err) = new.watch(Path::new(&root), RecursiveMode::Recursive) {
             tracing::warn!(root, %err, "can't watch folder");
         }
     }
+    *watcher = Some(new);
 }
 
 fn mtime(meta: &fs::Metadata) -> i64 {
@@ -102,9 +119,17 @@ fn mtime(meta: &fs::Metadata) -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// What the database knows about a file under a root.
+struct Known {
+    size: i64,
+    mtime: i64,
+    missing: bool,
+}
+
 /// Brings the database in line with the folders: new and changed files are
-/// read, files that are gone are removed. A root that is missing (an
-/// unplugged drive) is left alone rather than emptied.
+/// read, files that are gone are marked missing (and unmarked if they come
+/// back). A root that is unavailable (unplugged, or an empty mount point
+/// where tracks used to be) is left untouched.
 fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
     let roots = db::roots(conn)?;
     shared.update(|s| {
@@ -114,40 +139,69 @@ fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
     });
     let started = Instant::now();
     let mut folder_art = tags::FolderArt::default();
-    let mut missing = Vec::new();
+    let mut unavailable = Vec::new();
     let mut changes = 0;
+    let mut scanned = 0u32;
     for root in &roots {
-        if !Path::new(root).is_dir() {
-            missing.push(root.clone());
+        let known: HashMap<String, Known> = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT path, size, mtime, missing FROM tracks WHERE {}",
+                db::UNDER_ROOT
+            ))?;
+            stmt.query_map([root], |r| {
+                Ok((
+                    r.get(0)?,
+                    Known {
+                        size: r.get(1)?,
+                        mtime: r.get(2)?,
+                        missing: r.get(3)?,
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()?
+        };
+        let files: Vec<_> = if Path::new(root).is_dir() {
+            WalkDir::new(root)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|e| e.file_type().is_file() && tags::is_audio(e.path()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if files.is_empty() && !known.is_empty() {
+            // Looks unplugged: marking everything missing would only be noise.
+            unavailable.push(root.clone());
             continue;
         }
-        let known: std::collections::HashMap<String, (i64, i64)> = {
-            let mut stmt = conn.prepare(
-                "SELECT path, size, mtime FROM tracks WHERE substr(path, 1, length(?1)) = ?1",
-            )?;
-            stmt.query_map([root], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
-                .collect::<rusqlite::Result<_>>()?
-        };
+
         let mut seen = HashSet::new();
         let mut batch = conn.transaction()?;
-        for entry in WalkDir::new(root)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
+        for entry in files {
             let path = entry.path();
-            if !entry.file_type().is_file() || !tags::is_audio(path) {
-                continue;
-            }
             let Some(path_str) = path.to_str().map(str::to_string) else {
                 continue;
             };
             let Ok(meta) = entry.metadata() else { continue };
             let (size, mtime) = (meta.len() as i64, mtime(&meta));
             seen.insert(path_str.clone());
-            shared.update(|s| s.scanned += 1);
-            if known.get(&path_str) == Some(&(size, mtime)) {
-                continue;
+            scanned += 1;
+            if scanned.is_multiple_of(PROGRESS_STEP) {
+                shared.update(|s| s.scanned = scanned);
+            }
+            match known.get(&path_str) {
+                Some(k) if (k.size, k.mtime) == (size, mtime) => {
+                    if k.missing {
+                        batch.execute(
+                            "UPDATE tracks SET missing = 0 WHERE path = ?1",
+                            [&path_str],
+                        )?;
+                        changes += 1;
+                    }
+                    continue;
+                }
+                _ => {}
             }
             store(
                 &batch,
@@ -170,33 +224,37 @@ fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
                 batch = conn.transaction()?;
             }
         }
-        for gone in known.keys().filter(|p| !seen.contains(*p)) {
-            batch.execute("DELETE FROM tracks WHERE path = ?1", [gone])?;
+        for (path, _) in known
+            .iter()
+            .filter(|(p, k)| !k.missing && !seen.contains(*p))
+        {
+            batch.execute("UPDATE tracks SET missing = 1 WHERE path = ?1", [path])?;
             changes += 1;
         }
         batch.commit()?;
     }
-    conn.execute(
-        "DELETE FROM art WHERE key NOT IN (SELECT art FROM tracks WHERE art IS NOT NULL)",
-        [],
-    )?;
     let tracks = db::track_count(conn)?;
+    let missing = conn.query_row("SELECT count(*) FROM tracks WHERE missing = 1", [], |r| {
+        r.get(0)
+    })?;
     let hashing = conn.query_row(
-        "SELECT count(*) FROM tracks WHERE audio_hash IS NULL",
+        "SELECT count(*) FROM tracks WHERE audio_hash IS NULL AND missing = 0",
         [],
         |r| r.get(0),
     )?;
     tracing::info!(tracks, changes, elapsed = ?started.elapsed(), "library scan done");
     shared.update(|s| {
         s.scanning = false;
+        s.scanned = scanned;
         s.tracks = tracks;
+        s.missing = missing;
         s.hashing = hashing;
         s.roots = roots.clone();
         if changes > 0 {
             s.revision += 1;
         }
-        if !missing.is_empty() {
-            s.error = Some(format!("not available: {}", missing.join(", ")));
+        if !unavailable.is_empty() {
+            s.error = Some(format!("not available: {}", unavailable.join(", ")));
         }
     });
     Ok(())
@@ -214,9 +272,7 @@ fn store(
     let t = tags::read(path);
     let art = match &t.picture {
         Some((bytes, ext)) => save_embedded_art(shared, tx, bytes, ext),
-        None => folder_art.find(path).and_then(|file| {
-            let bytes = fs::read(&file).ok()?;
-            let key = art_key(&bytes);
+        None => folder_art.find(path).and_then(|(file, key)| {
             tx.execute(
                 "INSERT OR IGNORE INTO art (key, path) VALUES (?1, ?2)",
                 params![key, file.to_str()?],
@@ -225,7 +281,8 @@ fn store(
             Some(key)
         }),
     };
-    // A changed file keeps its row (and id) but loses a hash that may be stale.
+    // A changed file keeps its row (and id) but loses a hash that may be
+    // stale and any problem noted before.
     tx.execute(
         "INSERT INTO tracks (path, size, mtime, title, artist, album, album_artist, track_no, disc_no, year, genre,
              duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, art)
@@ -233,7 +290,7 @@ fn store(
          ON CONFLICT (path) DO UPDATE SET size = ?2, mtime = ?3, title = ?4, artist = ?5, album = ?6,
              album_artist = ?7, track_no = ?8, disc_no = ?9, year = ?10, genre = ?11, duration_ms = ?12,
              codec = ?13, sample_rate = ?14, bit_depth = ?15, channels = ?16, bitrate = ?17,
-             musicbrainz_recording = ?18, isrc = ?19, art = ?20, audio_hash = NULL",
+             musicbrainz_recording = ?18, isrc = ?19, art = ?20, audio_hash = NULL, missing = 0, problem = NULL",
         params![
             path_str,
             size,
@@ -287,11 +344,13 @@ fn save_embedded_art(
 }
 
 /// Hashes one track still missing its audio hash. Returns false when there
-/// is nothing left to do.
+/// is nothing left to do, or when a file has vanished (its drive was
+/// probably unplugged): hashing then waits for the next scan to sort out
+/// what is really missing.
 fn hash_next(shared: &Shared, conn: &Connection) -> bool {
     let next: Option<(i64, String)> = conn
         .query_row(
-            "SELECT id, path FROM tracks WHERE audio_hash IS NULL ORDER BY id LIMIT 1",
+            "SELECT id, path FROM tracks WHERE audio_hash IS NULL AND missing = 0 ORDER BY id LIMIT 1",
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -299,15 +358,25 @@ fn hash_next(shared: &Shared, conn: &Connection) -> bool {
         .ok()
         .flatten();
     let Some((id, path)) = next else { return false };
-    // Unreadable files get an empty hash so they aren't retried every time.
-    let value = hash::audio_hash(&PathBuf::from(&path)).unwrap_or_else(|err| {
-        tracing::debug!(path, %err, "can't hash");
-        String::new()
-    });
-    let _ = conn.execute(
-        "UPDATE tracks SET audio_hash = ?1 WHERE id = ?2",
-        params![value, id],
-    );
+    let result = match hash::audio_hash(Path::new(&path)) {
+        Ok(hash) => conn.execute(
+            "UPDATE tracks SET audio_hash = ?1 WHERE id = ?2",
+            params![hash, id],
+        ),
+        Err(_) if !Path::new(&path).exists() => return false,
+        // Present but undecodable: note why, with an empty hash so it isn't retried.
+        Err(problem) => {
+            tracing::debug!(path, problem, "damaged file");
+            conn.execute(
+                "UPDATE tracks SET audio_hash = '', problem = ?1 WHERE id = ?2",
+                params![problem, id],
+            )
+        }
+    };
+    if let Err(err) = result {
+        tracing::warn!(%err, "can't store audio hash");
+        return false;
+    }
     shared.update(|s| s.hashing = s.hashing.saturating_sub(1));
     true
 }

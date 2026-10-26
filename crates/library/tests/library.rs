@@ -46,6 +46,23 @@ fn wait_until(library: &Library, done: impl Fn(&protocol::LibraryStatus) -> bool
     }
 }
 
+fn track(library: &Library, title: &str) -> protocol::LibraryTrack {
+    let query = LibraryQuery::Tracks {
+        search: None,
+        offset: 0,
+        limit: 100,
+    };
+    let QueryResult::Tracks { tracks, .. } = library.query(query).unwrap() else {
+        panic!()
+    };
+    tracks
+        .into_iter()
+        .find(|t| {
+            t.track.title.as_deref() == Some(title) || t.track.id.ends_with(&format!("{title}.mp3"))
+        })
+        .unwrap_or_else(|| panic!("no track {title}"))
+}
+
 fn titles(library: &Library, search: Option<&str>) -> Vec<String> {
     let query = LibraryQuery::Tracks {
         search: search.map(Into::into),
@@ -156,15 +173,69 @@ fn scans_queries_matches_and_rescans() {
         "{hashes:?}"
     );
 
-    fs::remove_file(music.join("Artist A/First Album/02 Closing.flac")).unwrap();
+    // A file that disappears stays in the library, marked missing, and comes
+    // back (same row) when it reappears.
+    let closing = music.join("Artist A/First Album/02 Closing.flac");
+    let kept = fs::read(&closing).unwrap();
+    let id_before = track(&library, "Closing").id;
+    fs::remove_file(&closing).unwrap();
     library.query(LibraryQuery::Rescan).unwrap();
-    wait_until(&library, |s| s.tracks == 3 && !s.scanning);
+    wait_until(&library, |s| s.missing == 1 && !s.scanning);
+    assert_eq!(library.status().tracks, 4);
+    assert!(track(&library, "Closing").missing);
+    fs::write(&closing, kept).unwrap();
+    library.query(LibraryQuery::Rescan).unwrap();
+    wait_until(&library, |s| s.missing == 0 && !s.scanning);
+    assert_eq!(track(&library, "Closing").id, id_before);
 
+    // A damaged file is listed, with the reason it can't be played.
+    fs::write(
+        music.join("Artist A/First Album/03 Broken.mp3"),
+        vec![0u8; 2048],
+    )
+    .unwrap();
+    library.query(LibraryQuery::Rescan).unwrap();
+    wait_until(&library, |s| s.tracks == 5 && !s.scanning && s.hashing == 0);
+    assert!(track(&library, "03 Broken").problem.is_some());
+
+    // A sibling folder whose name starts the same is a separate root.
+    let sibling = PathBuf::from(format!("{}2", music.display()));
+    fs::create_dir_all(&sibling).unwrap();
+    fs::copy(
+        music.join("Artist B/Second Album/01 Beginning.mp3"),
+        sibling.join("Other.mp3"),
+    )
+    .unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: sibling.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 6 && !s.scanning);
+    library.query(LibraryQuery::Rescan).unwrap();
+    wait_until(&library, |s| !s.scanning);
+    assert_eq!((library.status().tracks, library.status().missing), (6, 0));
+
+    // An emptied folder (an unmounted drive's mount point) is reported, not
+    // marked missing.
+    fs::remove_file(sibling.join("Other.mp3")).unwrap();
+    library.query(LibraryQuery::Rescan).unwrap();
+    wait_until(&library, |s| !s.scanning && s.error.is_some());
+    assert_eq!(library.status().missing, 0);
+    assert!(library.status().error.unwrap().contains("not available"));
+
+    library
+        .query(LibraryQuery::SetWatching { enabled: false })
+        .unwrap();
+    assert!(!library.status().watching);
+
+    // Removing a folder in Motif removes its tracks, and only its tracks.
     library
         .query(LibraryQuery::RemoveRoot {
             path: music.to_str().unwrap().into(),
         })
         .unwrap();
-    wait_until(&library, |s| s.tracks == 0);
+    wait_until(&library, |s| s.tracks == 1);
+    let _ = fs::remove_dir_all(sibling);
     let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
 }

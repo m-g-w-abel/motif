@@ -13,4 +13,12 @@ bitrate: number | null,
 /**
  * Artwork id, served at `/art/<id>`.
  */
-art: string | null, };
+art: string | null, 
+/**
+ * The file is no longer where the library last saw it.
+ */
+missing: boolean, 
+/**
+ * Why the file can't be played, if it is damaged.
+ */
+problem: string | null, };

@@ -188,17 +188,17 @@ fn codec_name(file_type: FileType, path: &Path) -> String {
     }
 }
 
-/// Finds `cover.jpg`, `folder.png` and the like next to a file, remembering
-/// the answer per folder.
+/// Finds `cover.jpg`, `folder.png` and the like next to a file, with the
+/// image's artwork key, remembering the answer per folder.
 #[derive(Default)]
 pub struct FolderArt {
-    seen: HashMap<PathBuf, Option<PathBuf>>,
+    seen: HashMap<PathBuf, Option<(PathBuf, String)>>,
 }
 
 const ART_NAMES: &[&str] = &["cover", "folder", "front", "album", "albumart"];
 
 impl FolderArt {
-    pub fn find(&mut self, file: &Path) -> Option<PathBuf> {
+    pub fn find(&mut self, file: &Path) -> Option<(PathBuf, String)> {
         let dir = file.parent()?;
         self.seen
             .entry(dir.to_path_buf())
@@ -230,7 +230,9 @@ impl FolderArt {
                         .to_ascii_lowercase();
                     ART_NAMES.iter().position(|n| *n == stem)
                 });
-                found.into_iter().next()
+                let image = found.into_iter().next()?;
+                let key = crate::scan::art_key(&fs::read(&image).ok()?);
+                Some((image, key))
             })
             .clone()
     }

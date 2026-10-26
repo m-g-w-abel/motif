@@ -129,6 +129,12 @@ function libraryData(engine: EngineClient, library: LibraryClient, search: strin
     },
     play: (start) => void run({ type: 'play', search, start }),
     playGroup: (g) => void run({ type: 'play_album', album: g.key }),
+    // The library keeps tracks whose files are gone or damaged, so they can
+    // be found or replaced later; they show why they won't play.
+    error: (i) => {
+      const t = list.get(i);
+      return t?.missing ? 'File missing' : (t?.problem ?? null);
+    },
     get empty() {
       const status = library.status;
       if (!status) return { message: 'This engine has no library.' };

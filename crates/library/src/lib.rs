@@ -66,6 +66,10 @@ impl Library {
         let status = LibraryStatus {
             roots: db::roots(&conn)?,
             tracks: db::track_count(&conn)?,
+            missing: conn.query_row("SELECT count(*) FROM tracks WHERE missing = 1", [], |r| {
+                r.get(0)
+            })?,
+            watching: db::watching(&conn),
             ..Default::default()
         };
         let shared = Arc::new(Shared {
@@ -217,9 +221,10 @@ impl Library {
                 QueryResult::Done
             }
             LibraryQuery::RemoveRoot { path } => {
+                // Removing a folder in Motif is the one way tracks leave the library.
                 conn.execute("DELETE FROM roots WHERE path = ?1", [&path])?;
                 conn.execute(
-                    "DELETE FROM tracks WHERE substr(path, 1, length(?1)) = ?1",
+                    &format!("DELETE FROM tracks WHERE {}", db::UNDER_ROOT),
                     [&path],
                 )?;
                 self.roots_changed(&conn)?;
@@ -227,6 +232,12 @@ impl Library {
             }
             LibraryQuery::Rescan => {
                 let _ = self.scanner.send(scan::Request::Rescan);
+                QueryResult::Done
+            }
+            LibraryQuery::SetWatching { enabled } => {
+                db::set_watching(&conn, enabled)?;
+                self.shared.update(|s| s.watching = enabled);
+                let _ = self.scanner.send(scan::Request::Roots);
                 QueryResult::Done
             }
         })
@@ -284,7 +295,7 @@ impl Library {
         let by = |column: &str, value: &Option<String>| -> Option<String> {
             let value = value.as_ref().filter(|v| !v.is_empty())?;
             conn.query_row(
-                &format!("SELECT path FROM tracks WHERE {column} = ?1 LIMIT 1"),
+                &format!("SELECT path FROM tracks WHERE {column} = ?1 AND missing = 0 LIMIT 1"),
                 [value],
                 |r| r.get(0),
             )
@@ -301,7 +312,8 @@ impl Library {
                 let duration = track.duration_ms.map_or(-1, |d| d as i64);
                 conn.query_row(
                     "SELECT path FROM tracks
-                     WHERE lower(title) = lower(?1) AND lower(coalesce(artist, album_artist)) = lower(?2)
+                     WHERE missing = 0 AND lower(title) = lower(?1)
+                       AND lower(coalesce(artist, album_artist)) = lower(?2)
                        AND (?3 < 0 OR abs(coalesce(duration_ms, ?3) - ?3) <= 2000)
                      ORDER BY lower(coalesce(album, '')) = lower(coalesce(?4, '')) DESC LIMIT 1",
                     params![title.trim(), artist.trim(), duration, track.album],
@@ -346,7 +358,8 @@ impl Library {
 }
 
 const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track_no, disc_no, year, genre, \
-     duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, audio_hash, art";
+     duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, audio_hash, art, \
+     missing, problem";
 
 fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
     Ok(LibraryTrack {
@@ -375,6 +388,8 @@ fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
         channels: r.get(14)?,
         bitrate: r.get(15)?,
         art: r.get(19)?,
+        missing: r.get(20)?,
+        problem: r.get(21)?,
     })
 }
 

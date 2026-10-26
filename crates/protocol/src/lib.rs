@@ -281,6 +281,12 @@ pub enum LibraryQuery {
         path: String,
     },
     Rescan,
+    /// Whether changes made outside Motif (files added, edited or removed by
+    /// other programs) are picked up as they happen. Rescan picks them up
+    /// either way.
+    SetWatching {
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -315,6 +321,10 @@ pub struct LibraryStatus {
     /// Folders being scanned.
     pub roots: Vec<String>,
     pub tracks: u32,
+    /// Tracks whose files have disappeared. They stay in the library.
+    pub missing: u32,
+    /// See [`LibraryQuery::SetWatching`].
+    pub watching: bool,
     pub scanning: bool,
     /// Files looked at so far in the current scan.
     pub scanned: u32,
@@ -346,6 +356,10 @@ pub struct LibraryTrack {
     pub bitrate: Option<u32>,
     /// Artwork id, served at `/art/<id>`.
     pub art: Option<String>,
+    /// The file is no longer where the library last saw it.
+    pub missing: bool,
+    /// Why the file can't be played, if it is damaged.
+    pub problem: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

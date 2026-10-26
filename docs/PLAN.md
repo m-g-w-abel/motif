@@ -343,6 +343,15 @@ engine to start owns it, and the other connects to that engine as a remote
 instead of starting its own. Ratings, play counts, playlists and history are
 shared between devices by sync in phase 6, not by sharing the database.
 
+The library database is the source of truth for what a device has. A file
+that disappears is marked missing rather than forgotten, and a file that
+won't decode is marked with the reason, so the library can later offer to
+find or fetch them again (library health, phase 10). Removing a folder in
+Motif is the only thing that deletes tracks. Library management happens in
+Motif first; changes other programs make to the folders are picked up as
+they happen when "pick up changes made outside Motif" is on (the default),
+and by Rescan either way.
+
 So a queue item can be played by whichever device has it, every track gets
 **identity keys** when it is scanned:
 - MusicBrainz recording/release IDs and ISRC from tags, when present;

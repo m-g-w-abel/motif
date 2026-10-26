@@ -173,10 +173,19 @@
           </div>
           <p class="status">
             {status.tracks} tracks
+            {#if status.missing}{' · '}{status.missing} missing{/if}
             {#if status.scanning}{' · '}scanning ({status.scanned} files){/if}
             {#if status.hashing}{' · '}hashing {status.hashing} files{/if}
           </p>
           {#if status.error}<p class="status error">{status.error}</p>{/if}
+          <label class="decoder">
+            <input
+              type="checkbox"
+              checked={status.watching}
+              onchange={(e) => query({ type: 'set_watching', enabled: e.currentTarget.checked })}
+            />
+            Pick up changes made outside Motif
+          </label>
         </div>
       {/if}
 

@@ -18,6 +18,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY);
+         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS art (key TEXT PRIMARY KEY, path TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS tracks (
              id INTEGER PRIMARY KEY,
@@ -29,7 +30,9 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              duration_ms INTEGER, codec TEXT, sample_rate INTEGER, bit_depth INTEGER,
              channels INTEGER, bitrate INTEGER,
              musicbrainz_recording TEXT, isrc TEXT, audio_hash TEXT,
-             art TEXT
+             art TEXT,
+             missing INTEGER NOT NULL DEFAULT 0,
+             problem TEXT
          );
          CREATE INDEX IF NOT EXISTS tracks_mb ON tracks (musicbrainz_recording);
          CREATE INDEX IF NOT EXISTS tracks_isrc ON tracks (isrc);
@@ -59,13 +62,30 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan.
-const VERSION: i32 = 2;
+const VERSION: i32 = 3;
 
 fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if version < 2 {
         // Version 2 reads files lofty can't parse with Symphonia instead.
         conn.execute("UPDATE tracks SET mtime = -1 WHERE duration_ms IS NULL", [])?;
+    }
+    if version < 3 {
+        // Version 3 keeps tracks whose files disappear (marked missing) and
+        // notes why damaged files can't be played.
+        let has = |column: &str| {
+            conn.prepare("SELECT 1 FROM pragma_table_info('tracks') WHERE name = ?1")
+                .and_then(|mut s| s.exists([column]))
+        };
+        if !has("missing")? {
+            conn.execute(
+                "ALTER TABLE tracks ADD COLUMN missing INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !has("problem")? {
+            conn.execute("ALTER TABLE tracks ADD COLUMN problem TEXT", [])?;
+        }
     }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
@@ -86,6 +106,29 @@ pub fn fts_query(search: Option<&str>) -> Option<String> {
 /// `WHERE` clause limiting tracks to a search (bound as `?1`, may be NULL).
 pub const SEARCH: &str =
     "(?1 IS NULL OR id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?1))";
+
+/// `WHERE` clause for tracks inside the root folder bound as `?1`. The
+/// separator matters: `/music` must not match `/music2/…`.
+#[cfg(not(windows))]
+pub const UNDER_ROOT: &str = "substr(path, 1, length(?1) + 1) = ?1 || '/'";
+#[cfg(windows)]
+pub const UNDER_ROOT: &str = "substr(path, 1, length(?1) + 1) = ?1 || '\\'";
+
+/// Whether changes made outside Motif are picked up as they happen (on by default).
+pub fn watching(conn: &Connection) -> bool {
+    conn.query_row("SELECT value FROM settings WHERE key = 'watch'", [], |r| {
+        r.get::<_, String>(0)
+    })
+    .map_or(true, |v| v != "off")
+}
+
+pub fn set_watching(conn: &Connection, on: bool) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('watch', ?1) ON CONFLICT (key) DO UPDATE SET value = ?1",
+        [if on { "on" } else { "off" }],
+    )?;
+    Ok(())
+}
 
 pub fn roots(conn: &Connection) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT path FROM roots ORDER BY path")?;

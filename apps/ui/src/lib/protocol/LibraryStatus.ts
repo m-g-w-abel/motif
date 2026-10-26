@@ -4,7 +4,15 @@ export type LibraryStatus = {
 /**
  * Folders being scanned.
  */
-roots: Array<string>, tracks: number, scanning: boolean, 
+roots: Array<string>, tracks: number, 
+/**
+ * Tracks whose files have disappeared. They stay in the library.
+ */
+missing: number, 
+/**
+ * See [`LibraryQuery::SetWatching`].
+ */
+watching: boolean, scanning: boolean, 
 /**
  * Files looked at so far in the current scan.
  */

@@ -149,19 +149,30 @@ impl Output {
             );
         }
         self.underruns = underruns;
-        if head.token != token {
-            // Older audio still drains after a load; only a splice into the
-            // preloaded track counts.
-            let Some((next_token, next_item, path)) =
-                self.preloaded.take_if(|(t, _, _)| *t == head.token)
-            else {
-                return false;
-            };
-            self.loaded = Some((next_token, next_item));
-            if player.moved_to(next_item, Playable::File(path), now) {
-                player.sync_position(head.position, now);
+        match heard(
+            head.token,
+            token,
+            self.preloaded.as_ref().map(|(t, _, _)| *t),
+        ) {
+            Heard::Loaded => {}
+            Heard::Draining => return false,
+            Heard::Preloaded => {
+                let Some((next_token, next_item, path)) = self.preloaded.take() else {
+                    return false;
+                };
+                self.loaded = Some((next_token, next_item));
+                if player.moved_to(next_item, Playable::File(path), now) {
+                    player.sync_position(head.position, now);
+                }
+                return true;
             }
-            return true;
+            Heard::Stale => {
+                // A preload the queue no longer wants was already spliced in:
+                // reload what the player says is playing.
+                self.loaded = None;
+                self.preloaded = None;
+                return true;
+            }
         }
         if head.ended {
             self.loaded = None;
@@ -195,5 +206,47 @@ impl Output {
                 let _ = player.apply(protocol::Command::Pause, now);
             }
         }
+    }
+}
+
+/// What the audible audio is, judged by its token.
+#[derive(Debug, PartialEq)]
+enum Heard {
+    /// What was loaded.
+    Loaded,
+    /// The preload, spliced in after the loaded track: a gapless move.
+    Preloaded,
+    /// Audio from before the last load, still draining.
+    Draining,
+    /// A preload that has since been replaced or dropped.
+    Stale,
+}
+
+/// Tokens only grow, so older ones are draining audio and newer ones are a
+/// preload, wanted or not.
+fn heard(audible: u64, loaded: u64, preloaded: Option<u64>) -> Heard {
+    if audible == loaded {
+        Heard::Loaded
+    } else if Some(audible) == preloaded {
+        Heard::Preloaded
+    } else if audible < loaded {
+        Heard::Draining
+    } else {
+        Heard::Stale
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audible_tokens_are_judged_by_age() {
+        assert_eq!(heard(5, 5, Some(6)), Heard::Loaded);
+        assert_eq!(heard(6, 5, Some(6)), Heard::Preloaded);
+        assert_eq!(heard(3, 5, Some(6)), Heard::Draining);
+        // The next track was removed (no preload) or replaced (7) after it was spliced in.
+        assert_eq!(heard(6, 5, None), Heard::Stale);
+        assert_eq!(heard(6, 5, Some(7)), Heard::Stale);
     }
 }
