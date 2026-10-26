@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { getApp, getViewState } from '../../context';
   import { addFolder } from '../../folders';
@@ -175,6 +175,23 @@
   const visible = $derived(rows.list.slice(range[0], range[1]));
   const padTop = $derived(rows.tops[range[0]] ?? 0);
   const padBottom = $derived(rows.height - (rows.tops[range[1]] ?? rows.height));
+  // Rows inserted above the first visible one (a scan) must not push it away.
+  // Re-pinned on scroll only: a refetch changes `rows` before the shift is reported.
+  let anchorOffset = 0;
+  $effect(() => {
+    const top = scrollTop;
+    untrack(() => {
+      let at = range[0];
+      while (at < rows.list.length && !('index' in rows.list[at] && rows.tops[at] >= top)) at++;
+      if (at >= rows.list.length) return;
+      anchorOffset = top - rows.tops[at];
+      data.anchor?.((rows.list[at] as { index: number }).index, async (index) => {
+        await tick();
+        const to = rows.list.findIndex((row) => 'index' in row && row.index === index);
+        if (to >= 0 && scroller) scroller.scrollTop = rows.tops[to] + anchorOffset;
+      });
+    });
+  });
   const rowKey = (row: Row) => ('group' in row ? `\0group${row.group.start}` : data.key(row.index));
 
   $effect(() => {
