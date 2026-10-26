@@ -35,7 +35,7 @@ export type PanelNode = {
   kind: 'panel';
   size?: Size;
 } & (
-  | { panel: 'tracklist'; style: TracklistStyle; columns: Column[]; maxWidth?: number }
+  | { panel: 'tracklist'; albumBreaks: boolean; headers: boolean; columns: Column[]; maxWidth?: number }
   | { panel: 'album-grid'; cardSize: number; columns?: number }
   | { panel: 'artwork' }
   | { panel: 'track-info'; style: InfoStyle }
@@ -59,6 +59,12 @@ export interface Layout {
 export const DEFAULT_COLUMNS: Record<TracklistStyle, Column[]> = {
   table: ['index', 'title', 'artist', 'album', 'duration'],
   grouped: ['index', 'artist', 'title', 'duration'],
+};
+
+/** What the `style` shorthand of `tracklist` stands for. */
+export const STYLE_OPTIONS: Record<TracklistStyle, { albumBreaks: boolean; headers: boolean }> = {
+  table: { albumBreaks: false, headers: true },
+  grouped: { albumBreaks: true, headers: false },
 };
 
 export const DEFAULT_CARD_SIZE = 180;
