@@ -95,3 +95,4 @@ describe('stale data', () => {
     expect(moved).toBe(5);
   });
 });
+
