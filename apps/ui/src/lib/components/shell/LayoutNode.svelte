@@ -28,7 +28,7 @@
 {:else if node.panel === 'tracklist'}
   <TrackList style={node.style} columns={node.columns} maxWidth={node.maxWidth} />
 {:else if node.panel === 'album-grid'}
-  <AlbumGrid cardSize={node.cardSize} />
+  <AlbumGrid cardSize={node.cardSize} columns={node.columns} />
 {:else if node.panel === 'artwork'}
   <Artwork />
 {:else if node.panel === 'track-info'}

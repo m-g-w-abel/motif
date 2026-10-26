@@ -9,7 +9,7 @@
   import { viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
 
-  let { cardSize }: { cardSize: number } = $props();
+  let { cardSize, columns: layoutColumns }: { cardSize: number; columns?: number } = $props();
 
   const { engine, library } = getApp();
   const view = getViewState();
@@ -61,7 +61,42 @@
   let cardHeight = $state(0);
   let list = $state<HTMLElement>();
   // `width` includes the 16px side padding.
-  const columns = $derived(Math.max(1, Math.floor((width - 2 * GAP + GAP) / (cardSize + GAP))));
+  const fit = (card: number) => Math.max(1, Math.floor((width - 2 * GAP + GAP) / (card + GAP)));
+  const MIN_CARD = 80;
+  const maxColumns = $derived(fit(MIN_CARD));
+  const autoColumns = $derived(fit(cardSize));
+
+  // The user's choice (Ctrl+scroll, −/+) beats the layout's `columns`, which
+  // beats the automatic count. Remembered per layout on this device.
+  const colsKey = $derived(`album-columns.${view.layoutId}`);
+  let chosen = $state<number>();
+  $effect(() => {
+    try {
+      const n = Number(localStorage.getItem(colsKey));
+      chosen = n >= 1 ? n : undefined;
+    } catch {
+      chosen = undefined;
+    }
+  });
+  const wanted = $derived(chosen ?? layoutColumns);
+  const columns = $derived(wanted ? Math.min(wanted, maxColumns) : autoColumns);
+  function choose(n: number | undefined) {
+    chosen = n === undefined ? undefined : Math.max(1, Math.min(n, maxColumns));
+    try {
+      if (chosen === undefined) localStorage.removeItem(colsKey);
+      else localStorage.setItem(colsKey, String(chosen));
+    } catch {}
+  }
+  // Wheel up = bigger cards = fewer columns.
+  function wheel(e: WheelEvent) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    choose(columns + (e.deltaY > 0 ? 1 : -1));
+  }
+  $effect(() => {
+    scroller?.addEventListener('wheel', wheel, { passive: false });
+    return () => scroller?.removeEventListener('wheel', wheel);
+  });
   const rowHeight = $derived((cardHeight || cardSize + 48) + GAP);
   const rowCount = $derived(Math.ceil(count / columns));
   const firstRow = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - 1));
@@ -96,6 +131,14 @@
 </script>
 
 <section class="album-grid">
+  <div class="zoom" role="group" aria-label="Columns">
+    <button class="button" aria-label="Fewer columns" disabled={columns <= 1} onclick={() => choose(columns - 1)}>−</button>
+    <span>{columns}</span>
+    <button class="button" aria-label="More columns" disabled={columns >= maxColumns} onclick={() => choose(columns + 1)}>+</button>
+    <button class="button" disabled={chosen === undefined} onclick={() => choose(undefined)}>
+      {layoutColumns ? 'Reset' : 'Auto'}
+    </button>
+  </div>
   <div
     class="scroll"
     bind:this={scroller}
@@ -106,6 +149,7 @@
       bind:this={list}
       bind:clientWidth={width}
       style:--card="{cardSize}px"
+      style:grid-template-columns="repeat({columns}, minmax(0, 1fr))"
       style:padding-top="{GAP + firstRow * rowHeight}px"
       style:padding-bottom="{GAP + (rowCount - lastRow) * rowHeight}px"
     >
@@ -148,6 +192,16 @@
     flex-direction: column;
     height: 100%;
     background: var(--bg);
+  }
+
+  .zoom {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding: var(--space-1) 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-muted);
   }
 
   .scroll {
