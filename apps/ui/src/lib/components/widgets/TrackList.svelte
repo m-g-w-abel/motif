@@ -275,8 +275,7 @@
       const target = albumBreaks ? at - 1 : at;
       // Scroll this list only; scrollIntoView would also scroll every
       // scrollable ancestor, moving the whole window.
-      const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-      scroller.scrollTo({ top: rows.tops[target], behavior: reduceMotion ? 'auto' : 'smooth' });
+      scroller.scrollTop = rows.tops[target];
       view.browse.selected = data.key(index);
     });
   });
