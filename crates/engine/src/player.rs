@@ -79,7 +79,10 @@ impl Player {
                 self.volume = volume;
             }
             Command::SetRepeat { mode } => self.repeat = mode,
-            Command::Enqueue { tracks } => self.push(tracks),
+            Command::Enqueue { tracks } => self.insert(self.queue.len(), tracks),
+            Command::EnqueueNext { tracks } => {
+                self.insert(self.current.map_or(0, |i| i + 1), tracks)
+            }
             Command::SetQueue { tracks, start } => {
                 if let Some(start) = start
                     && start as usize >= tracks.len()
@@ -89,7 +92,7 @@ impl Player {
                 self.queue.clear();
                 self.current = None;
                 self.stop();
-                self.push(tracks);
+                self.insert(self.queue.len(), tracks);
                 if let Some(start) = start {
                     self.jump(start as usize, now);
                     self.play(now);
@@ -303,15 +306,18 @@ impl Player {
         item.track.duration_ms.map(Duration::from_millis)
     }
 
-    fn push(&mut self, tracks: Vec<TrackRef>) {
-        for track in tracks {
+    fn insert(&mut self, at: usize, tracks: Vec<TrackRef>) {
+        for (offset, track) in tracks.into_iter().enumerate() {
             let id = self.next_id;
             self.next_id += 1;
-            self.queue.push(QueueItem {
-                id,
-                track,
-                error: None,
-            });
+            self.queue.insert(
+                at + offset,
+                QueueItem {
+                    id,
+                    track,
+                    error: None,
+                },
+            );
         }
     }
 
@@ -468,6 +474,63 @@ mod tests {
         assert!(p.tick(t0 + ms(2000)));
         assert_eq!(p.status, PlaybackStatus::Stopped);
         assert!(!p.tick(t0 + ms(5000)));
+    }
+
+    fn titles(p: &Player) -> Vec<&str> {
+        p.queue
+            .iter()
+            .map(|i| i.track.title.as_deref().unwrap())
+            .collect()
+    }
+
+    fn enqueue_next(p: &mut Player, name: &str, now: Instant) {
+        let tracks = vec![track(name, 1000)];
+        p.apply(Command::EnqueueNext { tracks }, now).unwrap();
+    }
+
+    #[test]
+    fn enqueue_next_goes_after_the_current_entry() {
+        let t0 = Instant::now();
+        let mut p = player_with(&[("a", 1000), ("b", 1000), ("c", 1000)], t0);
+        enqueue_next(&mut p, "x", t0);
+        assert_eq!(
+            titles(&p),
+            ["x", "a", "b", "c"],
+            "nothing current: the front"
+        );
+
+        p.apply(Command::Play, t0).unwrap();
+        p.apply(Command::Next, t0).unwrap();
+        enqueue_next(&mut p, "y", t0);
+        assert_eq!(titles(&p), ["x", "a", "y", "b", "c"]);
+        assert_eq!(p.current, Some(1), "the current entry doesn't move");
+        assert_eq!(p.upcoming().unwrap().track.title.as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn enqueue_next_on_the_last_entry_and_with_repeat() {
+        let t0 = Instant::now();
+        let mut p = player_with(&[("a", 1000)], t0);
+        p.apply(Command::Play, t0).unwrap();
+        enqueue_next(&mut p, "x", t0);
+        assert_eq!(titles(&p), ["a", "x"]);
+
+        let mode = |mode| Command::SetRepeat { mode };
+        p.apply(mode(RepeatMode::All), t0).unwrap();
+        p.apply(Command::Next, t0).unwrap();
+        enqueue_next(&mut p, "y", t0);
+        assert_eq!(
+            p.upcoming().unwrap().track.title.as_deref(),
+            Some("y"),
+            "before the wrap"
+        );
+
+        p.apply(mode(RepeatMode::One), t0).unwrap();
+        assert_eq!(
+            p.upcoming().unwrap().track.title.as_deref(),
+            Some("x"),
+            "repeat-one stays"
+        );
     }
 
     #[test]

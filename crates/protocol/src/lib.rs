@@ -71,6 +71,11 @@ pub enum Command {
     Enqueue {
         tracks: Vec<TrackRef>,
     },
+    /// Inserts right after the current entry (at the front when nothing is
+    /// current), so the tracks play next.
+    EnqueueNext {
+        tracks: Vec<TrackRef>,
+    },
     /// Replaces the whole queue, e.g. when playing a track from a list.
     /// Playback starts at index `start` if given; otherwise the queue is
     /// left stopped.

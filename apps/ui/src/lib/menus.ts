@@ -37,7 +37,10 @@ export function trackMenu(engine: EngineClient, data: TrackListData, view: ViewS
   const track = data.track(i);
   if (!track) return [];
   const items: MenuItem[] = [{ label: 'Play', run: () => data.play(i) }];
-  if (data.kind !== 'queue') items.push({ label: 'Add to queue', run: () => engine.run({ type: 'enqueue', tracks: [track] }) });
+  if (data.kind !== 'queue') {
+    items.push({ label: 'Queue next', run: () => engine.run({ type: 'enqueue_next', tracks: [track] }) });
+    items.push({ label: 'Add to queue', run: () => engine.run({ type: 'enqueue', tracks: [track] }) });
+  }
   if (track.album) {
     const artist = data.details?.(i)?.album_artist ?? track.artist ?? '';
     items.push({ label: 'Go to album', run: () => (view.browse.focusAlbum = albumKey({ ...track, artist })) });
