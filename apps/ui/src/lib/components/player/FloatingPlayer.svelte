@@ -1,34 +1,52 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { getApp } from '../../context';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
+  import { isFloatPos, MARGIN, place, resolve, snap, type FloatBox, type FloatPos } from './floating';
   import SeekBar from './SeekBar.svelte';
   import TrackLabel from './TrackLabel.svelte';
   import Transport from './Transport.svelte';
 
   const { engine, sheet } = getApp();
-  const MARGIN = 16;
+  const KEY_STEP = 16;
   const POSITION_KEY = 'floating-player.position';
+  /** Phone width: keep clear of the drawer toggle at the top left. */
+  const PHONE_TOP = 56;
+  const DEFAULT_POS: FloatPos = { h: 'right', v: 'bottom', x: MARGIN, y: MARGIN };
 
   let el = $state<HTMLElement>();
-  /** Top-left in px once dragged; until then it sits bottom-right. */
-  let dragged = $state<{ x: number; y: number } | null>(loadPosition());
+  let pos = $state<FloatPos>(loadPosition());
 
-  function loadPosition(): { x: number; y: number } | null {
+  // An old top-left position isn't in this format and is dropped.
+  function loadPosition(): FloatPos {
     try {
-      return JSON.parse(localStorage.getItem(POSITION_KEY) ?? 'null');
+      const v = JSON.parse(localStorage.getItem(POSITION_KEY) ?? 'null');
+      if (isFloatPos(v)) return v;
     } catch {
-      return null;
+      // Fall through to the default.
     }
+    return DEFAULT_POS;
   }
 
-  function clamp(p: { x: number; y: number }) {
-    const w = el?.offsetWidth ?? 0;
-    const h = el?.offsetHeight ?? 0;
+  /** The area above the bottom inset (a px value, when something sets one). */
+  function box(): FloatBox {
+    const inset = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bottom-inset')) || 0;
     return {
-      x: Math.min(Math.max(MARGIN, p.x), window.innerWidth - w - MARGIN),
-      y: Math.min(Math.max(MARGIN, p.y), window.innerHeight - h - MARGIN),
+      w: el?.offsetWidth ?? 0,
+      h: el?.offsetHeight ?? 0,
+      W: window.innerWidth,
+      H: window.innerHeight - inset,
+      minTop: window.innerWidth <= 700 ? PHONE_TOP : 0,
     };
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(POSITION_KEY, JSON.stringify(pos));
+    } catch {
+      // Position just won't persist.
+    }
   }
 
   function startDrag(e: PointerEvent) {
@@ -36,33 +54,49 @@
     const rect = el.getBoundingClientRect();
     const dx = e.clientX - rect.left;
     const dy = e.clientY - rect.top;
+    const b = box();
+    // Otherwise the drag also selects text across the page.
+    e.preventDefault();
     el.setPointerCapture(e.pointerId);
 
-    const move = (ev: PointerEvent) => (dragged = clamp({ x: ev.clientX - dx, y: ev.clientY - dy }));
+    const move = (ev: PointerEvent) => (pos = place(ev.clientX - dx, ev.clientY - dy, b));
     const end = () => {
       el?.removeEventListener('pointermove', move);
-      try {
-        localStorage.setItem(POSITION_KEY, JSON.stringify(dragged));
-      } catch {
-        // Position just won't persist.
-      }
+      pos = snap(pos, b);
+      save();
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', end, { once: true });
     el.addEventListener('pointercancel', end, { once: true });
   }
 
-  // Keep a dragged widget on screen when the window shrinks, or when it
-  // opens smaller than when the position was saved.
+  function onKey(e: KeyboardEvent) {
+    const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    const b = box();
+    const step = e.shiftKey ? KEY_STEP * 4 : KEY_STEP;
+    const { left, top } = resolve(pos, b);
+    pos = place(left + d[0] * step, top + d[1] * step, b);
+    save();
+  }
+
+  // Edge offsets follow the window by themselves; re-clamp on resize (and on
+  // load) so a smaller window never leaves it off screen. Untracked: reading
+  // `pos` here would re-run this on every move, and writing it loops.
   $effect(() => {
-    const onResize = () => dragged && (dragged = clamp(dragged));
-    onResize();
+    const onResize = () => {
+      const b = box();
+      const { left, top } = resolve(pos, b);
+      pos = place(left, top, b);
+    };
+    untrack(onResize);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   });
 
   function resetPosition() {
-    dragged = null;
+    pos = DEFAULT_POS;
     try {
       localStorage.removeItem(POSITION_KEY);
     } catch {
@@ -75,10 +109,11 @@
   bind:this={el}
   class="floating"
   aria-label="Now playing"
-  style:left={dragged ? `${dragged.x}px` : undefined}
-  style:right={dragged ? undefined : `${MARGIN}px`}
-  style:top={dragged ? `${dragged.y}px` : undefined}
-  style:bottom={dragged ? undefined : `calc(${MARGIN}px + var(--bottom-inset, 0px))`}
+  style:left={pos.h === 'left' ? 0 : undefined}
+  style:right={pos.h === 'right' ? 0 : undefined}
+  style:top={pos.v === 'top' ? 0 : undefined}
+  style:bottom={pos.v === 'bottom' ? 'var(--bottom-inset, 0px)' : undefined}
+  style:transform={`translate(${pos.h === 'left' ? pos.x : -pos.x}px, ${pos.v === 'top' ? pos.y : -pos.y}px)`}
   onpointerdown={startDrag}
   ondblclick={resetPosition}
 >
@@ -87,7 +122,14 @@
       <Artwork track={engine.current?.track} size={48} />
       <TrackLabel />
     </button>
-    <span class="grip" title="Drag to move; double-click to snap back"><Icon name="grip" size={14} /></span>
+    <span
+      class="grip"
+      role="button"
+      tabindex="0"
+      aria-label="Move player (arrow keys; Shift for bigger steps)"
+      title="Drag to move; double-click to snap back"
+      onkeydown={onKey}><Icon name="grip" size={14} /></span
+    >
   </div>
   <div class="row controls">
     <Transport size={16} />
@@ -107,9 +149,9 @@
     padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    backdrop-filter: blur(12px);
-    box-shadow: var(--shadow);
+    /* Opaque and unblurred: it moves over scrolling content (see CLAUDE.md). */
+    background: var(--surface);
+    will-change: transform;
     cursor: grab;
     touch-action: none;
     user-select: none;
