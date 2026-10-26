@@ -4,6 +4,7 @@ import type { EngineClient, PlaybackPosition } from './engine.svelte';
 import type { LibraryClient } from './library.svelte';
 import type { BrowseState, LayoutStore, Source } from './layout/store.svelte';
 import type { SettingsStore } from './settings.svelte';
+import type { SettingsView } from './settingsView.svelte';
 import type { PlayerSheet } from './sheet.svelte';
 
 /** App-wide objects shared through Svelte context instead of prop drilling. */
@@ -15,6 +16,7 @@ export interface AppContext {
   settings: SettingsStore;
   sheet: PlayerSheet;
   drawer: Drawer;
+  settingsView: SettingsView;
 }
 
 /** State shared by the widgets of one music area. */
