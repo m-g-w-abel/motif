@@ -105,10 +105,18 @@ button {
   color: var(--accent-contrast);
 }
 
-/* Thin, flat scrollbars. */
+/* Thin, flat scrollbars where there is no custom one (`Scrollbar.svelte`). */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+}
+
+.custom-scrollbar {
+  scrollbar-width: none;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* Shared control styles. */

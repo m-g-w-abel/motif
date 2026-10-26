@@ -5,8 +5,10 @@
   import type { SettingsGroup } from '../../settingsView.svelte';
   import { SYSTEM_THEMES, THEMES, themeById } from '../../themes';
   import Icon from '../Icon.svelte';
+  import Scrollbar from '../Scrollbar.svelte';
 
   const { settings, engine, library, settingsView } = getApp();
+  let panel = $state<HTMLElement>();
 
   const groups: { id: SettingsGroup; label: string }[] = [
     { id: 'interface', label: 'Interface' },
@@ -97,7 +99,7 @@
       {/each}
     </nav>
 
-    <div class="panel">
+    <div class="panel" bind:this={panel}>
       {#if group === 'interface'}
         <div class="row">
           <span class="label">Theme</span>
@@ -260,6 +262,7 @@
         </div>
       {/if}
     </div>
+    <Scrollbar target={panel} />
   </div>
 </section>
 

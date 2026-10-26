@@ -3,8 +3,10 @@
   import { demoLibrary, isDemo } from '../../demo';
   import type { Source } from '../../layout/store.svelte';
   import Icon, { type IconName } from '../Icon.svelte';
+  import Scrollbar from '../Scrollbar.svelte';
 
   const { engine, library, layout, drawer, settings, settingsView } = getApp();
+  let scroller = $state<HTMLElement>();
   const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
 
   const sources: { id: Source; label: string; icon: IconName; count: () => number }[] = [
@@ -16,7 +18,7 @@
 {#if drawer.open}<div class="scrim" onclick={() => drawer.close()}></div>{/if}
 
 <nav class="nav" class:open={drawer.open} class:collapsed={settings.current.navCollapsed} aria-label="Browse">
-  <div class="scroll">
+  <div class="scroll" bind:this={scroller}>
     <ul class="sources">
       {#each sources as source (source.id)}
         <li>
@@ -40,6 +42,7 @@
     <h2>Playlists</h2>
     <p class="note">Saved playlists arrive in a later phase.</p>
   </div>
+  <Scrollbar target={scroller} />
 
   <!-- Pinned to the bottom of the screen. -->
   <div class="footer">

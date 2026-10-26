@@ -2,6 +2,7 @@ import { groupConsecutive } from './albums';
 import { demoLibrary, isDemo } from './demo';
 import type { EngineClient } from './engine.svelte';
 import type { LibraryClient } from './library.svelte';
+import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
 import type { TrackRef } from './protocol/TrackRef';
@@ -19,6 +20,8 @@ export interface TrackListData {
   kind: ListSource;
   readonly count: number;
   track(index: number): TrackRef | undefined;
+  /** Library fields of a row, where the list has them. */
+  details?(index: number): LibraryTrack | undefined;
   /** Stable per-row key. */
   key(index: number): string;
   /** Album runs in list order. */
@@ -125,6 +128,7 @@ function libraryData(
       return list.total;
     },
     track: (i) => list.get(i)?.track,
+    details: (i) => list.get(i),
     key: (i) => list.get(i)?.track.id ?? `#${i}`,
     get groups() {
       return list.groups;

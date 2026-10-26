@@ -2,6 +2,7 @@
   import { getApp } from '../../context';
   import type { LayoutError } from '../../layout/parse';
   import Icon from '../Icon.svelte';
+  import Scrollbar from '../Scrollbar.svelte';
 
   let { onClose }: { onClose: () => void } = $props();
 
@@ -10,6 +11,7 @@
   let dialog = $state<HTMLDialogElement>();
   let textarea = $state<HTMLTextAreaElement>();
   let gutter = $state<HTMLDivElement>();
+  let errorList = $state<HTMLElement>();
   let draft = $state(layout.active.text);
   let errors = $state<LayoutError[]>([]);
   let applied = $state(false);
@@ -94,7 +96,7 @@
   </div>
 
   {#if errors.length}
-    <ul class="errors" role="alert">
+    <ul class="errors" role="alert" bind:this={errorList}>
       {#each errors as error, i (i)}
         <li>
           <button onclick={() => jumpTo(error)}>
@@ -104,6 +106,7 @@
         </li>
       {/each}
     </ul>
+    <Scrollbar target={errorList} />
   {/if}
 
   <footer>

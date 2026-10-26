@@ -7,8 +7,9 @@
   import { formatTime } from '../../format';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto } from '../../keynav';
-  import { viewSort } from '../../sort.svelte';
+  import { sortLabel, viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
+  import Scrollbar from '../Scrollbar.svelte';
 
   let { cardSize, columns: layoutColumns }: { cardSize: number; columns?: number } = $props();
 
@@ -21,6 +22,7 @@
     artist: string;
     tracks: number;
     duration_ms: number;
+    year?: number | null;
     art?: string | null;
     /** For the placeholder artwork when there is no real artwork. */
     track?: TrackRef;
@@ -156,6 +158,16 @@
     });
   });
 
+  // The scrollbar snaps to rows and names the top row's sort value; albums
+  // only know their artist, title and year.
+  const snaps = $derived(Array.from({ length: rowCount }, (_, row) => row * rowHeight));
+  function topLabel() {
+    const key = sort[0]?.key;
+    const album = card(Math.round(scrollTop / rowHeight) * columns);
+    if (!album || !['album_artist', 'artist', 'album', 'year'].includes(key)) return undefined;
+    return sortLabel(key, { album_artist: album.artist, artist: album.artist, album: album.title, year: album.year });
+  }
+
   $effect(() => {
     void visible;
     void width;
@@ -214,6 +226,7 @@
       </div>
     {/if}
   </div>
+  <Scrollbar target={scroller} {snaps} label={topLabel} />
 </section>
 
 <style>
