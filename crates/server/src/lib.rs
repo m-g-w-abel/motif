@@ -153,7 +153,7 @@ async fn session(socket: WebSocket, engine: Engine) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::{Command, PlaybackStatus, TrackInfo};
+    use protocol::{Command, PlaybackStatus, TrackRef};
     use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
     async fn next_message(
@@ -170,7 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn websocket_round_trip() {
-        let engine = Engine::spawn();
+        let engine = Engine::spawn(engine::LocalFiles);
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
             ui_dir: None,
@@ -197,8 +197,9 @@ mod tests {
             (
                 1,
                 Command::Enqueue {
-                    tracks: vec![TrackInfo {
-                        uri: "file:///a.flac".into(),
+                    tracks: vec![TrackRef {
+                        source: "demo".into(),
+                        id: "/a.flac".into(),
                         ..Default::default()
                     }],
                 },

@@ -284,6 +284,7 @@
                 class="track"
                 class:alt={i % 2 === 1}
                 class:current={i === currentIndex}
+              class:unplayable={!!data.errors?.[i]}
                 class:selected={selected === data.keys[i]}
                 tabindex="0"
                 aria-selected={selected === data.keys[i]}
@@ -297,6 +298,7 @@
                       <Icon name={engine.player?.status === 'playing' ? 'play' : 'pause'} size={10} />
                     {:else}
                       {cell(column, i)}
+                      {#if column === 'title' && data.errors?.[i]}<span class="reason">{data.errors[i]}</span>{/if}
                     {/if}
                   </td>
                 {/each}
@@ -421,6 +423,16 @@
 
   tr.current .title {
     font-weight: 600;
+  }
+
+  tr.unplayable td {
+    color: var(--text-muted);
+  }
+
+  .reason {
+    margin-left: var(--space-2);
+    font-size: 0.88em;
+    color: var(--danger);
   }
 
   .index,

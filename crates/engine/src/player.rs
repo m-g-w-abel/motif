@@ -1,14 +1,14 @@
 use std::time::{Duration, Instant};
 
-use protocol::{Command, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo};
+use protocol::{Command, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackRef};
 
-use crate::EngineError;
+use crate::{EngineError, Playable, Resolver};
 
 /// "Previous" restarts the current track instead when past this point.
 const RESTART_THRESHOLD: Duration = Duration::from_secs(3);
 
-/// Queue and transport state, with no I/O. Time is passed in so behaviour is
-/// deterministic under test.
+/// Queue and transport state. Time is passed in and track resolution goes
+/// through a [`Resolver`], so behaviour is deterministic under test.
 #[derive(Debug)]
 pub struct Player {
     queue: Vec<QueueItem>,
@@ -21,6 +21,8 @@ pub struct Player {
     base: Duration,
     /// Set while playing: the instant `base` was recorded.
     since: Option<Instant>,
+    /// The current entry's id and what it resolved to, once resolved.
+    resolved: Option<(u64, Playable)>,
 }
 
 impl Default for Player {
@@ -34,6 +36,7 @@ impl Default for Player {
             repeat: RepeatMode::Off,
             base: Duration::ZERO,
             since: None,
+            resolved: None,
         }
     }
 }
@@ -126,6 +129,48 @@ impl Player {
         &self.queue
     }
 
+    /// What the current entry resolved to, once [`Self::resolve_current`] has run.
+    pub fn playable(&self) -> Option<&Playable> {
+        let (id, playable) = self.resolved.as_ref()?;
+        (self.queue.get(self.current?)?.id == *id).then_some(playable)
+    }
+
+    /// Resolves the current entry if it changed since the last call. Entries
+    /// nothing can play get their reason recorded and are skipped; if none in
+    /// the queue can play, playback stops. Returns whether state changed.
+    pub fn resolve_current(&mut self, resolver: &dyn Resolver, now: Instant) -> bool {
+        let mut changed = false;
+        // Each entry is tried at most once per call, so a queue of unplayable
+        // entries can't loop forever under repeat.
+        for _ in 0..self.queue.len() {
+            let Some(index) = self.current else { break };
+            let item = &mut self.queue[index];
+            if self.resolved.as_ref().is_some_and(|(id, _)| *id == item.id) {
+                return changed;
+            }
+            match resolver.resolve(&item.track) {
+                Ok(playable) => {
+                    changed |= item.error.take().is_some();
+                    self.resolved = Some((item.id, playable));
+                    return changed;
+                }
+                Err(reason) => {
+                    item.error = Some(reason);
+                    changed = true;
+                    if index + 1 == self.queue.len() && self.repeat == RepeatMode::Off {
+                        break;
+                    }
+                    self.advance(now, false);
+                }
+            }
+        }
+        if changed {
+            // Ran out of entries to try.
+            self.stop();
+        }
+        changed
+    }
+
     fn position(&self, now: Instant) -> Duration {
         let position = match self.since {
             Some(since) => self.base + now.saturating_duration_since(since),
@@ -142,11 +187,15 @@ impl Player {
         item.track.duration_ms.map(Duration::from_millis)
     }
 
-    fn push(&mut self, tracks: Vec<TrackInfo>) {
+    fn push(&mut self, tracks: Vec<TrackRef>) {
         for track in tracks {
             let id = self.next_id;
             self.next_id += 1;
-            self.queue.push(QueueItem { id, track });
+            self.queue.push(QueueItem {
+                id,
+                track,
+                error: None,
+            });
         }
     }
 
@@ -234,9 +283,10 @@ impl Player {
 mod tests {
     use super::*;
 
-    fn track(name: &str, duration_ms: u64) -> TrackInfo {
-        TrackInfo {
-            uri: format!("file:///{name}.flac"),
+    fn track(name: &str, duration_ms: u64) -> TrackRef {
+        TrackRef {
+            source: "demo".into(),
+            id: format!("/{name}.flac"),
             title: Some(name.into()),
             duration_ms: Some(duration_ms),
             ..Default::default()
@@ -409,5 +459,51 @@ mod tests {
             p.apply(Command::SetVolume { volume: 1.5 }, Instant::now()),
             Err(EngineError::InvalidVolume(1.5))
         );
+    }
+
+    /// Plays anything except tracks whose id contains "missing".
+    struct FakeResolver;
+    impl Resolver for FakeResolver {
+        fn resolve(&self, track: &TrackRef) -> Result<Playable, String> {
+            if track.id.contains("missing") {
+                Err("not on this device".into())
+            } else {
+                Ok(Playable::Simulated)
+            }
+        }
+    }
+
+    #[test]
+    fn unplayable_entries_are_marked_and_skipped() {
+        let t0 = Instant::now();
+        let mut p = player_with(&[("a", 1000), ("missing", 1000), ("c", 1000)], t0);
+        let id = p.queue[1].id;
+        p.apply(Command::PlayItem { item_id: id }, t0).unwrap();
+        assert!(p.resolve_current(&FakeResolver, t0));
+        assert_eq!(p.current, Some(2), "skips to the next playable entry");
+        assert_eq!(p.queue[1].error.as_deref(), Some("not on this device"));
+        assert_eq!(p.playable(), Some(&Playable::Simulated));
+        assert!(
+            !p.resolve_current(&FakeResolver, t0),
+            "resolves once per entry"
+        );
+    }
+
+    #[test]
+    fn a_queue_nothing_can_play_stops() {
+        let t0 = Instant::now();
+        let mut p = player_with(&[("missing-1", 1000), ("missing-2", 1000)], t0);
+        p.apply(
+            Command::SetRepeat {
+                mode: RepeatMode::All,
+            },
+            t0,
+        )
+        .unwrap();
+        p.apply(Command::Play, t0).unwrap();
+        p.resolve_current(&FakeResolver, t0);
+        assert!(p.queue.iter().all(|i| i.error.is_some()));
+        assert_eq!(p.playable(), None);
+        assert_ne!(p.status, PlaybackStatus::Playing);
     }
 }

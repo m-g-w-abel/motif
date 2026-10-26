@@ -72,7 +72,7 @@ async fn start_engine() -> std::io::Result<SocketAddr> {
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         ui_dir: None,
     };
-    let (addr, serve) = server::bind(Engine::spawn(), config).await?;
+    let (addr, serve) = server::bind(Engine::spawn(engine::LocalFiles), config).await?;
     tauri::async_runtime::spawn(async move {
         if let Err(err) = serve.await {
             tracing::error!(%err, "engine server stopped");

@@ -9,6 +9,7 @@
 //! the protocol and UIs can be built against realistic behaviour.
 
 mod player;
+mod resolve;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -16,6 +17,7 @@ use protocol::{Command, PlayerState, QueueItem};
 use tokio::sync::{mpsc, oneshot, watch};
 
 pub use player::Player;
+pub use resolve::{LocalFiles, Playable, Resolver};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum EngineError {
@@ -46,8 +48,10 @@ pub struct Engine {
 const TICK: Duration = Duration::from_millis(250);
 
 impl Engine {
-    /// Starts the engine on the current Tokio runtime.
-    pub fn spawn() -> Self {
+    /// Starts the engine on the current Tokio runtime. `resolver` decides what
+    /// on this device plays each queue entry.
+    // shortcut: resolving runs on the engine task, fine for local files; streaming sources (phase 8) need it async.
+    pub fn spawn(resolver: impl Resolver) -> Self {
         let (requests, mut rx) = mpsc::channel::<Request>(64);
         let mut player = Player::default();
         let (state_tx, state) = watch::channel(snapshot(&player));
@@ -69,6 +73,7 @@ impl Engine {
                     _ = tick.tick() => player.tick(Instant::now()),
                 };
                 if changed {
+                    player.resolve_current(&resolver, Instant::now());
                     // Queue first, so a state never points into a queue
                     // subscribers haven't seen.
                     queue_tx.send_if_modified(|queue| {
@@ -131,17 +136,18 @@ pub fn wall_clock_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::{PlaybackStatus, TrackInfo};
+    use protocol::{PlaybackStatus, TrackRef};
 
     #[tokio::test]
     async fn commands_update_published_state() {
-        let engine = Engine::spawn();
+        let engine = Engine::spawn(LocalFiles);
         let mut updates = engine.subscribe();
 
         engine
             .send(Command::Enqueue {
-                tracks: vec![TrackInfo {
-                    uri: "file:///a.flac".into(),
+                tracks: vec![TrackRef {
+                    source: "demo".into(),
+                    id: "/a.flac".into(),
                     ..Default::default()
                 }],
             })
@@ -158,12 +164,12 @@ mod tests {
 
     #[tokio::test]
     async fn queue_is_published_only_when_it_changes() {
-        let engine = Engine::spawn();
+        let engine = Engine::spawn(LocalFiles);
         let mut queue = engine.subscribe_queue();
         let mut states = engine.subscribe();
         engine
             .send(Command::Enqueue {
-                tracks: vec![TrackInfo::default()],
+                tracks: vec![TrackRef::default()],
             })
             .await
             .unwrap();
@@ -181,7 +187,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejected_commands_return_errors() {
-        let engine = Engine::spawn();
+        let engine = Engine::spawn(LocalFiles);
         assert_eq!(
             engine.send(Command::PlayItem { item_id: 42 }).await,
             Err(EngineError::UnknownItem(42))

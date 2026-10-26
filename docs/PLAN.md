@@ -360,7 +360,7 @@ skipped silently.
 Each milestone ends with every check passing, a commit, and something you can
 try.
 
-1. **Track references.** Replace `TrackInfo` in queue items with the
+1. **Track references.** *(done)* Replace `TrackInfo` in queue items with the
    source-independent reference: `source` + `id`, identity keys when known,
    plus title, artist, album and duration for display. The engine plays a
    reference through the resolver; for now the resolver only knows local

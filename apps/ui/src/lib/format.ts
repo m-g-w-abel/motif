@@ -1,4 +1,4 @@
-import type { TrackInfo } from './protocol/TrackInfo';
+import type { TrackRef } from './protocol/TrackRef';
 
 export function formatTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -8,22 +8,22 @@ export function formatTime(ms: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
-/** Title for display, falling back to the file name in the URI. */
-export function trackTitle(track: TrackInfo): string {
+/** Title for display, falling back to the file name in the track's id. */
+export function trackTitle(track: TrackRef): string {
   if (track.title) return track.title;
-  const name = decodeURIComponent(track.uri.split('/').pop() ?? track.uri);
-  return name.replace(/\.[^.]+$/, '') || track.uri;
+  const name = track.id.split(/[/\\]/).pop() ?? track.id;
+  return name.replace(/\.[^.]+$/, '') || track.id;
 }
 
 /** Upper-case container/codec hint from the file extension, e.g. `FLAC`. */
-export function trackFormat(track: TrackInfo): string {
-  const match = /\.([a-z0-9]+)$/i.exec(track.uri);
+export function trackFormat(track: TrackRef): string {
+  const match = /\.([a-z0-9]+)$/i.exec(track.id);
   return match ? match[1].toUpperCase() : '';
 }
 
 /** A stable two-colour gradient per album, used until real artwork exists. */
-export function placeholderArt(track: TrackInfo): string {
-  const key = track.album ?? track.title ?? track.uri;
+export function placeholderArt(track: TrackRef): string {
+  const key = track.album ?? track.title ?? track.id;
   let hash = 0;
   for (const ch of key) hash = (hash * 31 + ch.codePointAt(0)!) | 0;
   // The golden angle spreads similar hashes far apart on the colour wheel.

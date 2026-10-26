@@ -1,9 +1,9 @@
 <script lang="ts">
-  import type { TrackInfo } from '../../protocol/TrackInfo';
+  import type { TrackRef } from '../../protocol/TrackRef';
   import { placeholderArt } from '../../format';
   import Icon from '../Icon.svelte';
 
-  let { track, size }: { track: TrackInfo | null | undefined; size?: number } = $props();
+  let { track, size }: { track: TrackRef | null | undefined; size?: number } = $props();
 </script>
 
 <!-- Placeholder gradients until artwork extraction lands in phase 1/2. -->

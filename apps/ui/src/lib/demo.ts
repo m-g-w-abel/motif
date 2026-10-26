@@ -1,4 +1,4 @@
-import type { TrackInfo } from './protocol/TrackInfo';
+import type { TrackRef } from './protocol/TrackRef';
 
 /**
  * Stand-in library until library scanning lands in phase 1. The tracks are
@@ -31,9 +31,11 @@ const albums: { artist: string; album: string; ext: string; tracks: [string, num
   },
 ];
 
-const baseLibrary: TrackInfo[] = albums.flatMap(({ artist, album, ext, tracks }) =>
+const baseLibrary: TrackRef[] = albums.flatMap(({ artist, album, ext, tracks }) =>
   tracks.map(([title, seconds], i) => ({
-    uri: `file:///demo/${encodeURIComponent(album)}/${String(i + 1).padStart(2, '0')}.${ext}`,
+    source: 'demo',
+    id: `/demo/${album}/${String(i + 1).padStart(2, '0')}.${ext}`,
+    keys: { musicbrainz_recording: null, isrc: null, audio_hash: null },
     title,
     artist,
     album,
@@ -47,10 +49,10 @@ const devSize =
     ? Number(new URLSearchParams(location.search).get('dev-library'))
     : 0;
 
-export const demoLibrary: TrackInfo[] = devSize
+export const demoLibrary: TrackRef[] = devSize
   ? Array.from({ length: devSize }, (_, i) => {
       const track = baseLibrary[i % baseLibrary.length];
       const copy = Math.floor(i / baseLibrary.length);
-      return copy ? { ...track, uri: `${track.uri}?copy=${copy}`, album: `${track.album} ${copy + 1}` } : track;
+      return copy ? { ...track, id: `${track.id}?copy=${copy}`, album: `${track.album} ${copy + 1}` } : track;
     })
   : baseLibrary;

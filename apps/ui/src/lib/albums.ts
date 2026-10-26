@@ -1,4 +1,4 @@
-import type { TrackInfo } from './protocol/TrackInfo';
+import type { TrackRef } from './protocol/TrackRef';
 
 export interface Album {
   key: string;
@@ -9,7 +9,7 @@ export interface Album {
   durationMs: number;
 }
 
-export function albumKey(track: TrackInfo): string {
+export function albumKey(track: TrackRef): string {
   return `${track.artist ?? ''}\u0000${track.album ?? ''}`;
 }
 
@@ -17,7 +17,7 @@ export function albumKey(track: TrackInfo): string {
  * Groups consecutive tracks that share an album and artist, the way a
  * playlist shows them; the same album appearing twice yields two groups.
  */
-export function groupConsecutive(tracks: TrackInfo[]): Album[] {
+export function groupConsecutive(tracks: TrackRef[]): Album[] {
   const groups: Album[] = [];
   tracks.forEach((track, i) => {
     const key = albumKey(track);
@@ -39,7 +39,7 @@ export function groupConsecutive(tracks: TrackInfo[]): Album[] {
 }
 
 /** One entry per distinct album, in order of first appearance. */
-export function distinctAlbums(tracks: TrackInfo[]): Album[] {
+export function distinctAlbums(tracks: TrackRef[]): Album[] {
   const byKey = new Map<string, Album>();
   for (const group of groupConsecutive(tracks)) {
     const existing = byKey.get(group.key);

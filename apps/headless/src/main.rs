@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         addr,
         ui_dir: ui_dir.clone(),
     };
-    let (addr, serve) = server::bind(Engine::spawn(), config).await?;
+    let (addr, serve) = server::bind(Engine::spawn(engine::LocalFiles), config).await?;
     match ui_dir {
         Some(dir) => tracing::info!("serving {} at http://{addr}", dir.display()),
         None => tracing::info!("listening on ws://{addr}/ws (no web UI found)"),

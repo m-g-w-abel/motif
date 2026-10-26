@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Bumped on any incompatible change to the types below.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// A message sent from a client to the engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -61,13 +61,13 @@ pub enum Command {
         mode: RepeatMode,
     },
     Enqueue {
-        tracks: Vec<TrackInfo>,
+        tracks: Vec<TrackRef>,
     },
     /// Replaces the whole queue, e.g. when playing a track from a list.
     /// Playback starts at index `start` if given; otherwise the queue is
     /// left stopped.
     SetQueue {
-        tracks: Vec<TrackInfo>,
+        tracks: Vec<TrackRef>,
         start: Option<u32>,
     },
     /// Jump to a queue entry by its [`QueueItem::id`].
@@ -153,19 +153,41 @@ pub struct QueueItem {
     /// Stable for the lifetime of the entry, unlike its index.
     #[ts(type = "number")]
     pub id: u64,
-    pub track: TrackInfo,
+    pub track: TrackRef,
+    /// Why nothing on the playing device could play this entry, if it was
+    /// tried and failed. Such entries are skipped, not removed.
+    pub error: Option<String>,
 }
 
+/// A track independent of where it is stored, so any device can play it with
+/// whatever it has: its own copy first, then the original source, then a
+/// match elsewhere (see the resolver in the engine).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct TrackInfo {
-    /// `file:///…`, or a source-plugin URI such as `youtube:…`.
-    pub uri: String,
+pub struct TrackRef {
+    /// Where `id` comes from: `local` (a file path on the device that queued
+    /// it), later source plugins such as `youtube`.
+    pub source: String,
+    pub id: String,
+    /// Identifies the recording across devices and sources.
+    #[serde(default)]
+    pub keys: TrackKeys,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
     #[ts(type = "number | null")]
     pub duration_ms: Option<u64>,
+}
+
+/// Identity keys for matching a [`TrackRef`] to a copy on another device.
+/// Tags (artist, title, album, duration) are the fallback when these are absent.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TrackKeys {
+    pub musicbrainz_recording: Option<String>,
+    pub isrc: Option<String>,
+    /// Hash of the decoded audio only, so tag edits don't change it.
+    pub audio_hash: Option<String>,
 }
 
 #[cfg(test)]

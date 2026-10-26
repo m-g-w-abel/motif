@@ -22,7 +22,7 @@
             ['Queue', position !== null ? `${position + 1}/${queue.length}` : ''],
             ['Duration', track.duration_ms ? formatTime(track.duration_ms) : ''],
             ['Format', trackFormat(track)],
-            ['File', decodeURIComponent(track.uri.replace(/^file:\/\//, ''))],
+            ['File', track.source === 'local' ? track.id : ''],
           ] as [string, string][]
         ).filter(([, value]) => value)
       : [],
