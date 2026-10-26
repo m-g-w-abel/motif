@@ -50,6 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         engine.clone(),
         data_dir.join("engine.json"),
     ));
+    // shortcut: no window handle, so no media controls on Windows (SMTC needs one); fine for a NAS or Pi.
+    integrations::media_controls::start(engine.clone(), Some(library.clone()), None);
     let config = server::Config {
         addr,
         ui_dir: ui_dir.clone(),

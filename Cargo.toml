@@ -12,6 +12,7 @@ license = "GPL-3.0-or-later"
 protocol = { path = "crates/protocol" }
 engine = { path = "crates/engine" }
 library = { path = "crates/library" }
+integrations = { path = "crates/integrations" }
 server = { path = "crates/server" }
 
 axum = { version = "0.8.9", features = ["ws"] }

@@ -1,0 +1,18 @@
+[package]
+name = "integrations"
+description = "Integrations with the OS and outside services: media controls (later scrobbling, Discord, lyrics)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+engine.workspace = true
+library.workspace = true
+protocol.workspace = true
+souvlaki = "0.8.3"
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

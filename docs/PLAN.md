@@ -400,7 +400,7 @@ try.
    Library section: folders (native picker under Tauri, a path field in a
    browser), rescan, scan and hashing progress, decoder order. Album art
    replaces the placeholder gradients.
-7. **OS media controls.** souvlaki in the desktop and headless apps: MPRIS
+7. **OS media controls.** *(done; verified on Linux/MPRIS, Windows and macOS only compile in CI)* souvlaki in the desktop and headless apps: MPRIS
    on Linux, SMTC on Windows, Now Playing on macOS, so media keys, the
    lock screen and desktop widgets show and control Motif.
 8. **Hardening.**

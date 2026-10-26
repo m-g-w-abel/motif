@@ -28,7 +28,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let url = tauri::async_runtime::block_on(start_engine())?;
+            // The OS media controls need the window on Windows.
+            #[cfg(windows)]
+            let hwnd = app
+                .get_webview_window("main")
+                .and_then(|window| window.hwnd().ok())
+                .map(|hwnd| hwnd.0 as *mut std::ffi::c_void);
+            #[cfg(not(windows))]
+            let hwnd = None;
+            let url = tauri::async_runtime::block_on(start_engine(hwnd))?;
             tracing::info!(%url, "engine");
             app.manage(EngineUrl(url));
             Ok(())
@@ -70,7 +78,9 @@ fn keep_gpu_rendering_on_nvidia() {
 /// Starts the embedded engine and returns its address. If another engine
 /// (e.g. the headless one) already owns this machine's library, the window
 /// connects to that one instead.
-async fn start_engine() -> Result<String, Box<dyn std::error::Error>> {
+async fn start_engine(
+    hwnd: Option<*mut std::ffi::c_void>,
+) -> Result<String, Box<dyn std::error::Error>> {
     let library = match library::data_dir() {
         Some(dir) => match library::Claim::take(&dir)? {
             Ok(claim) => Some((library::Library::open(&dir)?, claim)),
@@ -91,6 +101,11 @@ async fn start_engine() -> Result<String, Box<dyn std::error::Error>> {
             dir.join("engine.json"),
         ));
     }
+    integrations::media_controls::start(
+        engine.clone(),
+        library.as_ref().map(|(library, _)| library.clone()),
+        hwnd,
+    );
     let config = server::Config {
         // Loopback only until pairing exists (phase 4).
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),

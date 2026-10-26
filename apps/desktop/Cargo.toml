@@ -21,6 +21,7 @@ tauri-build = { workspace = true, features = [] }
 [dependencies]
 engine.workspace = true
 library.workspace = true
+integrations.workspace = true
 server.workspace = true
 tauri = { workspace = true, features = [] }
 tauri-plugin-dialog = "=2.8.2"
