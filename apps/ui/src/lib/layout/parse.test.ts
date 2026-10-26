@@ -70,6 +70,17 @@ describe('parseLayout', () => {
     });
   });
 
+  it('reads and validates album-grid columns', () => {
+    const result = parseLayout('layout version=1\nalbum-grid columns=4');
+    expect(result.ok && result.layout.root).toMatchObject({ panel: 'album-grid', columns: 4 });
+    const none = parseLayout('layout version=1\nalbum-grid');
+    expect(none.ok && (none.layout.root as { columns?: number }).columns).toBeUndefined();
+    expect(errorsOf('layout version=1\nalbum-grid columns=0')[0].message).toBe(
+      '`columns` must be a whole number between 1 and 24, got 0',
+    );
+    expect(errorsOf('layout version=1\nalbum-grid columns=2.5')).toHaveLength(1);
+  });
+
   it('configures the controls and queue widgets', () => {
     const result = parseLayout('layout version=1\ncontrols\nqueue collapsible=#true');
     expect(result.ok && result.layout.root).toMatchObject({

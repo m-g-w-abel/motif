@@ -9,7 +9,7 @@
   import { viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
 
-  let { cardSize }: { cardSize: number } = $props();
+  let { cardSize, columns: layoutColumns }: { cardSize: number; columns?: number } = $props();
 
   const { engine, library } = getApp();
   const view = getViewState();
@@ -61,7 +61,42 @@
   let cardHeight = $state(0);
   let list = $state<HTMLElement>();
   // `width` includes the 16px side padding.
-  const columns = $derived(Math.max(1, Math.floor((width - 2 * GAP + GAP) / (cardSize + GAP))));
+  const fit = (card: number) => Math.max(1, Math.floor((width - 2 * GAP + GAP) / (card + GAP)));
+  const MIN_CARD = 80;
+  const maxColumns = $derived(fit(MIN_CARD));
+  const autoColumns = $derived(fit(cardSize));
+
+  // The user's choice (Ctrl+scroll) beats the layout's `columns`, which
+  // beats the automatic count. Remembered per layout on this device.
+  const colsKey = $derived(`album-columns.${view.layoutId}`);
+  let chosen = $state<number>();
+  $effect(() => {
+    try {
+      const n = Number(localStorage.getItem(colsKey));
+      chosen = n >= 1 ? n : undefined;
+    } catch {
+      chosen = undefined;
+    }
+  });
+  const wanted = $derived(chosen ?? layoutColumns);
+  const columns = $derived(wanted ? Math.min(wanted, maxColumns) : autoColumns);
+  function choose(n: number | undefined) {
+    chosen = n === undefined ? undefined : Math.max(1, Math.min(n, maxColumns));
+    try {
+      if (chosen === undefined) localStorage.removeItem(colsKey);
+      else localStorage.setItem(colsKey, String(chosen));
+    } catch {}
+  }
+  // Wheel up = bigger cards = fewer columns.
+  function wheel(e: WheelEvent) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    choose(columns + (e.deltaY > 0 ? 1 : -1));
+  }
+  $effect(() => {
+    scroller?.addEventListener('wheel', wheel, { passive: false });
+    return () => scroller?.removeEventListener('wheel', wheel);
+  });
   const rowHeight = $derived((cardHeight || cardSize + 48) + GAP);
   const rowCount = $derived(Math.ceil(count / columns));
   const firstRow = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - 1));
@@ -106,6 +141,7 @@
       bind:this={list}
       bind:clientWidth={width}
       style:--card="{cardSize}px"
+      style:grid-template-columns="repeat({columns}, minmax(0, 1fr))"
       style:padding-top="{GAP + firstRow * rowHeight}px"
       style:padding-bottom="{GAP + (rowCount - lastRow) * rowHeight}px"
     >

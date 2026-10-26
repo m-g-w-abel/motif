@@ -35,7 +35,7 @@
   );
 </script>
 
-<section class="info {style}">
+<section class="info selectable {style}">
   {#if style === 'hero'}
     <h1>{track ? trackTitle(track) : 'Nothing playing'}</h1>
     {#if track}

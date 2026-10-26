@@ -76,6 +76,16 @@ body {
 
 #app {
   height: 100%;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Exceptions to the no-selection default: inputs, track info and paths, errors. */
+.selectable,
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button {
