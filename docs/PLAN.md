@@ -365,16 +365,17 @@ try.
    plus title, artist, album and duration for display. The engine plays a
    reference through the resolver; for now the resolver only knows local
    paths. Protocol v4.
-2. **It makes sound.** The decoder trait and the Symphonia plugin. One
+2. **It makes sound.** *(done)* The decoder trait and the Symphonia plugin. One
    decode thread feeds a lock-free ring buffer that the cpal output callback
    drains. Play, pause, seek and volume act on real audio; position comes
    from samples actually played, replacing the simulated clock. Volume is a
    smoothed software gain. Output runs in shared mode at the device's rate,
    and tracks at other rates go through rubato.
-3. **Gapless.** Decode the next queue item ahead of time and splice it into
+3. **Gapless.** *(done; AAC in MP4 keeps ~23 ms of encoder delay because Symphonia ignores the edit list)* Decode the next queue item ahead of time and splice it into
    the same buffer at the exact sample, honouring encoder delay and padding
-   (LAME/iTunSMPB, Opus pre-skip). A rate or channel change between tracks
-   reopens the stream at the boundary instead. Test: two halves of one sine
+   (LAME/iTunSMPB, Opus pre-skip). One resampler carries on across tracks
+   that share a sample rate, so even resampled tracks join seamlessly; a rate
+   change flushes it at the boundary. Test: two halves of one sine
    wave played back to back show no discontinuity.
 4. **More decoders.** The libopus plugin, then the FFmpeg plugin. Choosing
    and falling back between plugins, the order setting, and a per-file

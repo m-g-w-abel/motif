@@ -23,6 +23,8 @@ pub struct Player {
     since: Option<Instant>,
     /// The current entry's id and what it resolved to, once resolved.
     resolved: Option<(u64, Playable)>,
+    /// Counts seeks, so the audio output can tell when to follow one.
+    seeks: u64,
 }
 
 impl Default for Player {
@@ -37,6 +39,7 @@ impl Default for Player {
             base: Duration::ZERO,
             since: None,
             resolved: None,
+            seeks: 0,
         }
     }
 }
@@ -98,11 +101,13 @@ impl Player {
         Ok(())
     }
 
-    /// Advances past the end of the current track. Returns whether state
-    /// changed. Phase 1 replaces this with end-of-stream events from the
-    /// decoder.
+    /// Advances past the end of a simulated (demo) track, going by its
+    /// duration. Real tracks end when the audio output says so. Returns
+    /// whether state changed.
     pub fn tick(&mut self, now: Instant) -> bool {
-        if self.status != PlaybackStatus::Playing {
+        if self.status != PlaybackStatus::Playing
+            || matches!(self.playable(), Some(Playable::File(_)))
+        {
             return false;
         }
         match self.current_duration() {
@@ -127,6 +132,79 @@ impl Player {
 
     pub fn queue(&self) -> &[QueueItem] {
         &self.queue
+    }
+
+    pub fn status(&self) -> PlaybackStatus {
+        self.status
+    }
+
+    pub fn volume(&self) -> f32 {
+        self.volume
+    }
+
+    pub fn seeks(&self) -> u64 {
+        self.seeks
+    }
+
+    pub fn current_item(&self) -> Option<&QueueItem> {
+        self.queue.get(self.current?)
+    }
+
+    /// The entry that plays when the current one ends naturally.
+    pub fn upcoming(&self) -> Option<&QueueItem> {
+        let i = self.current?;
+        let next = if self.repeat == RepeatMode::One {
+            i
+        } else if i + 1 < self.queue.len() {
+            i + 1
+        } else if self.repeat == RepeatMode::All {
+            0
+        } else {
+            return None;
+        };
+        self.queue.get(next)
+    }
+
+    /// Corrects the position to what the listener actually hears.
+    pub fn sync_position(&mut self, position: Duration, now: Instant) {
+        self.base = position;
+        if self.since.is_some() {
+            self.since = Some(now);
+        }
+    }
+
+    /// The current track finished playing.
+    pub fn track_ended(&mut self, now: Instant) {
+        self.advance(now, true);
+    }
+
+    /// The audio output moved on to `item` by itself (gapless). Returns false
+    /// if the entry has since left the queue.
+    pub fn moved_to(&mut self, item: u64, playable: Playable, now: Instant) -> bool {
+        let Ok(index) = self.index_of(item) else {
+            return false;
+        };
+        self.jump(index, now);
+        self.resolved = Some((item, playable));
+        true
+    }
+
+    /// `item` resolved but couldn't be played (unreadable, unsupported, no
+    /// output device). It is marked and, if current, skipped.
+    pub fn fail(&mut self, item: u64, reason: String, now: Instant) {
+        let Ok(index) = self.index_of(item) else {
+            return;
+        };
+        self.queue[index].error = Some(reason);
+        if self.current != Some(index) {
+            return;
+        }
+        let last = index + 1 == self.queue.len() && self.repeat == RepeatMode::Off;
+        if last || self.queue.iter().all(|i| i.error.is_some()) {
+            self.stop();
+        } else {
+            self.advance(now, false);
+        }
     }
 
     /// What the current entry resolved to, once [`Self::resolve_current`] has run.
@@ -171,7 +249,7 @@ impl Player {
         changed
     }
 
-    fn position(&self, now: Instant) -> Duration {
+    pub fn position(&self, now: Instant) -> Duration {
         let position = match self.since {
             Some(since) => self.base + now.saturating_duration_since(since),
             None => self.base,
@@ -231,6 +309,7 @@ impl Player {
     }
 
     fn seek(&mut self, position: Duration, now: Instant) {
+        self.seeks += 1;
         self.base = position;
         if self.since.is_some() {
             self.since = Some(now);

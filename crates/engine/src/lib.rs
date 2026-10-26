@@ -5,9 +5,11 @@
 //! channel, and state snapshots come out through `watch` channels: one for
 //! the transport and one for the queue, which changes rarely but can be big.
 //!
-//! Phase 0 has no audio output yet; [`Player`] advances position on a clock so
-//! the protocol and UIs can be built against realistic behaviour.
+//! [`Player`] is the queue and transport state machine; [`output`] keeps the
+//! audio device in step with it.
 
+pub mod audio;
+mod output;
 mod player;
 mod resolve;
 
@@ -15,6 +17,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protocol::{Command, PlayerState, QueueItem};
 use tokio::sync::{mpsc, oneshot, watch};
+
+use output::Output;
 
 pub use player::Player;
 pub use resolve::{LocalFiles, Playable, Resolver};
@@ -44,8 +48,8 @@ pub struct Engine {
     queue: watch::Receiver<Vec<QueueItem>>,
 }
 
-/// How often the engine checks for the end of the current track.
-const TICK: Duration = Duration::from_millis(250);
+/// How often the engine follows the audio output (track changes, drift).
+const TICK: Duration = Duration::from_millis(100);
 
 impl Engine {
     /// Starts the engine on the current Tokio runtime. `resolver` decides what
@@ -57,23 +61,40 @@ impl Engine {
         let (state_tx, state) = watch::channel(snapshot(&player));
         let (queue_tx, queue) = watch::channel(Vec::new());
 
+        let (audio_tx, mut audio_events) = mpsc::unbounded_channel();
+        let mut output = Output::new(audio_tx, vec![&audio::decoder::SYMPHONIA]);
+
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(TICK);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
+                let now = Instant::now();
                 let changed = tokio::select! {
                     request = rx.recv() => {
                         let Some(Request { command, reply }) = request else { break };
                         tracing::debug!(?command, "engine command");
-                        let result = player.apply(command, Instant::now());
+                        let result = player.apply(command, now);
                         let changed = result.is_ok();
                         let _ = reply.send(result);
                         changed
                     }
-                    _ = tick.tick() => player.tick(Instant::now()),
+                    Some(event) = audio_events.recv() => {
+                        output.handle(event, &mut player, now);
+                        true
+                    }
+                    _ = tick.tick() => player.tick(now) | output.poll(&mut player, now),
                 };
                 if changed {
-                    player.resolve_current(&resolver, Instant::now());
+                    // Repeat while a failure moves playback on to another entry;
+                    // `fail` stops once every entry has failed.
+                    loop {
+                        player.resolve_current(&resolver, now);
+                        let current = player.current_item().map(|item| item.id);
+                        output.reconcile(&mut player, &resolver, now);
+                        if player.current_item().map(|item| item.id) == current {
+                            break;
+                        }
+                    }
                     // Queue first, so a state never points into a queue
                     // subscribers haven't seen.
                     queue_tx.send_if_modified(|queue| {

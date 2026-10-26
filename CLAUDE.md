@@ -4,9 +4,10 @@ A music player for collectors: plays anything, desktop (Linux/Windows/macOS) and
 Android, remote control, no central server. Architecture and roadmap:
 [docs/PLAN.md](docs/PLAN.md). Layout file format: [docs/LAYOUT.md](docs/LAYOUT.md).
 
-Status: phase 0 is done. There is no audio yet; the engine simulates playback
-on a clock and the library is demo data (`apps/ui/src/lib/demo.ts`). Phase 1
-(Symphonia/FFmpeg decoding, cpal output, library scanning) is next.
+Status: phase 1 (desktop player) is in progress; see the milestones in
+`docs/PLAN.md`. Local files play for real (decoder plugins → `pipeline.rs` →
+cpal, in `crates/engine/src/audio/`). The UI's library is still demo data
+(`apps/ui/src/lib/demo.ts`), played as a simulation.
 
 ## Rules
 
