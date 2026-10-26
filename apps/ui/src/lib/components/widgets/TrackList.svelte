@@ -2,10 +2,13 @@
   import { tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { getApp, getViewState } from '../../context';
+  import { isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime, trackFormat, trackTitle } from '../../format';
   import type { Column, TracklistStyle } from '../../layout/model';
+  import type { SortKey } from '../../protocol/SortKey';
   import type { TrackGroup } from '../../protocol/TrackGroup';
+  import { nextOneOff, viewSort } from '../../sort.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
@@ -28,7 +31,10 @@
   const view = getViewState();
 
   const kind = $derived(source ?? view.source);
-  const data = $derived(trackListData(engine, library, kind, kind === 'library' ? view.browse.search || null : null));
+  const browsing = $derived(kind === 'library');
+  const data = $derived(
+    trackListData(engine, library, kind, browsing ? view.browse.search || null : null, browsing ? viewSort(view) : []),
+  );
   $effect(() => data.sync?.());
   const groups = $derived(style === 'grouped' ? data.groups : null);
   const currentKey = $derived(data.currentKey);
@@ -50,6 +56,22 @@
     format: 'Format',
     duration: 'Time',
   };
+
+  // Header clicks sort the library by that column for now; the saved rules
+  // (the toolbar's sort menu) stay as they are. The demo library doesn't sort.
+  const sortKeys: Partial<Record<Column, SortKey>> = {
+    title: 'title',
+    artist: 'artist',
+    album: 'album',
+    format: 'format',
+    duration: 'duration',
+  };
+  const sortable = (column: Column) => (browsing && !isDemo ? sortKeys[column] : undefined);
+  function sortState(column: Column): 'ascending' | 'descending' | undefined {
+    const oneOff = view.browse.oneOff;
+    if (!oneOff || oneOff.key !== sortable(column)) return undefined;
+    return oneOff.descending ? 'descending' : 'ascending';
+  }
 
   // Column widths are a per-device preference, remembered per view and list.
   const widthsKey = $derived(`columns.${view.layoutId}.${style}.${columns.join(',')}`);
@@ -282,8 +304,18 @@
           <thead>
             <tr>
               {#each shown as column, i (column)}
-                <th class={column} scope="col">
-                  <span class="label">{labels[column]}</span>
+                <th class={column} scope="col" aria-sort={sortState(column)}>
+                  {#if sortable(column)}
+                    <button
+                      class="label sort"
+                      title="Sort by {labels[column]}; click again to reverse, then to go back to the saved order"
+                      onclick={() => (view.browse.oneOff = nextOneOff(view.browse.oneOff, sortable(column)!))}
+                    >
+                      {labels[column]}{#if sortState(column)}{sortState(column) === 'ascending' ? ' ▲' : ' ▼'}{/if}
+                    </button>
+                  {:else}
+                    <span class="label">{labels[column]}</span>
+                  {/if}
                   {#if i < shown.length - 1}
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <span
@@ -418,6 +450,22 @@
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .sort {
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .sort:hover {
+    color: var(--text);
   }
 
   .resize {

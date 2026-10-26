@@ -285,8 +285,9 @@ fn store(
     // stale and any problem noted before.
     tx.execute(
         "INSERT INTO tracks (path, size, mtime, title, artist, album, album_artist, track_no, disc_no, year, genre,
-             duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, art)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+             duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, art, added)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
+             CAST(strftime('%s', 'now') AS INTEGER))
          ON CONFLICT (path) DO UPDATE SET size = ?2, mtime = ?3, title = ?4, artist = ?5, album = ?6,
              album_artist = ?7, track_no = ?8, disc_no = ?9, year = ?10, genre = ?11, duration_ms = ?12,
              codec = ?13, sample_rate = ?14, bit_depth = ?15, channels = ?16, bitrate = ?17,

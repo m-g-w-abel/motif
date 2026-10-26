@@ -8,7 +8,7 @@ use std::{
 };
 
 use library::Library;
-use protocol::{LibraryQuery, QueryResult, TrackRef};
+use protocol::{LibraryQuery, QueryResult, SortKey, SortRule, TrackRef};
 
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -49,6 +49,7 @@ fn wait_until(library: &Library, done: impl Fn(&protocol::LibraryStatus) -> bool
 fn track(library: &Library, title: &str) -> protocol::LibraryTrack {
     let query = LibraryQuery::Tracks {
         search: None,
+        sort: vec![],
         offset: 0,
         limit: 100,
     };
@@ -66,6 +67,7 @@ fn track(library: &Library, title: &str) -> protocol::LibraryTrack {
 fn titles(library: &Library, search: Option<&str>) -> Vec<String> {
     let query = LibraryQuery::Tracks {
         search: search.map(Into::into),
+        sort: vec![],
         offset: 0,
         limit: 100,
     };
@@ -97,7 +99,10 @@ fn scans_queries_matches_and_rescans() {
     assert_eq!(titles(&library, Some("clos")), ["Closing"]);
 
     let QueryResult::Groups { groups } = library
-        .query(LibraryQuery::Groups { search: None })
+        .query(LibraryQuery::Groups {
+            search: None,
+            sort: vec![],
+        })
         .unwrap()
     else {
         panic!()
@@ -112,6 +117,7 @@ fn scans_queries_matches_and_rescans() {
 
     let query = LibraryQuery::Albums {
         search: None,
+        sort: vec![],
         offset: 0,
         limit: 10,
     };
@@ -129,6 +135,7 @@ fn scans_queries_matches_and_rescans() {
 
     let query = LibraryQuery::AlbumPosition {
         search: None,
+        sort: vec![],
         album: albums[1].key.clone(),
     };
     assert_eq!(
@@ -161,6 +168,7 @@ fn scans_queries_matches_and_rescans() {
     let (refs, _) = library
         .selection(&LibraryQuery::Play {
             search: None,
+            sort: vec![],
             start: 0,
         })
         .unwrap();
@@ -172,6 +180,82 @@ fn scans_queries_matches_and_rescans() {
         hashes[0].starts_with("flac-md5:") && hashes[2].starts_with("pcm-b3:"),
         "{hashes:?}"
     );
+
+    // Other rules reorder every list the same way.
+    let by_title = vec![SortRule {
+        key: SortKey::Title,
+        descending: false,
+    }];
+    let QueryResult::Tracks { tracks, .. } = library
+        .query(LibraryQuery::Tracks {
+            search: None,
+            sort: by_title.clone(),
+            offset: 1,
+            limit: 2,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    let names: Vec<_> = tracks
+        .iter()
+        .map(|t| t.track.title.clone().unwrap())
+        .collect();
+    assert_eq!(names, ["Closing", "Ending"]);
+    let QueryResult::Groups { groups } = library
+        .query(LibraryQuery::Groups {
+            search: None,
+            sort: by_title.clone(),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(groups.len(), 4, "albums alternate by title");
+    assert_eq!(
+        library
+            .query(LibraryQuery::AlbumPosition {
+                search: None,
+                sort: by_title.clone(),
+                album: albums[1].key.clone(),
+            })
+            .unwrap(),
+        QueryResult::Position { index: Some(0) }
+    );
+    let (refs, _) = library
+        .selection(&LibraryQuery::Play {
+            search: None,
+            sort: by_title.clone(),
+            start: 0,
+        })
+        .unwrap();
+    assert_eq!(refs[0].title.as_deref(), Some("Beginning"));
+    let (refs, _) = library
+        .selection(&LibraryQuery::PlayAlbum {
+            album: albums[0].key.clone(),
+            sort: vec![SortRule {
+                key: SortKey::Track,
+                descending: true,
+            }],
+        })
+        .unwrap();
+    let names: Vec<_> = refs.iter().map(|r| r.title.clone().unwrap()).collect();
+    assert_eq!(names, ["Closing", "Opening"]);
+    let QueryResult::Albums { albums: desc, .. } = library
+        .query(LibraryQuery::Albums {
+            search: None,
+            sort: vec![SortRule {
+                key: SortKey::Album,
+                descending: true,
+            }],
+            offset: 0,
+            limit: 10,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(desc[0].title, "Second Album");
 
     // A file that disappears stays in the library, marked missing, and comes
     // back (same row) when it reappears.

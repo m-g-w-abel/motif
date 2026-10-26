@@ -12,6 +12,7 @@
     'chevron-up': 'M6 15l6-6 6 6',
     'chevron-down': 'M6 9l6 6 6-6',
     list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+    sort: 'M3 6h18M6 12h12M10 18h4',
     grid: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
     split: 'M3 3h18v18H3zM10 3v18M14 8h4M14 12h4',
     info: 'M3 3h18v18H3zM15 3v18M18 8v.01M17 12h2',

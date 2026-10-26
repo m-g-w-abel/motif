@@ -1,10 +1,79 @@
 use std::path::Path;
 
+use protocol::{SortKey, SortRule};
 use rusqlite::{Connection, params};
 
-/// Every list uses this order: album artist, album, disc, track.
-pub const ORDER: &str = "ORDER BY lower(coalesce(album_artist, artist, '')), lower(coalesce(album, '')), \
-     coalesce(disc_no, 1), coalesce(track_no, 0), path";
+/// The order lists use until the user picks one: album artist, album, disc, track.
+const DEFAULT_SORT: [SortRule; 4] = [
+    SortRule {
+        key: SortKey::AlbumArtist,
+        descending: false,
+    },
+    SortRule {
+        key: SortKey::Album,
+        descending: false,
+    },
+    SortRule {
+        key: SortKey::Disc,
+        descending: false,
+    },
+    SortRule {
+        key: SortKey::Track,
+        descending: false,
+    },
+];
+
+/// The SQL a sort key orders by. Text sorts case-insensitively.
+fn sort_expr(key: SortKey) -> &'static str {
+    match key {
+        SortKey::AlbumArtist => "lower(coalesce(album_artist, artist, ''))",
+        SortKey::Artist => "lower(coalesce(artist, ''))",
+        SortKey::Album => "lower(coalesce(album, ''))",
+        SortKey::Year => "year",
+        SortKey::Added => "added",
+        SortKey::Title => "lower(title)",
+        SortKey::Genre => "lower(genre)",
+        SortKey::Disc => "coalesce(disc_no, 1)",
+        SortKey::Track => "coalesce(track_no, 0)",
+        SortKey::Duration => "duration_ms",
+        SortKey::Format => "lower(codec)",
+        SortKey::Path => "path",
+    }
+}
+
+/// `ORDER BY` for tracks: each rule in turn (the default if there are none),
+/// then path, so no two rows tie and pages never overlap.
+pub fn order(rules: &[SortRule]) -> String {
+    order_by(rules, false)
+}
+
+/// `ORDER BY` for albums grouped as `k` ([`ALBUM_KEY`]): each rule by its
+/// lowest value in the album (highest when descending), then the album key.
+pub fn album_order(rules: &[SortRule]) -> String {
+    order_by(rules, true)
+}
+
+fn order_by(rules: &[SortRule], albums: bool) -> String {
+    let rules = if rules.is_empty() {
+        &DEFAULT_SORT[..]
+    } else {
+        rules
+    };
+    let mut terms: Vec<String> = rules
+        .iter()
+        .map(|r| {
+            let e = sort_expr(r.key);
+            match (albums, r.descending) {
+                (false, false) => e.to_string(),
+                (false, true) => format!("{e} DESC"),
+                (true, false) => format!("min({e})"),
+                (true, true) => format!("max({e}) DESC"),
+            }
+        })
+        .collect();
+    terms.push(if albums { "k" } else { "path" }.into());
+    format!("ORDER BY {}", terms.join(", "))
+}
 
 /// Groups tracks into albums: album artist (or artist) plus album title,
 /// joined by a unit separator.
@@ -32,12 +101,19 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              musicbrainz_recording TEXT, isrc TEXT, audio_hash TEXT,
              art TEXT,
              missing INTEGER NOT NULL DEFAULT 0,
-             problem TEXT
+             problem TEXT,
+             added INTEGER
          );
          CREATE INDEX IF NOT EXISTS tracks_mb ON tracks (musicbrainz_recording);
          CREATE INDEX IF NOT EXISTS tracks_isrc ON tracks (isrc);
          CREATE INDEX IF NOT EXISTS tracks_hash ON tracks (audio_hash);
          CREATE INDEX IF NOT EXISTS tracks_title ON tracks (lower(title));
+         -- The default order (see order()): pages of a big library come from
+         -- the index instead of sorting every track for each page.
+         CREATE INDEX IF NOT EXISTS tracks_order ON tracks (
+             lower(coalesce(album_artist, artist, '')), lower(coalesce(album, '')),
+             coalesce(disc_no, 1), coalesce(track_no, 0), path
+         );
          CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
              title, artist, album, album_artist, content='tracks', content_rowid='id'
          );
@@ -61,11 +137,15 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 }
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
-/// re-read at the next scan.
-const VERSION: i32 = 3;
+/// re-read at the next scan, or when the table changes.
+const VERSION: i32 = 4;
 
 fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let has = |column: &str| {
+        conn.prepare("SELECT 1 FROM pragma_table_info('tracks') WHERE name = ?1")
+            .and_then(|mut s| s.exists([column]))
+    };
     if version < 2 {
         // Version 2 reads files lofty can't parse with Symphonia instead.
         conn.execute("UPDATE tracks SET mtime = -1 WHERE duration_ms IS NULL", [])?;
@@ -73,10 +153,6 @@ fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
     if version < 3 {
         // Version 3 keeps tracks whose files disappear (marked missing) and
         // notes why damaged files can't be played.
-        let has = |column: &str| {
-            conn.prepare("SELECT 1 FROM pragma_table_info('tracks') WHERE name = ?1")
-                .and_then(|mut s| s.exists([column]))
-        };
         if !has("missing")? {
             conn.execute(
                 "ALTER TABLE tracks ADD COLUMN missing INTEGER NOT NULL DEFAULT 0",
@@ -86,6 +162,12 @@ fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
         if !has("problem")? {
             conn.execute("ALTER TABLE tracks ADD COLUMN problem TEXT", [])?;
         }
+    }
+    if version < 4 && !has("added")? {
+        // Version 4 notes when each track was added; the file's modification
+        // time is the best guess for tracks already in the library.
+        conn.execute("ALTER TABLE tracks ADD COLUMN added INTEGER", [])?;
+        conn.execute("UPDATE tracks SET added = max(mtime, 0)", [])?;
     }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
@@ -137,4 +219,89 @@ pub fn roots(conn: &Connection) -> rusqlite::Result<Vec<String>> {
 
 pub fn track_count(conn: &Connection) -> rusqlite::Result<u32> {
     conn.query_row("SELECT count(*) FROM tracks", params![], |row| row.get(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const fn rule(key: SortKey, descending: bool) -> SortRule {
+        SortRule { key, descending }
+    }
+
+    #[test]
+    fn no_rules_give_the_default_order() {
+        assert_eq!(
+            order(&[]),
+            "ORDER BY lower(coalesce(album_artist, artist, '')), lower(coalesce(album, '')), \
+             coalesce(disc_no, 1), coalesce(track_no, 0), path"
+        );
+        assert_eq!(order(&[]), order(&DEFAULT_SORT));
+    }
+
+    #[test]
+    fn rules_become_tiers_in_order() {
+        let rules = [rule(SortKey::Year, true), rule(SortKey::Title, false)];
+        assert_eq!(order(&rules), "ORDER BY year DESC, lower(title), path");
+        assert_eq!(
+            album_order(&rules),
+            "ORDER BY max(year) DESC, min(lower(title)), k"
+        );
+        assert_eq!(
+            album_order(&[]),
+            "ORDER BY min(lower(coalesce(album_artist, artist, ''))), min(lower(coalesce(album, ''))), \
+             min(coalesce(disc_no, 1)), min(coalesce(track_no, 0)), k"
+        );
+    }
+
+    #[test]
+    fn every_key_orders_a_real_query() {
+        let dir = std::env::temp_dir().join(format!("motif-order-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = open(&dir.join("library.db")).unwrap();
+        let keys = [
+            SortKey::AlbumArtist,
+            SortKey::Artist,
+            SortKey::Album,
+            SortKey::Year,
+            SortKey::Added,
+            SortKey::Title,
+            SortKey::Genre,
+            SortKey::Disc,
+            SortKey::Track,
+            SortKey::Duration,
+            SortKey::Format,
+            SortKey::Path,
+        ];
+        let rules: Vec<_> = keys.iter().map(|&k| rule(k, false)).collect();
+        conn.prepare(&format!("SELECT id FROM tracks {}", order(&rules)))
+            .unwrap();
+        conn.prepare(&format!(
+            "SELECT {ALBUM_KEY} AS k FROM tracks GROUP BY k {}",
+            album_order(&rules)
+        ))
+        .unwrap();
+        drop(conn);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_default_order_uses_its_index() {
+        let dir = std::env::temp_dir().join(format!("motif-plan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = open(&dir.join("library.db")).unwrap();
+        let plan: String = conn
+            .query_row(
+                &format!(
+                    "EXPLAIN QUERY PLAN SELECT id FROM tracks WHERE {SEARCH} {} LIMIT 200",
+                    order(&[])
+                ),
+                [None::<String>],
+                |r| r.get(3),
+            )
+            .unwrap();
+        assert!(plan.contains("tracks_order"), "{plan}");
+        drop(conn);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
