@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { EngineClient } from './engine.svelte';
 import { LibraryTracks } from './library.svelte';
 import type { LibraryQuery } from './protocol/LibraryQuery';
@@ -23,6 +23,7 @@ function fakeEngine(total: number) {
   return { engine: engine as unknown as EngineClient & { library: { revision: number } }, queries };
 }
 
+vi.useFakeTimers({ toFake: ['Date'] });
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe('LibraryTracks', () => {
@@ -46,9 +47,51 @@ describe('LibraryTracks', () => {
     await settle();
     list.sync(); // same revision: nothing new
     engine.library.revision = 2;
+    vi.advanceTimersByTime(1000);
     list.sync();
     await settle();
     expect(queries.filter((q) => q.type === 'tracks')).toHaveLength(2);
     expect(queries.every((q) => !('search' in q) || q.search === 'x')).toBe(true);
+  });
+});
+
+describe('stale data', () => {
+  it('keeps old rows until the refetch lands, and throttles refetches', async () => {
+    const { engine, queries } = fakeEngine(10);
+    const list = new LibraryTracks(engine, null);
+    list.sync();
+    await settle();
+    expect(list.get(3)).toBeDefined();
+    engine.library.revision = 2;
+    list.sync(); // throttled: too soon after the first
+    expect(queries.filter((q) => q.type === 'tracks')).toHaveLength(1);
+    expect(list.get(3)).toBeDefined();
+    vi.advanceTimersByTime(1000);
+    list.sync();
+    expect(list.get(3)).toBeDefined(); // stale row, while refetching
+    await settle();
+    expect(queries.filter((q) => q.type === 'tracks')).toHaveLength(2);
+  });
+
+  it('reports a shifted anchor row', async () => {
+    const { engine } = fakeEngine(10);
+    const list = new LibraryTracks(engine, null);
+    list.sync();
+    await settle();
+    list.setAnchor(4);
+    let moved = -1;
+    list.onShift = (i) => (moved = i);
+    // Same row ids at other indices after an insert above.
+    const real = engine.query;
+    engine.query = async (q) => {
+      const r = await real(q);
+      if (r.type === 'tracks') r.tracks = [{ track: { source: 'local', id: '/new.flac' } } as never, ...r.tracks.slice(0, 9)];
+      return r;
+    };
+    engine.library.revision = 2;
+    vi.advanceTimersByTime(1000);
+    list.sync();
+    await settle();
+    expect(moved).toBe(5);
   });
 });

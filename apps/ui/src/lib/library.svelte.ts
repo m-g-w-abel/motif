@@ -8,6 +8,8 @@ import type { TrackRef } from './protocol/TrackRef';
 
 /** Rows fetched per request. */
 const PAGE = 200;
+/** Fewest ms between refetches while the library keeps changing. */
+const SYNC_INTERVAL = 1000;
 
 /**
  * A paged view of a library list (tracks or albums). Rows are fetched in
@@ -18,10 +20,16 @@ abstract class PagedList<T> {
   total = $state(0);
   /** Set once the first page (and the total) has arrived. */
   loaded = $state(false);
-  #pages = new Map<number, T[]>();
+  /** Pages stay after a library change (stale) until their refetch lands. */
+  #pages = new Map<number, { rows: T[]; revision: number }>();
   #loading = new Set<number>();
   #version = $state(0);
   #revision = -1;
+  #synced = 0;
+  #timer: ReturnType<typeof setTimeout> | undefined;
+  #anchor: { index: number; key: string } | null = null;
+  /** Called with the anchor row's new index when rows were inserted or removed above it. */
+  onShift?: (index: number) => void;
 
   constructor(
     protected engine: EngineClient,
@@ -32,19 +40,34 @@ abstract class PagedList<T> {
   sync() {
     const revision = this.engine.library?.revision;
     if (revision === undefined || revision === this.#revision || this.engine.status !== 'open') return;
+    // A scan bumps the revision every few hundred files; don't refetch on each.
+    const wait = this.#synced + SYNC_INTERVAL - Date.now();
+    if (this.#revision >= 0 && wait > 0) {
+      this.#timer ??= setTimeout(() => {
+        this.#timer = undefined;
+        this.sync();
+      }, wait);
+      return;
+    }
+    this.#synced = Date.now();
     this.#revision = revision;
-    this.#pages.clear();
     this.#load(0);
     this.refresh();
+  }
+
+  /** Remembers the first visible row so a shift of the rows above it can be reported. */
+  setAnchor(index: number) {
+    const row = this.#pages.get(Math.floor(index / PAGE))?.rows[index % PAGE];
+    this.#anchor = row ? { index, key: this.key(row) } : null;
   }
 
   /** Row `i`, or `undefined` while its page loads. */
   get(i: number): T | undefined {
     void this.#version;
     const page = Math.floor(i / PAGE);
-    const rows = this.#pages.get(page);
-    if (!rows) this.#load(page);
-    return rows?.[i - page * PAGE];
+    const cached = this.#pages.get(page);
+    if (cached?.revision !== this.#revision) this.#load(page);
+    return cached?.rows[i - page * PAGE];
   }
 
   #load(page: number) {
@@ -52,18 +75,27 @@ abstract class PagedList<T> {
     this.#loading.add(page);
     // Deferred: rows are asked for while rendering, which may not change state.
     queueMicrotask(() => {
+      const revision = this.#revision;
       this.fetch(page * PAGE, PAGE)
         .then(({ total, rows }) => {
-          this.#pages.set(page, rows);
+          this.#pages.set(page, { rows, revision });
           this.total = total;
           this.loaded = true;
           this.#version++;
+          const a = this.#anchor;
+          const at = a ? rows.findIndex((row) => this.key(row) === a.key) : -1;
+          if (a && at >= 0 && page * PAGE + at !== a.index) {
+            a.index = page * PAGE + at;
+            this.onShift?.(a.index);
+          }
         })
         .catch((e: Error) => console.warn('library page', e.message))
         .finally(() => this.#loading.delete(page));
     });
   }
 
+  /** Identifies a row across refetches. */
+  protected abstract key(row: T): string;
   protected abstract fetch(offset: number, limit: number): Promise<{ total: number; rows: T[] }>;
   /** Fetches anything else that goes with the list. */
   protected refresh() {}
@@ -72,6 +104,10 @@ abstract class PagedList<T> {
 export class LibraryTracks extends PagedList<LibraryTrack> {
   /** Album runs in list order, for headers and for finding an album. */
   groups = $state.raw<TrackGroup[]>([]);
+
+  protected key(row: LibraryTrack) {
+    return row.track.id;
+  }
 
   protected async fetch(offset: number, limit: number) {
     const result = await this.engine.query({ type: 'tracks', search: this.search, offset, limit });
@@ -87,6 +123,10 @@ export class LibraryTracks extends PagedList<LibraryTrack> {
 }
 
 export class LibraryAlbums extends PagedList<LibraryAlbum> {
+  protected key(row: LibraryAlbum) {
+    return row.key;
+  }
+
   protected async fetch(offset: number, limit: number) {
     const result = await this.engine.query({ type: 'albums', search: this.search, offset, limit });
     if (result.type !== 'albums') throw new Error(`unexpected ${result.type}`);
@@ -130,7 +170,9 @@ export class LibraryClient {
     const revision = this.engine.library?.revision ?? -1;
     if (revision !== this.#revision) {
       this.#revision = revision;
-      queueMicrotask(() => this.#details.clear());
+      // Keep what's known (stale) and look it all up again.
+      for (const path of this.#details.keys()) this.#wanted.add(path);
+      if (this.#wanted.size) queueMicrotask(() => this.#lookup());
     }
     const known = this.#details.get(track.id);
     if (known === undefined && !this.#wanted.has(track.id)) {
@@ -144,6 +186,7 @@ export class LibraryClient {
   #lookup() {
     const paths = [...this.#wanted];
     this.#wanted.clear();
+    if (!paths.length) return;
     if (this.engine.status !== 'open' || !this.engine.library) {
       for (const path of paths) this.#details.set(path, null);
       return;
@@ -154,7 +197,7 @@ export class LibraryClient {
         const found = new Map(result.type === 'tracks' ? result.tracks.map((t) => [t.track.id, t]) : []);
         for (const path of paths) this.#details.set(path, found.get(path) ?? null);
       })
-      .catch(() => paths.forEach((path) => this.#details.set(path, null)));
+      .catch(() => paths.forEach((path) => this.#details.get(path) === undefined && this.#details.set(path, null)));
   }
 
   /** URL of artwork `art`, scaled to fit `size` pixels. */

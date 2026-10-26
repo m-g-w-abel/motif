@@ -20,7 +20,10 @@
   } = $props();
 
   const { library } = getApp();
-  const id = $derived(art !== undefined ? art : (library.details(track ?? undefined)?.art ?? null));
+  const details = $derived(art !== undefined ? null : library.details(track ?? undefined));
+  const id = $derived(art !== undefined ? art : (details?.art ?? null));
+  // Still being looked up: neither the gradient nor an image yet.
+  const loading = $derived(art === undefined && details === undefined);
   let failed = $state<string | null>(null);
 </script>
 
@@ -28,7 +31,7 @@
   class="art"
   style:width={size ? `${size}px` : undefined}
   style:height={size ? `${size}px` : undefined}
-  style:background={track && (!id || failed === id) ? placeholderArt(track) : undefined}
+  style:background={track && !loading && (!id || failed === id) ? placeholderArt(track) : undefined}
 >
   {#if id && failed !== id}
     <img

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { groupConsecutive } from '../../albums';
   import { getApp, getViewState } from '../../context';
   import { demoLibrary, isDemo } from '../../demo';
@@ -69,6 +70,21 @@
     return indices;
   });
 
+  // Cards inserted above the first visible row (a scan) must not push it away.
+  let scroller = $state<HTMLElement>();
+  let anchorOffset = 0;
+  $effect(() => {
+    const top = scrollTop;
+    untrack(() => {
+      const row = Math.ceil(top / rowHeight);
+      anchorOffset = top - row * rowHeight;
+      albums?.setAnchor(row * columns);
+      if (albums) albums.onShift = (index) => {
+        if (scroller) scroller.scrollTop = Math.ceil(index / columns) * rowHeight + anchorOffset;
+      };
+    });
+  });
+
   $effect(() => {
     void visible;
     void width;
@@ -80,6 +96,7 @@
 <section class="album-grid">
   <div
     class="scroll"
+    bind:this={scroller}
     bind:clientHeight={viewHeight}
     onscroll={(e) => (scrollTop = (e.currentTarget as HTMLElement).scrollTop)}
   >
