@@ -23,6 +23,8 @@ const MAX_DRIFT: Duration = Duration::from_millis(150);
 pub struct Output {
     /// Opened on first use and dropped if the device fails.
     audio: Option<Audio>,
+    /// The device `audio` was opened on.
+    device: Option<String>,
     events: UnboundedSender<AudioEvent>,
     /// Shared with the decode thread, which reads it for every file it opens.
     plugins: Arc<Mutex<Vec<&'static Plugin>>>,
@@ -39,6 +41,7 @@ impl Output {
     pub fn new(events: UnboundedSender<AudioEvent>) -> Self {
         Self {
             audio: None,
+            device: None,
             events,
             plugins: Arc::default(),
             loaded: None,
@@ -52,6 +55,12 @@ impl Output {
     pub fn reconcile(&mut self, player: &mut Player, resolver: &dyn Resolver, now: Instant) {
         if let Ok(mut plugins) = self.plugins.lock() {
             *plugins = player.decoders();
+        }
+        if self.audio.is_some() && self.device.as_deref() != player.output() {
+            // Switch devices: reopen below and carry on from the current position.
+            self.audio = None;
+            self.loaded = None;
+            self.preloaded = None;
         }
         let wanted = match (player.current_item(), player.playable()) {
             (Some(item), Some(Playable::File(path)))
@@ -72,8 +81,12 @@ impl Output {
         };
 
         if self.audio.is_none() {
-            match Audio::open(self.events.clone(), self.plugins.clone()) {
-                Ok(audio) => self.audio = Some(audio),
+            let device = player.output().map(str::to_string);
+            match Audio::open(device.clone(), self.events.clone(), self.plugins.clone()) {
+                Ok(audio) => {
+                    self.audio = Some(audio);
+                    self.device = device;
+                }
                 Err(reason) => {
                     player.fail(item, format!("no audio output: {reason}"), now);
                     return;

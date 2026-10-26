@@ -13,6 +13,8 @@ describe('PlaybackPosition', () => {
       current: 0,
       decoders: [],
       available_decoders: [],
+      output: null,
+      outputs: [],
     };
     const engine = { player, clockOffset, current: null } as unknown as EngineClient;
     const position = new PlaybackPosition(engine);

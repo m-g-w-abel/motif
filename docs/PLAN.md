@@ -403,7 +403,10 @@ try.
 7. **OS media controls.** *(done; verified on Linux/MPRIS, Windows and macOS only compile in CI)* souvlaki in the desktop and headless apps: MPRIS
    on Linux, SMTC on Windows, Now Playing on macOS, so media keys, the
    lock screen and desktop widgets show and control Motif.
-8. **Hardening.**
+8. **Hardening.** *(done. Measured: no underruns while a full scan or
+   background hashing reads the same USB drive as playback; engine CPU 0.1%
+   of a core idle, 0.5% paused, 0.8% playing FLAC resampled to 48 kHz. Not
+   tested: unplugging a real output device.)*
    - Unreadable, missing or corrupt files are skipped with a visible reason.
    - A lost output device (headphones unplugged) pauses rather than
      erroring, and an output device picker is added.

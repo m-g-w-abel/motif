@@ -93,6 +93,21 @@ pub enum Command {
     SetDecoders {
         order: Vec<String>,
     },
+    /// Plays through this output device ([`OutputDevice::id`]), or the
+    /// system default if `None`.
+    SetOutput {
+        device: Option<String>,
+    },
+    /// Refreshes [`PlayerState::outputs`] (devices come and go).
+    ListOutputs,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OutputDevice {
+    /// Stable across restarts where the OS allows.
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -153,6 +168,10 @@ pub struct PlayerState {
     pub decoders: Vec<String>,
     /// Every decoder plugin this engine has.
     pub available_decoders: Vec<String>,
+    /// The chosen output device, or `None` for the system default.
+    pub output: Option<String>,
+    /// Output devices found at the last [`Command::ListOutputs`].
+    pub outputs: Vec<OutputDevice>,
 }
 
 impl Default for PlayerState {
@@ -166,6 +185,8 @@ impl Default for PlayerState {
             current: None,
             decoders: Vec::new(),
             available_decoders: Vec::new(),
+            output: None,
+            outputs: Vec::new(),
         }
     }
 }

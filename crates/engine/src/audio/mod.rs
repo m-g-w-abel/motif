@@ -85,6 +85,7 @@ impl Audio {
     /// Opens the default output device. Each file is opened with the first of
     /// `plugins` (as they are at the time) that can.
     pub fn open(
+        device: Option<String>,
         events: UnboundedSender<AudioEvent>,
         plugins: Arc<Mutex<Vec<&'static Plugin>>>,
     ) -> Result<Self, String> {
@@ -103,17 +104,19 @@ impl Audio {
             let events = events.clone();
             thread::Builder::new()
                 .name("audio-output".into())
-                .spawn(move || match open_stream(shared, events) {
-                    Ok((stream, producer, rate, channels)) => {
-                        let _ = ready_tx.send(Ok((producer, rate, channels)));
-                        // Keep the stream alive until the handle is dropped.
-                        let _ = stop_rx.recv();
-                        drop(stream);
-                    }
-                    Err(err) => {
-                        let _ = ready_tx.send(Err(err));
-                    }
-                })
+                .spawn(
+                    move || match open_stream(device.as_deref(), shared, events) {
+                        Ok((stream, producer, rate, channels)) => {
+                            let _ = ready_tx.send(Ok((producer, rate, channels)));
+                            // Keep the stream alive until the handle is dropped.
+                            let _ = stop_rx.recv();
+                            drop(stream);
+                        }
+                        Err(err) => {
+                            let _ = ready_tx.send(Err(err));
+                        }
+                    },
+                )
                 .map_err(|e| e.to_string())?;
         }
         let (producer, rate, channels) = ready_rx.recv().map_err(|e| e.to_string())??;
@@ -208,9 +211,50 @@ impl Audio {
 
 type Opened = (cpal::Stream, Producer<f32>, u32, usize);
 
-fn open_stream(shared: Arc<Shared>, events: UnboundedSender<AudioEvent>) -> Result<Opened, String> {
-    let device = cpal::default_host()
-        .default_output_device()
+/// The output devices worth offering. ALSA lists every plugin and alias
+/// for every card; only the sound servers, the default and one entry per
+/// physical output are kept.
+pub fn outputs() -> Vec<protocol::OutputDevice> {
+    let Ok(devices) = cpal::default_host().output_devices() else {
+        return Vec::new();
+    };
+    let all = devices.filter_map(|device| {
+        Some(protocol::OutputDevice {
+            id: device.id().ok()?.to_string(),
+            name: device.to_string(),
+        })
+    });
+    let mut kept: Vec<protocol::OutputDevice> = Vec::new();
+    for device in all {
+        let useful = match device.id.strip_prefix("alsa:") {
+            Some(alsa) => {
+                matches!(alsa, "default" | "pipewire" | "pulse")
+                    || ["sysdefault:", "front:", "hdmi:"]
+                        .iter()
+                        .any(|p| alsa.starts_with(p))
+            }
+            None => true,
+        };
+        if useful && !kept.iter().any(|k| k.name == device.name) {
+            kept.push(device);
+        }
+    }
+    kept
+}
+
+fn open_stream(
+    device: Option<&str>,
+    shared: Arc<Shared>,
+    events: UnboundedSender<AudioEvent>,
+) -> Result<Opened, String> {
+    let host = cpal::default_host();
+    // A chosen device that has gone away falls back to the default.
+    let chosen = device.and_then(|id| host.device_by_id(&id.parse().ok()?));
+    if device.is_some() && chosen.is_none() {
+        tracing::warn!(?device, "output device not found, using the default");
+    }
+    let device = chosen
+        .or_else(|| host.default_output_device())
         .ok_or("no audio output device")?;
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     let rate = supported.sample_rate();

@@ -76,7 +76,11 @@
     aria-expanded={open}
     aria-label="Settings"
     title="Settings"
-    onclick={() => (open = !open)}
+    onclick={() => {
+      open = !open;
+      // Devices come and go; refresh the list each time the panel opens.
+      if (open && engine.status === 'open') engine.run({ type: 'list_outputs' });
+    }}
   >
     <Icon name="settings" size={16} />
   </button>
@@ -176,6 +180,27 @@
         </div>
       {/if}
 
+      {#if engine.player}
+        {@const player = engine.player}
+        <div class="row">
+          <span class="label">Output</span>
+          <select
+            class="select"
+            aria-label="Output device"
+            value={player.output ?? ''}
+            onchange={(e) => engine.run({ type: 'set_output', device: e.currentTarget.value || null })}
+          >
+            <option value="">System default</option>
+            {#each player.outputs as device (device.id)}
+              <option value={device.id}>{device.name}</option>
+            {/each}
+            {#if player.output && !player.outputs.some((d) => d.id === player.output)}
+              <option value={player.output}>{player.output} (not found)</option>
+            {/if}
+          </select>
+        </div>
+      {/if}
+
       {#if decoders.length}
         <div class="row">
           <span class="label">Decoders</span>
@@ -258,6 +283,18 @@
   .icon-button.small {
     width: 22px;
     height: 22px;
+  }
+
+  .select {
+    width: 100%;
+    height: 28px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
   }
 
   .actions {

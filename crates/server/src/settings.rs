@@ -12,6 +12,8 @@ struct Saved {
     decoders: Vec<String>,
     volume: f32,
     repeat: RepeatMode,
+    #[serde(default)]
+    output: Option<String>,
 }
 
 impl Saved {
@@ -20,6 +22,7 @@ impl Saved {
             decoders: state.decoders.clone(),
             volume: state.volume,
             repeat: state.repeat,
+            output: state.output.clone(),
         }
     }
 }
@@ -38,6 +41,9 @@ pub async fn keep(engine: Engine, file: PathBuf) {
                 volume: saved.volume,
             },
             Command::SetRepeat { mode: saved.repeat },
+            Command::SetOutput {
+                device: saved.output,
+            },
         ] {
             if let Err(err) = engine.send(command).await {
                 tracing::warn!(%err, "ignoring a saved setting");

@@ -356,6 +356,9 @@ impl Ffmpeg {
         let channels: usize = channels
             .parse()
             .map_err(|_| format!("bad channel count {channels}"))?;
+        if rate == 0 || channels == 0 {
+            return Err("not playable audio".into());
+        }
         let (child, stdout) = Self::spawn(path, rate, channels, Duration::ZERO)?;
         Ok(Self {
             path: path.into(),

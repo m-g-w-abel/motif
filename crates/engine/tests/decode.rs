@@ -90,3 +90,30 @@ fn ffmpeg_seeks_by_restarting() {
     while decoder.decode(&mut samples).unwrap() {}
     assert_eq!(samples.len() / 2, 22_050);
 }
+
+#[test]
+fn damaged_files_fail_gracefully() {
+    let dir = std::env::temp_dir().join(format!("motif-decode-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let bytes =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sine.flac"))
+            .unwrap();
+
+    // Cut off part-way: plays what is there, then ends.
+    let truncated = dir.join("truncated.flac");
+    std::fs::write(&truncated, &bytes[..bytes.len() * 6 / 10]).unwrap();
+    let mut decoder = decoder::open(&truncated, &[&decoder::SYMPHONIA]).unwrap();
+    let mut samples = Vec::new();
+    while decoder.decode(&mut samples).unwrap_or(false) {}
+    let frames = samples.len() / 2;
+    assert!(frames > 10_000 && frames < 44_100, "{frames} frames");
+
+    // Not audio at all: refused with a reason, not a crash.
+    let garbage = dir.join("garbage.flac");
+    std::fs::write(&garbage, vec![0x5a; 4096]).unwrap();
+    let err = decoder::open(&garbage, &decoder::all())
+        .err()
+        .expect("garbage must not open");
+    assert!(err.contains("symphonia:"), "{err}");
+    let _ = std::fs::remove_dir_all(dir);
+}

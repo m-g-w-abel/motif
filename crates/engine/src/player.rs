@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use protocol::{Command, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackRef};
+use protocol::{
+    Command, OutputDevice, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackRef,
+};
 
 use crate::{EngineError, Playable, Resolver, audio::decoder};
 
@@ -27,6 +29,8 @@ pub struct Player {
     seeks: u64,
     /// Decoder plugin names, in the order they are tried.
     decoders: Vec<String>,
+    output: Option<String>,
+    outputs: Vec<OutputDevice>,
 }
 
 impl Default for Player {
@@ -43,6 +47,8 @@ impl Default for Player {
             resolved: None,
             seeks: 0,
             decoders: decoder::all().iter().map(|p| p.name.to_string()).collect(),
+            output: None,
+            outputs: Vec::new(),
         }
     }
 }
@@ -109,6 +115,8 @@ impl Player {
                 }
                 self.decoders = order;
             }
+            Command::SetOutput { device } => self.output = device,
+            Command::ListOutputs => self.outputs = crate::audio::outputs(),
         }
         Ok(())
     }
@@ -141,6 +149,8 @@ impl Player {
             current: self.current.map(|i| i as u32),
             decoders: self.decoders.clone(),
             available_decoders: decoder::all().iter().map(|p| p.name.to_string()).collect(),
+            output: self.output.clone(),
+            outputs: self.outputs.clone(),
         }
     }
 
@@ -163,6 +173,11 @@ impl Player {
             .iter()
             .filter_map(|name| all.iter().find(|p| p.name == name).copied())
             .collect()
+    }
+
+    /// The chosen output device id, `None` for the system default.
+    pub fn output(&self) -> Option<&str> {
+        self.output.as_deref()
     }
 
     pub fn seeks(&self) -> u64 {
