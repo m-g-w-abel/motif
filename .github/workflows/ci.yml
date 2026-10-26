@@ -7,6 +7,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # No debug info: CI never debugs, and it makes linking (slow on Windows) and the cache much bigger.
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   ui:
@@ -45,6 +47,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Otherwise a failed run saves nothing and the next one starts cold.
+          cache-on-failure: true
       # tauri::generate_context! embeds the built UI, so build it first.
       - uses: actions/setup-node@v4
         with:
