@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EngineClient } from './engine.svelte';
-import { LibraryClient, type LibraryTracks, type Shown } from './library.svelte';
+import { hold, LibraryClient, type LibraryTracks, type Shown } from './library.svelte';
 import type { QueryResult } from './protocol/QueryResult';
 
 const engine = {
@@ -19,7 +19,8 @@ describe('holding the shown list', () => {
     const client = new LibraryClient(engine);
     const shown: Shown<LibraryTracks> = {};
     let sort = $state<never[]>([]);
-    const list = $derived(client.tracks(null, sort, shown));
+    const next = $derived(client.tracks(null, sort));
+    const list = $derived(hold(next, shown));
     const first = list;
     first.sync();
     await settle();
@@ -34,8 +35,8 @@ describe('holding the shown list', () => {
     const client = new LibraryClient(engine);
     const a: Shown<LibraryTracks> = {};
     const b: Shown<LibraryTracks> = {};
-    const la = client.tracks(null, [], a);
-    expect(client.tracks('x', [], b)).not.toBe(la);
-    expect(client.tracks(null, [], a)).toBe(la);
+    const la = hold(client.tracks(null, []), a);
+    expect(hold(client.tracks('x', []), b)).not.toBe(la);
+    expect(hold(client.tracks('x', []), a)).toBe(la); // a still holds the first list
   });
 });

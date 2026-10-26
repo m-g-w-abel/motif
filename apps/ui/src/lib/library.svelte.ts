@@ -204,15 +204,14 @@ export class LibraryClient {
     return this.engine.library;
   }
 
-  /** With a `shown` slot of its own, a caller keeps the last list until the new one's first page is in. */
-  tracks(search: string | null, sort: SortRule[] = [], shown?: Shown<LibraryTracks>): LibraryTracks {
+  tracks(search: string | null, sort: SortRule[] = []): LibraryTracks {
     const list = cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort));
-    return shown ? hold(list, shown) : list;
+    return list;
   }
 
-  albums(search: string | null, sort: SortRule[] = [], shown?: Shown<LibraryAlbums>): LibraryAlbums {
+  albums(search: string | null, sort: SortRule[] = []): LibraryAlbums {
     const list = cached(this.#albums, search, sort, () => new LibraryAlbums(this.engine, search, sort));
-    return shown ? hold(list, shown) : list;
+    return list;
   }
 
   /** Library details for a queued or playing track; `undefined` while being looked up. */
@@ -279,7 +278,7 @@ export interface Shown<T> {
 }
 
 /** `next` once its first page is in; until then what was shown stays, so a new order doesn't blank the view. */
-function hold<T extends PagedList<unknown>>(next: T, shown: Shown<T>): T {
+export function hold<T extends PagedList<unknown>>(next: T, shown: Shown<T>): T {
   if (!next.loaded && shown.list) {
     next.sync(); // start the fetch; `loaded` flipping re-runs whoever asked
     return shown.list;
