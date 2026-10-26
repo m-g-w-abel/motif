@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SortRule } from './protocol/SortRule';
-import { DEFAULT_RULES, effectiveSort, nextOneOff, SortStore } from './sort.svelte';
+import { DEFAULT_RULES, effectiveSort, nextOneOff, sortLabel, SortStore } from './sort.svelte';
 
 const storage = new Map<string, string>();
 vi.stubGlobal('localStorage', {
@@ -64,5 +64,17 @@ describe('column header sort', () => {
     ]);
     expect(effectiveSort(rules, null)).toEqual(byYear);
     expect(rules).toEqual(byYear);
+  });
+});
+
+describe('sortLabel', () => {
+  it('shortens values to initials and numbers', () => {
+    expect(sortLabel('artist', { artist: 'björk' })).toBe('B');
+    expect(sortLabel('album_artist', { album_artist: null, artist: 'Ostra' })).toBe('O');
+    expect(sortLabel('title', { title: '99 Problems' })).toBe('#');
+    expect(sortLabel('genre', { genre: null })).toBe('–');
+    expect(sortLabel('year', { year: 1997 })).toBe('1997');
+    expect(sortLabel('duration', { duration_ms: 185_000 })).toBe('3 min');
+    expect(sortLabel('added', {})).toBeUndefined();
   });
 });

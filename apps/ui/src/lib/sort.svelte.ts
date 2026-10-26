@@ -88,3 +88,50 @@ export function effectiveSort(rules: readonly SortRule[], oneOff: SortRule | nul
 export function viewSort(view: ViewState, store: SortStore = sortRules): SortRule[] {
   return effectiveSort(store.rules[view.source], view.browse.oneOff);
 }
+
+/** What a row is sorted by, as far as the scrollbar's bubble needs it. */
+export interface SortFields {
+  title?: string | null;
+  artist?: string | null;
+  album_artist?: string | null;
+  album?: string | null;
+  year?: number | null;
+  genre?: string | null;
+  disc_no?: number | null;
+  track_no?: number | null;
+  duration_ms?: number | null;
+  codec?: string | null;
+}
+
+/**
+ * A row's value for sort key `key`, shortened to what a fast scroll needs:
+ * an initial for text, the number for years and numbers. `undefined` for
+ * keys the client can't label (date added, path).
+ */
+export function sortLabel(key: SortKey, row: SortFields): string | undefined {
+  const initial = (text: string | null | undefined) => {
+    const c = text?.trim().charAt(0).toUpperCase();
+    return !c ? '–' : /\p{L}/u.test(c) ? c : '#';
+  };
+  switch (key) {
+    case 'album_artist':
+      return initial(row.album_artist ?? row.artist);
+    case 'artist':
+    case 'album':
+    case 'title':
+    case 'genre':
+      return initial(row[key]);
+    case 'year':
+      return row.year ? String(row.year) : '–';
+    case 'disc':
+      return `Disc ${row.disc_no ?? 1}`;
+    case 'track':
+      return String(row.track_no ?? '–');
+    case 'duration':
+      return row.duration_ms == null ? '–' : `${Math.floor(row.duration_ms / 60000)} min`;
+    case 'format':
+      return row.codec ?? '–';
+    default:
+      return undefined;
+  }
+}

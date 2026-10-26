@@ -8,10 +8,11 @@
   import type { Column, TracklistStyle } from '../../layout/model';
   import type { SortKey } from '../../protocol/SortKey';
   import type { TrackGroup } from '../../protocol/TrackGroup';
-  import { nextOneOff, viewSort } from '../../sort.svelte';
+  import { nextOneOff, sortLabel, viewSort } from '../../sort.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
+  import Scrollbar from '../Scrollbar.svelte';
 
   let {
     source,
@@ -214,6 +215,23 @@
       });
     });
   });
+  // The scrollbar snaps to where albums start and names the top sort value.
+  const snaps = $derived.by(() => {
+    const starts = new Set(data.groups.map((g) => g.start));
+    return rows.tops.filter((_, r) => {
+      const row = rows.list[r];
+      return 'group' in row || (!groups && starts.has(row.index));
+    });
+  });
+  function topLabel() {
+    const key = viewSort(view)[0]?.key;
+    let at = visibleRange(rows.tops, scrollTop, scrollTop)[0];
+    if (rows.list[at] && 'group' in rows.list[at]) at++;
+    const row = rows.list[at];
+    if (!key || !row || !('index' in row)) return undefined;
+    const track = data.track(row.index);
+    return track && sortLabel(key, { ...track, ...data.details?.(row.index) });
+  }
   const rowKey = (row: Row) => ('group' in row ? `\0group${row.group.start}` : data.key(row.index));
 
   $effect(() => {
@@ -393,6 +411,7 @@
         </tbody>
       </table>
     </div>
+    <Scrollbar target={scroller} snaps={browsing ? snaps : undefined} label={browsing ? topLabel : undefined} />
   {/if}
 </section>
 

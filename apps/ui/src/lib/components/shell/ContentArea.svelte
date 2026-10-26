@@ -9,6 +9,7 @@
   import { DEFAULT_RULES, isDefault, SORT_KEYS, sortRules, viewSort } from '../../sort.svelte';
   import { trackListData } from '../../sources.svelte';
   import Icon from '../Icon.svelte';
+  import Scrollbar from '../Scrollbar.svelte';
   import LayoutNode from './LayoutNode.svelte';
 
   let { onEditLayout }: { onEditLayout: () => void } = $props();
@@ -42,6 +43,7 @@
   let menuOpen = $state(false);
   let menu = $state<HTMLElement>();
   let fileInput = $state<HTMLInputElement>();
+  let area = $state<HTMLElement>();
 
   function onWindowPointer(e: PointerEvent) {
     if (menuOpen && menu && !menu.contains(e.target as Node)) menuOpen = false;
@@ -221,9 +223,10 @@
     </div>
   </header>
 
-  <div class="area">
+  <div class="area" bind:this={area}>
     <LayoutNode node={layout.layout.root} />
   </div>
+  <Scrollbar target={area} />
 
   <input
     bind:this={fileInput}
@@ -457,6 +460,8 @@
 
   @media (max-width: 700px) {
     .area {
+      /* Holds the bars of the scroll areas inside it, so they scroll with it. */
+      position: relative;
       overflow-y: auto;
     }
 

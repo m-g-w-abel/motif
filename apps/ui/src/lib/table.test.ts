@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Column } from './layout/model';
-import { fitColumns, flexReserve, visibleRange } from './table';
+import { fitColumns, flexReserve, nearest, visibleRange } from './table';
 
 describe('fitColumns', () => {
   const shown: Column[] = ['index', 'title', 'artist', 'album', 'duration'];
@@ -32,5 +32,16 @@ describe('visibleRange', () => {
     expect(visibleRange(tops, 500, 600)).toEqual([5, 6]);
     expect(visibleRange(tops, -100, 10)).toEqual([0, 1]);
     expect(visibleRange([], 0, 100)).toEqual([0, 0]);
+  });
+});
+
+describe('nearest', () => {
+  it('picks the closest point, the lower one on a tie', () => {
+    expect(nearest([0, 100, 300], 40)).toBe(0);
+    expect(nearest([0, 100, 300], 60)).toBe(100);
+    expect(nearest([0, 100, 300], 200)).toBe(100);
+    expect(nearest([0, 100, 300], 900)).toBe(300);
+    expect(nearest([0, 100, 300], -5)).toBe(0);
+    expect(nearest([], 42)).toBe(42);
   });
 });
