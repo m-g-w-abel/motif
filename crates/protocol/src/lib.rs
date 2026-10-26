@@ -80,6 +80,11 @@ pub enum Command {
         item_id: u64,
     },
     ClearQueue,
+    /// Decoder plugins to try for each file, in order; plugins left out are
+    /// not used. Names come from [`PlayerState::decoders`].
+    SetDecoders {
+        order: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -132,6 +137,10 @@ pub struct PlayerState {
     pub sampled_at_ms: u64,
     /// Index into the queue of the current track.
     pub current: Option<u32>,
+    /// Enabled decoder plugins in the order they are tried.
+    pub decoders: Vec<String>,
+    /// Every decoder plugin this engine has.
+    pub available_decoders: Vec<String>,
 }
 
 impl Default for PlayerState {
@@ -143,6 +152,8 @@ impl Default for PlayerState {
             position_ms: 0,
             sampled_at_ms: 0,
             current: None,
+            decoders: Vec::new(),
+            available_decoders: Vec::new(),
         }
     }
 }

@@ -377,7 +377,7 @@ try.
    that share a sample rate, so even resampled tracks join seamlessly; a rate
    change flushes it at the boundary. Test: two halves of one sine
    wave played back to back show no discontinuity.
-4. **More decoders.** The libopus plugin, then the FFmpeg plugin. Choosing
+4. **More decoders.** *(done; the order is not saved across restarts until milestone 6)* The libopus plugin, then the FFmpeg plugin. Choosing
    and falling back between plugins, the order setting, and a per-file
    reason when nothing can play it ("needs FFmpeg").
 5. **Library scan.** `library` walks the configured folders, reads tags with

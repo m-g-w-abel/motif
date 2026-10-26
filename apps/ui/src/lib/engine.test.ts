@@ -11,6 +11,8 @@ describe('PlaybackPosition', () => {
       position_ms: 10_000,
       sampled_at_ms: Date.now() + clockOffset - sampledAgoMs,
       current: 0,
+      decoders: [],
+      available_decoders: [],
     };
     const engine = { player, clockOffset, current: null } as unknown as EngineClient;
     const position = new PlaybackPosition(engine);

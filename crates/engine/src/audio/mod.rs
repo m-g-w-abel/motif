@@ -77,10 +77,11 @@ pub struct Audio {
 }
 
 impl Audio {
-    /// Opens the default output device.
+    /// Opens the default output device. Each file is opened with the first of
+    /// `plugins` (as they are at the time) that can.
     pub fn open(
         events: UnboundedSender<AudioEvent>,
-        plugins: Vec<&'static Plugin>,
+        plugins: Arc<Mutex<Vec<&'static Plugin>>>,
     ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             playing: AtomicBool::new(false),
@@ -278,7 +279,7 @@ struct Feeder {
     rate: u32,
     channels: usize,
     events: UnboundedSender<AudioEvent>,
-    plugins: Vec<&'static Plugin>,
+    plugins: Arc<Mutex<Vec<&'static Plugin>>>,
 }
 
 struct Loaded {
@@ -430,7 +431,8 @@ impl Feeder {
     }
 
     fn open(&self, token: u64, item: u64, path: &std::path::Path) -> Option<Loaded> {
-        decoder::open(path, &self.plugins)
+        let plugins = self.plugins.lock().map(|p| p.clone()).unwrap_or_default();
+        decoder::open(path, &plugins)
             .map(|decoder| Loaded {
                 token,
                 item,

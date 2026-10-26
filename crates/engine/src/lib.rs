@@ -31,6 +31,8 @@ pub enum EngineError {
     IndexOutOfRange(u32),
     #[error("volume must be between 0 and 1, got {0}")]
     InvalidVolume(f32),
+    #[error("unknown or repeated decoder {0:?}")]
+    BadDecoder(String),
     #[error("the engine has shut down")]
     Stopped,
 }
@@ -62,7 +64,7 @@ impl Engine {
         let (queue_tx, queue) = watch::channel(Vec::new());
 
         let (audio_tx, mut audio_events) = mpsc::unbounded_channel();
-        let mut output = Output::new(audio_tx, vec![&audio::decoder::SYMPHONIA]);
+        let mut output = Output::new(audio_tx);
 
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(TICK);

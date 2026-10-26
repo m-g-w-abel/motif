@@ -41,3 +41,52 @@ fn unsupported_files_say_which_decoders_tried() {
     let err = frames("sine.wv", &[&decoder::SYMPHONIA]).unwrap_err();
     assert!(err.starts_with("symphonia: "), "{err}");
 }
+
+#[test]
+fn opus_decodes_through_libopus_with_pre_skip_trimmed() {
+    assert_eq!(
+        frames("sine.opus", &[&decoder::OPUS]).unwrap(),
+        (48_000, 48_000)
+    );
+    assert_eq!(
+        frames("sine.flac", &[&decoder::OPUS]).unwrap_err(),
+        "libopus: not Opus"
+    );
+}
+
+fn have_ffmpeg() -> bool {
+    std::process::Command::new("ffprobe")
+        .arg("-version")
+        .output()
+        .is_ok()
+}
+
+#[test]
+fn ffmpeg_plays_what_symphonia_cannot() {
+    if !have_ffmpeg() {
+        eprintln!("skipped: FFmpeg not installed");
+        return;
+    }
+    assert_eq!(
+        frames("sine.wv", &decoder::all()).unwrap(),
+        (44_100, 44_100)
+    );
+    // Falls back past a plugin that can't open the file.
+    assert_eq!(
+        frames("sine.wv", &[&decoder::OPUS, &decoder::FFMPEG]).unwrap(),
+        (44_100, 44_100)
+    );
+}
+
+#[test]
+fn ffmpeg_seeks_by_restarting() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sine.wv");
+    let mut decoder = (decoder::FFMPEG.open)(&path).unwrap();
+    decoder.seek(std::time::Duration::from_millis(500)).unwrap();
+    let mut samples = Vec::new();
+    while decoder.decode(&mut samples).unwrap() {}
+    assert_eq!(samples.len() / 2, 22_050);
+}

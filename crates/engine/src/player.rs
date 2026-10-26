@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use protocol::{Command, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackRef};
 
-use crate::{EngineError, Playable, Resolver};
+use crate::{EngineError, Playable, Resolver, audio::decoder};
 
 /// "Previous" restarts the current track instead when past this point.
 const RESTART_THRESHOLD: Duration = Duration::from_secs(3);
@@ -25,6 +25,8 @@ pub struct Player {
     resolved: Option<(u64, Playable)>,
     /// Counts seeks, so the audio output can tell when to follow one.
     seeks: u64,
+    /// Decoder plugin names, in the order they are tried.
+    decoders: Vec<String>,
 }
 
 impl Default for Player {
@@ -40,6 +42,7 @@ impl Default for Player {
             since: None,
             resolved: None,
             seeks: 0,
+            decoders: decoder::all().iter().map(|p| p.name.to_string()).collect(),
         }
     }
 }
@@ -97,6 +100,15 @@ impl Player {
                 self.current = None;
                 self.stop();
             }
+            Command::SetDecoders { order } => {
+                let known: Vec<_> = decoder::all().iter().map(|p| p.name).collect();
+                for (i, name) in order.iter().enumerate() {
+                    if !known.contains(&name.as_str()) || order[..i].contains(name) {
+                        return Err(EngineError::BadDecoder(name.clone()));
+                    }
+                }
+                self.decoders = order;
+            }
         }
         Ok(())
     }
@@ -127,6 +139,8 @@ impl Player {
             position_ms: self.position(now).as_millis() as u64,
             sampled_at_ms: wall_ms,
             current: self.current.map(|i| i as u32),
+            decoders: self.decoders.clone(),
+            available_decoders: decoder::all().iter().map(|p| p.name.to_string()).collect(),
         }
     }
 
@@ -140,6 +154,15 @@ impl Player {
 
     pub fn volume(&self) -> f32 {
         self.volume
+    }
+
+    /// The enabled decoder plugins in order.
+    pub fn decoders(&self) -> Vec<&'static decoder::Plugin> {
+        let all = decoder::all();
+        self.decoders
+            .iter()
+            .filter_map(|name| all.iter().find(|p| p.name == name).copied())
+            .collect()
     }
 
     pub fn seeks(&self) -> u64 {
@@ -584,5 +607,22 @@ mod tests {
         assert!(p.queue.iter().all(|i| i.error.is_some()));
         assert_eq!(p.playable(), None);
         assert_ne!(p.status, PlaybackStatus::Playing);
+    }
+
+    #[test]
+    fn decoder_order_accepts_known_plugins_once() {
+        let t0 = Instant::now();
+        let mut p = Player::default();
+        let set = |p: &mut Player, names: &[&str]| {
+            let order = names.iter().map(|n| n.to_string()).collect();
+            p.apply(Command::SetDecoders { order }, t0)
+        };
+        set(&mut p, &["symphonia", "libopus"]).unwrap();
+        assert_eq!(
+            p.decoders().iter().map(|d| d.name).collect::<Vec<_>>(),
+            ["symphonia", "libopus"]
+        );
+        assert!(set(&mut p, &["symphonia", "symphonia"]).is_err());
+        assert!(set(&mut p, &["vlc"]).is_err());
     }
 }

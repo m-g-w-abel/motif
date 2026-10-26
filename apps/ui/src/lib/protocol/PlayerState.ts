@@ -18,4 +18,12 @@ sampled_at_ms: number,
 /**
  * Index into the queue of the current track.
  */
-current: number | null, };
+current: number | null, 
+/**
+ * Enabled decoder plugins in the order they are tried.
+ */
+decoders: Array<string>, 
+/**
+ * Every decoder plugin this engine has.
+ */
+available_decoders: Array<string>, };

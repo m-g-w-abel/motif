@@ -2,7 +2,11 @@
 //! be playing, preloads what comes next, follows seeks, pause and volume, and
 //! reports back what the listener actually hears.
 
-use std::{path::PathBuf, time::Duration, time::Instant};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use protocol::PlaybackStatus;
 use tokio::sync::mpsc::UnboundedSender;
@@ -20,7 +24,8 @@ pub struct Output {
     /// Opened on first use and dropped if the device fails.
     audio: Option<Audio>,
     events: UnboundedSender<AudioEvent>,
-    plugins: Vec<&'static Plugin>,
+    /// Shared with the decode thread, which reads it for every file it opens.
+    plugins: Arc<Mutex<Vec<&'static Plugin>>>,
     /// Token and queue item of what is loaded.
     loaded: Option<(u64, u64)>,
     /// Token, queue item and file of what is preloaded to follow it.
@@ -30,11 +35,11 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn new(events: UnboundedSender<AudioEvent>, plugins: Vec<&'static Plugin>) -> Self {
+    pub fn new(events: UnboundedSender<AudioEvent>) -> Self {
         Self {
             audio: None,
             events,
-            plugins,
+            plugins: Arc::default(),
             loaded: None,
             preloaded: None,
             seeks: 0,
@@ -43,6 +48,9 @@ impl Output {
 
     /// Makes the output match the player after it changed.
     pub fn reconcile(&mut self, player: &mut Player, resolver: &dyn Resolver, now: Instant) {
+        if let Ok(mut plugins) = self.plugins.lock() {
+            *plugins = player.decoders();
+        }
         let wanted = match (player.current_item(), player.playable()) {
             (Some(item), Some(Playable::File(path)))
                 if player.status() != PlaybackStatus::Stopped =>
