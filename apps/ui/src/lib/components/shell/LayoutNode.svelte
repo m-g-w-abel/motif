@@ -133,7 +133,7 @@
     {/each}
   </div>
 {:else if node.panel === 'tracklist'}
-  <TrackList style={node.style} columns={node.columns} maxWidth={node.maxWidth} />
+  <TrackList albumBreaks={node.albumBreaks} headers={node.headers} columns={node.columns} maxWidth={node.maxWidth} />
 {:else if node.panel === 'album-grid'}
   <AlbumGrid cardSize={node.cardSize} columns={node.columns} />
 {:else if node.panel === 'artwork'}
