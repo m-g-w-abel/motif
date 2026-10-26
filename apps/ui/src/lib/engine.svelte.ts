@@ -1,12 +1,15 @@
 import type { ClientMessage } from './protocol/ClientMessage';
 import type { Command } from './protocol/Command';
+import type { LibraryQuery } from './protocol/LibraryQuery';
+import type { LibraryStatus } from './protocol/LibraryStatus';
+import type { QueryResult } from './protocol/QueryResult';
 import type { PlayerState } from './protocol/PlayerState';
 import type { QueueItem } from './protocol/QueueItem';
 import type { ServerMessage } from './protocol/ServerMessage';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 5;
 const MAX_BACKOFF_MS = 5000;
 
 /** Where the engine lives: the embedded one under Tauri, else the page's host. */
@@ -27,6 +30,10 @@ export class EngineClient {
   player = $state<PlayerState | null>(null);
   /** Raw (not deeply reactive): it can hold thousands of tracks and is only ever replaced. */
   queue = $state.raw<QueueItem[]>([]);
+  /** `null` until the engine reports it; engines without a library never do. */
+  library = $state<LibraryStatus | null>(null);
+  /** Where the engine serves HTTP (artwork), e.g. `http://127.0.0.1:7700`. */
+  httpBase = $state('');
   /** Engine clock minus ours, so snapshot times (`sampled_at_ms`) can be read on our clock. */
   clockOffset = $state(0);
   error = $state<string | null>(null);
@@ -39,6 +46,7 @@ export class EngineClient {
   #socket: WebSocket | null = null;
   #nextId = 1;
   #pending = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
+  #queries = new Map<number, { resolve: (r: QueryResult) => void; reject: (e: Error) => void }>();
   #backoff = 250;
   #closed = false;
 
@@ -58,6 +66,18 @@ export class EngineClient {
     return new Promise((resolve, reject) => this.#pending.set(id, { resolve, reject }));
   }
 
+  /** Asks the library a question. */
+  query(query: LibraryQuery): Promise<QueryResult> {
+    const socket = this.#socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error('not connected to the engine'));
+    }
+    const id = this.#nextId++;
+    const message: ClientMessage = { id, query };
+    socket.send(JSON.stringify(message));
+    return new Promise((resolve, reject) => this.#queries.set(id, { resolve, reject }));
+  }
+
   /** Like {@link send}, but shows failures in the UI instead of throwing. */
   run(command: Command): void {
     this.send(command).catch((e: Error) => (this.error = e.message));
@@ -72,7 +92,9 @@ export class EngineClient {
     this.status = 'connecting';
     let socket: WebSocket;
     try {
-      socket = new WebSocket(await engineUrl());
+      const url = await engineUrl();
+      this.httpBase = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
+      socket = new WebSocket(url);
     } catch (e) {
       this.error = String(e);
       this.#retry();
@@ -88,8 +110,11 @@ export class EngineClient {
     socket.onmessage = (e) => this.#handle(JSON.parse(e.data) as ServerMessage);
     socket.onclose = () => {
       this.status = 'closed';
-      for (const { reject } of this.#pending.values()) reject(new Error('connection closed'));
+      for (const { reject } of [...this.#pending.values(), ...this.#queries.values()]) {
+        reject(new Error('connection closed'));
+      }
       this.#pending.clear();
+      this.#queries.clear();
       this.#retry();
     };
   }
@@ -117,11 +142,20 @@ export class EngineClient {
         else this.error = message.error;
         break;
       }
+      case 'query_result': {
+        const pending = this.#queries.get(message.id);
+        this.#queries.delete(message.id);
+        if (message.result) pending?.resolve(message.result);
+        else pending?.reject(new Error(message.error ?? 'query failed'));
+        break;
+      }
       case 'event':
         if (message.event.type === 'state') {
           this.player = message.event.state;
         } else if (message.event.type === 'queue') {
           this.queue = message.event.items;
+        } else {
+          this.library = message.event.status;
         }
         break;
     }

@@ -184,6 +184,22 @@ impl Library {
                     .find(|g| g.key == album)
                     .map(|g| g.start),
             },
+            LibraryQuery::Lookup { paths } => {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE path = ?1"
+                ))?;
+                let mut tracks = Vec::new();
+                for path in paths.iter().take(1000) {
+                    if let Some(track) = stmt.query_row([path], library_track).optional()? {
+                        tracks.push(track);
+                    }
+                }
+                QueryResult::Tracks {
+                    total: tracks.len() as u32,
+                    offset: 0,
+                    tracks,
+                }
+            }
             LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. } => {
                 return Err(Error::Other("play queries go through selection()".into()));
             }

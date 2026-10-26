@@ -123,7 +123,7 @@
   onkeydown={onKey}
 >
   <div class="rail"><div class="fill"></div></div>
-  <div class="thumb-track"><div class="thumb"></div></div>
+  <div class="thumbs"><div class="thumb-track"><div class="thumb"></div></div></div>
 </div>
 
 <style>
@@ -164,11 +164,20 @@
     background: var(--text-muted);
   }
 
+  /* Clips the moved track below (transforms count as overflow and would
+     make the page scroll sideways), leaving room for the thumb at the ends. */
+  .thumbs {
+    position: absolute;
+    inset: 0 -6px;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
   /* Full width, so translateX(100%) moves the thumb to the end. Transforms
      keep progress updates to repaints, without layout. */
   .thumb-track {
     position: absolute;
-    inset: 0;
+    inset: 0 6px;
     display: flex;
     align-items: center;
     transform: translateX(calc(var(--fraction) * 100%));

@@ -4,6 +4,7 @@
   import { demoLibrary } from './lib/demo';
   import { Drawer } from './lib/drawer.svelte';
   import { EngineClient, PlaybackPosition } from './lib/engine.svelte';
+  import { LibraryClient } from './lib/library.svelte';
   import { installLayoutFiles } from './lib/layout/install';
   import { LayoutStore } from './lib/layout/store.svelte';
   import { SettingsStore } from './lib/settings.svelte';
@@ -20,11 +21,12 @@
 
   const engine = new EngineClient();
   const position = new PlaybackPosition(engine);
+  const library = new LibraryClient(engine);
   const layout = new LayoutStore();
   const settings = new SettingsStore();
   const sheet = new PlayerSheet();
   const drawer = new Drawer();
-  setApp({ engine, position, layout, settings, sheet, drawer });
+  setApp({ engine, library, position, layout, settings, sheet, drawer });
 
   // On phones the left panel is a drawer: swipe in from the left edge to open
   // it, swipe left to close it.

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { getApp, setViewState, type ViewState } from '../../context';
+  import { isDemo } from '../../demo';
   import { formatTime } from '../../format';
   import { installLayoutFiles } from '../../layout/install';
   import { trackListData } from '../../sources.svelte';
@@ -9,7 +10,7 @@
 
   let { onEditLayout }: { onEditLayout: () => void } = $props();
 
-  const { engine, layout, drawer, settings } = getApp();
+  const { engine, library, layout, drawer, settings } = getApp();
 
   /** Phones open the drawer; desktops fold the left panel away or back. */
   function toggleNav() {
@@ -24,8 +25,16 @@
   );
   setViewState(view);
 
-  const data = $derived(trackListData(engine, view.source));
-  const totalMs = $derived(data.tracks.reduce((sum, t) => sum + (t.duration_ms ?? 0), 0));
+  const data = $derived(trackListData(engine, library, view.source, view.browse.search || null));
+  $effect(() => data.sync?.());
+
+  // The search box filters the library once typing pauses.
+  let search = $state(untrack(() => view.browse.search));
+  $effect(() => {
+    const value = search.trim();
+    const timer = setTimeout(() => (view.browse.search = value), 250);
+    return () => clearTimeout(timer);
+  });
 
   let menuOpen = $state(false);
   let menu = $state<HTMLElement>();
@@ -59,8 +68,16 @@
         <Icon name="list" size={18} />
       </button>
       <h1>{data.title}</h1>
-      <span class="count">{data.tracks.length} tracks · {formatTime(totalMs)}</span>
-      <span class="badge" title="Real library scanning arrives in phase 1">Demo data</span>
+      <span class="count">
+        {data.count} tracks · {formatTime(data.totalMs)}
+        {#if library.status?.scanning}{' · '}scanning…{/if}
+      </span>
+      {#if isDemo}<span class="badge" title="Development demo library (?dev-library)">Demo data</span>{/if}
+    </div>
+
+    <div class="search">
+      <Icon name="search" size={14} />
+      <input type="search" placeholder="Search" aria-label="Search the library" bind:value={search} />
     </div>
 
     <div class="layouts" role="radiogroup" aria-label="Layout">
@@ -153,6 +170,9 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
+    /* Never wider than the window: focusing the search box would otherwise
+       scroll the whole view sideways. */
+    overflow: hidden;
     height: 36px;
     padding: 0 var(--space-2) 0 var(--space-3);
     border-bottom: 1px solid var(--border);
@@ -161,10 +181,12 @@
   }
 
   .title {
+    flex: 1 1 auto;
     display: flex;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+    overflow: hidden;
     white-space: nowrap;
   }
 
@@ -179,6 +201,32 @@
     text-overflow: ellipsis;
     font-size: 0.9em;
     color: var(--text-muted);
+  }
+
+  .search {
+    flex: 0 1 200px;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 90px;
+    color: var(--text-muted);
+  }
+
+  .search input {
+    width: 100%;
+    min-width: 0;
+    height: 26px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .search input:focus {
+    border-color: var(--accent);
+    outline: none;
   }
 
   .badge {
@@ -273,5 +321,6 @@
     .count {
       display: none;
     }
+
   }
 </style>

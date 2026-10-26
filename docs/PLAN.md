@@ -393,7 +393,7 @@ try.
    identity key. The library-owner rule for desktop + headless lands here.
    Targets: 50k tracks scanned in under 2 minutes on an SSD (hashing
    excluded), unchanged rescans in seconds.
-6. **Library in the UI.** The demo library goes (it stays as the
+6. **Library in the UI.** *(done)* The demo library goes (it stays as the
    `dev-library` stress-test generator). Track lists and the album grid
    fetch windows of rows from the server, with sorting, grouping and search
    done in SQL, so 50k tracks never cross the wire at once. Settings get a

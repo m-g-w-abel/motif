@@ -240,6 +240,11 @@ pub enum LibraryQuery {
         search: Option<String>,
         album: String,
     },
+    /// Library details (artwork, format…) for tracks by path, e.g. the queue
+    /// or the playing track. Paths not in the library are left out.
+    Lookup {
+        paths: Vec<String>,
+    },
     /// Replaces the queue with the matching tracks and plays from `start`.
     Play {
         search: Option<String>,

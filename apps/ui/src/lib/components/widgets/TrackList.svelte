@@ -1,10 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
-  import { albumKey, groupConsecutive, type Album } from '../../albums';
   import { getApp, getViewState } from '../../context';
+  import { addFolder } from '../../folders';
   import { formatTime, trackFormat, trackTitle } from '../../format';
   import type { Column, TracklistStyle } from '../../layout/model';
+  import type { TrackGroup } from '../../protocol/TrackGroup';
   import { trackListData, type ListSource } from '../../sources.svelte';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
@@ -23,12 +24,14 @@
     maxWidth?: number;
   } = $props();
 
-  const { engine, settings } = getApp();
+  const { engine, library, settings } = getApp();
   const view = getViewState();
 
-  const data = $derived(trackListData(engine, source ?? view.source));
-  const groups = $derived(style === 'grouped' ? groupConsecutive(data.tracks) : null);
-  const currentIndex = $derived(data.currentIndex);
+  const kind = $derived(source ?? view.source);
+  const data = $derived(trackListData(engine, library, kind, kind === 'library' ? view.browse.search || null : null));
+  $effect(() => data.sync?.());
+  const groups = $derived(style === 'grouped' ? data.groups : null);
+  const currentKey = $derived(data.currentKey);
 
   // Phones drop secondary columns rather than squeezing everything.
   const narrow = new MediaQuery('(max-width: 700px)');
@@ -125,16 +128,22 @@
   const select = (key: string) => (view.browse.selected = key);
   let scroller = $state<HTMLElement>();
 
-  /** In grouped lists, the album each track belongs to. */
-  const groupOf = $derived.by(() => {
-    const of = new Map<number, Album>();
-    for (const g of groups ?? []) for (const i of g.indices) of.set(i, g);
-    return of;
-  });
+  /** In grouped lists, where the album containing track `index` starts. */
+  function groupStart(index: number): number {
+    if (!groups?.length) return 0;
+    let lo = 0;
+    let hi = groups.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (groups[mid].start <= index) lo = mid;
+      else hi = mid - 1;
+    }
+    return groups[lo].start <= index ? groups[lo].start : 0;
+  }
 
   // Only the rows in view are in the DOM, so long libraries stay fast. Row
   // heights come from the CSS (density) and are measured once rendered.
-  type Row = { group: Album } | { index: number };
+  type Row = { group: TrackGroup } | { index: number };
   let rowHeight = $state(26);
   let groupHeight = $state(32);
   let scrollTop = $state(0);
@@ -144,17 +153,21 @@
     const list: Row[] = [];
     const tops: number[] = [];
     let y = 0;
-    for (let index = 0; index < data.tracks.length; index++) {
-      const group = groupOf.get(index);
-      if (group?.indices[0] === index) {
-        list.push({ group });
-        tops.push(y);
-        y += groupHeight;
-      }
-      list.push({ index });
+    const push = (row: Row, height: number) => {
+      list.push(row);
       tops.push(y);
-      y += rowHeight;
+      y += height;
+    };
+    // Groups arrive separately from rows, so tolerate them not matching yet.
+    const count = data.count;
+    let next = 0;
+    for (const group of groups ?? []) {
+      if (group.start < next || group.start >= count) continue;
+      for (; next < group.start; next++) push({ index: next }, rowHeight);
+      push({ group }, groupHeight);
+      for (; next < Math.min(group.start + group.count, count); next++) push({ index: next }, rowHeight);
     }
+    for (; next < count; next++) push({ index: next }, rowHeight);
     return { list, tops, height: y };
   });
   const OVERSCAN = 400;
@@ -162,7 +175,7 @@
   const visible = $derived(rows.list.slice(range[0], range[1]));
   const padTop = $derived(rows.tops[range[0]] ?? 0);
   const padBottom = $derived(rows.height - (rows.tops[range[1]] ?? rows.height));
-  const rowKey = (row: Row) => ('group' in row ? `\0group${row.group.indices[0]}` : data.keys[row.index]);
+  const rowKey = (row: Row) => ('group' in row ? `\0group${row.group.start}` : data.key(row.index));
 
   $effect(() => {
     void visible;
@@ -183,7 +196,7 @@
     const key = view.browse.focusAlbum;
     if (!key || !scroller) return;
     untrack(() => {
-      const index = data.tracks.findIndex((t) => albumKey(t) === key);
+      const index = data.groups.find((g) => g.key === key)?.start ?? -1;
       if (index < 0 || !scroller) return;
       // Grouped lists scroll to the album header just above its first track.
       const at = rows.list.findIndex((row) => 'index' in row && row.index === index);
@@ -192,16 +205,17 @@
       // scrollable ancestor, moving the whole window.
       const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
       scroller.scrollTo({ top: rows.tops[target], behavior: reduceMotion ? 'auto' : 'smooth' });
-      view.browse.selected = data.keys[index];
+      view.browse.selected = data.key(index);
     });
   });
 
   function cell(column: Column, index: number): string {
-    const t = data.tracks[index];
+    const t = data.track(index);
+    if (!t) return '';
     switch (column) {
       case 'index':
         // Grouped lists number tracks within each album.
-        return String(index - (groupOf.get(index)?.indices[0] ?? 0) + 1);
+        return String(index - groupStart(index) + 1);
       case 'title':
         return trackTitle(t);
       case 'artist':
@@ -224,10 +238,13 @@
 </script>
 
 <section class="tracklist {style}" style:--max-width={maxWidth ? `${maxWidth}px` : undefined}>
-  {#if data.tracks.length === 0}
+  {#if data.count === 0}
     <div class="empty">
-      <p>The queue is empty.</p>
-      <p class="hint">Double-click a track in the library to play it.</p>
+      <p>{data.empty.message}</p>
+      {#if data.empty.hint}<p class="hint">{data.empty.hint}</p>{/if}
+      {#if data.empty.addFolder}
+        <button class="button primary" onclick={() => addFolder(engine)}>Add folder…</button>
+      {/if}
     </div>
   {:else}
     <div
@@ -273,32 +290,34 @@
             {#if 'group' in row}
               <tr class="group">
                 <td colspan={columnCount}>
-                  <span class="group-title">{row.group.artist} – {row.group.title}</span>
-                  <span class="group-length">[{formatTime(row.group.durationMs)}]</span>
+                  <span class="group-title">{row.group.artist || 'Unknown artist'} – {row.group.title || 'Unknown album'}</span>
+                  <span class="group-length">[{formatTime(row.group.duration_ms)}]</span>
                 </td>
               </tr>
             {:else}
               {@const i = row.index}
-              {@const track = data.tracks[i]}
+              {@const track = data.track(i)}
+              {@const key = data.key(i)}
+              {@const error = data.error?.(i)}
               <tr
                 class="track"
                 class:alt={i % 2 === 1}
-                class:current={i === currentIndex}
-              class:unplayable={!!data.errors?.[i]}
-                class:selected={selected === data.keys[i]}
+                class:current={key === currentKey}
+                class:unplayable={!!error}
+                class:selected={selected === key}
                 tabindex="0"
-                aria-selected={selected === data.keys[i]}
-                onclick={() => select(data.keys[i])}
+                aria-selected={selected === key}
+                onclick={() => select(key)}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}
               >
                 {#each shown as column (column)}
                   <td class={column}>
-                    {#if column === 'index' && i === currentIndex}
+                    {#if column === 'index' && key === currentKey}
                       <Icon name={engine.player?.status === 'playing' ? 'play' : 'pause'} size={10} />
                     {:else}
                       {cell(column, i)}
-                      {#if column === 'title' && data.errors?.[i]}<span class="reason">{data.errors[i]}</span>{/if}
+                      {#if column === 'title' && error}<span class="reason">{error}</span>{/if}
                     {/if}
                   </td>
                 {/each}
@@ -306,7 +325,7 @@
                   <td class="remove-cell">
                     <button
                       class="remove"
-                      aria-label="Remove {trackTitle(track)}"
+                      aria-label="Remove {track ? trackTitle(track) : 'track'}"
                       onclick={(e) => {
                         e.stopPropagation();
                         data.remove?.(i);
@@ -512,6 +531,10 @@
 
   .empty p {
     margin: 0 0 var(--space-1);
+  }
+
+  .empty .button {
+    margin-top: var(--space-3);
   }
 
   .hint {

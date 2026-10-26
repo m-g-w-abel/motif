@@ -1,54 +1,33 @@
+import type { TrackGroup } from './protocol/TrackGroup';
 import type { TrackRef } from './protocol/TrackRef';
 
-export interface Album {
-  key: string;
-  title: string;
-  artist: string;
-  /** Indices into the source track list, in order. */
-  indices: number[];
-  durationMs: number;
-}
-
+/** Album artist and title, the way the library keys albums. */
 export function albumKey(track: TrackRef): string {
-  return `${track.artist ?? ''}\u0000${track.album ?? ''}`;
+  return `${track.artist ?? ''}\u001f${track.album ?? ''}`;
 }
 
 /**
  * Groups consecutive tracks that share an album and artist, the way a
  * playlist shows them; the same album appearing twice yields two groups.
  */
-export function groupConsecutive(tracks: TrackRef[]): Album[] {
-  const groups: Album[] = [];
+export function groupConsecutive(tracks: TrackRef[]): TrackGroup[] {
+  const groups: TrackGroup[] = [];
   tracks.forEach((track, i) => {
     const key = albumKey(track);
     const last = groups.at(-1);
     if (last?.key === key) {
-      last.indices.push(i);
-      last.durationMs += track.duration_ms ?? 0;
+      last.count++;
+      last.duration_ms += track.duration_ms ?? 0;
     } else {
       groups.push({
         key,
+        start: i,
+        count: 1,
         title: track.album ?? 'Unknown album',
         artist: track.artist ?? 'Unknown artist',
-        indices: [i],
-        durationMs: track.duration_ms ?? 0,
+        duration_ms: track.duration_ms ?? 0,
       });
     }
   });
   return groups;
-}
-
-/** One entry per distinct album, in order of first appearance. */
-export function distinctAlbums(tracks: TrackRef[]): Album[] {
-  const byKey = new Map<string, Album>();
-  for (const group of groupConsecutive(tracks)) {
-    const existing = byKey.get(group.key);
-    if (existing) {
-      existing.indices.push(...group.indices);
-      existing.durationMs += group.durationMs;
-    } else {
-      byKey.set(group.key, { ...group, indices: [...group.indices] });
-    }
-  }
-  return [...byKey.values()];
 }

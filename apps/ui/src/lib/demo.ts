@@ -1,8 +1,8 @@
 import type { TrackRef } from './protocol/TrackRef';
 
 /**
- * Stand-in library until library scanning lands in phase 1. The tracks are
- * fictional and have no audio; the engine only simulates their playback.
+ * Fictional tracks for development: the `dev-library` stress test and
+ * `dev-play`. They have no audio; the engine simulates their playback.
  */
 const albums: { artist: string; album: string; ext: string; tracks: [string, number][] }[] = [
   {
@@ -43,11 +43,11 @@ const baseLibrary: TrackRef[] = albums.flatMap(({ artist, album, ext, tracks }) 
   })),
 );
 
-// Development only: ?dev-library=50000 repeats the albums to stress-test long lists.
-const devSize =
-  import.meta.env.DEV && typeof location !== 'undefined'
-    ? Number(new URLSearchParams(location.search).get('dev-library'))
-    : 0;
+// Development only: `?dev-library` shows this demo library instead of the
+// real one (`?dev-library=50000` repeats it to stress-test long lists).
+const params = import.meta.env.DEV && typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
+export const isDemo = params?.has('dev-library') ?? false;
+const devSize = Number(params?.get('dev-library')) || 0;
 
 export const demoLibrary: TrackRef[] = devSize
   ? Array.from({ length: devSize }, (_, i) => {

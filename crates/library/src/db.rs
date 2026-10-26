@@ -53,7 +53,24 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              VALUES (new.id, new.title, new.artist, new.album, new.album_artist);
          END;",
     )?;
+    upgrade(&conn)?;
     Ok(conn)
+}
+
+/// Bumped when the scanner reads files better, so rows it got wrong are
+/// re-read at the next scan.
+const VERSION: i32 = 2;
+
+fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    if version < 2 {
+        // Version 2 reads files lofty can't parse with Symphonia instead.
+        conn.execute("UPDATE tracks SET mtime = -1 WHERE duration_ms IS NULL", [])?;
+    }
+    if version < VERSION {
+        conn.pragma_update(None, "user_version", VERSION)?;
+    }
+    Ok(())
 }
 
 /// Turns what the user typed into an FTS5 query: every word must match the

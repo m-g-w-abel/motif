@@ -5,13 +5,14 @@
 
   let { style }: { style: InfoStyle } = $props();
 
-  const { engine } = getApp();
+  const { engine, library } = getApp();
   const track = $derived(engine.current?.track);
   const queue = $derived(engine.queue);
   const position = $derived(engine.player?.current ?? null);
+  /** Format details from the library, when the file is in it. */
+  const details = $derived(library.details(track));
+  const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
 
-  // Codec details (bitrate, sample rate, bit depth…) arrive with the decoder
-  // in phase 1; until then the table shows what the engine knows.
   const rows = $derived<[string, string][]>(
     track
       ? (
@@ -21,7 +22,12 @@
             ['Album', track.album ?? ''],
             ['Queue', position !== null ? `${position + 1}/${queue.length}` : ''],
             ['Duration', track.duration_ms ? formatTime(track.duration_ms) : ''],
-            ['Format', trackFormat(track)],
+            ['Year', details?.year ? String(details.year) : ''],
+            ['Genre', details?.genre ?? ''],
+            ['Format', format],
+            ['Sample rate', details?.sample_rate ? `${details.sample_rate / 1000} kHz` : ''],
+            ['Bit depth', details?.bit_depth ? `${details.bit_depth}-bit` : ''],
+            ['Bitrate', details?.bitrate ? `${details.bitrate} kbps` : ''],
             ['File', track.source === 'local' ? track.id : ''],
           ] as [string, string][]
         ).filter(([, value]) => value)
@@ -36,7 +42,7 @@
       <p class="hero-artist">{track.artist ?? 'Unknown artist'}</p>
       <p class="hero-album">
         {track.album ?? ''}
-        {#if trackFormat(track)}<span class="format">{trackFormat(track)}</span>{/if}
+        {#if format}<span class="format">{format}</span>{/if}
       </p>
     {:else}
       <p class="hero-album">Double-click a track in the library to start.</p>
@@ -49,7 +55,7 @@
     <dl>
       {#if track.album}<dd>{track.album}</dd>{/if}
       {#if track.duration_ms}<dd>{formatTime(track.duration_ms)}</dd>{/if}
-      {#if trackFormat(track)}<dd>{trackFormat(track)}</dd>{/if}
+      {#if format}<dd>{format}</dd>{/if}
     </dl>
   {:else}
     <table>

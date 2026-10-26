@@ -6,6 +6,7 @@
 //! Pairing tokens arrive in phase 4 before the server is exposed on the LAN.
 
 mod resolver;
+pub mod settings;
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -138,6 +139,8 @@ async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, Str
         if tracks.is_empty() {
             return Err("nothing to play".into());
         }
+        // shortcut: queues every matching track, so the queue event is ~3 MB for 8k tracks; page the queue
+        // like the library before phones and remote clients rely on it (phases 4-5).
         let command = Command::SetQueue {
             tracks,
             start: Some(start),

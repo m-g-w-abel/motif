@@ -6,8 +6,9 @@ Android, remote control, no central server. Architecture and roadmap:
 
 Status: phase 1 (desktop player) is in progress; see the milestones in
 `docs/PLAN.md`. Local files play for real (decoder plugins → `pipeline.rs` →
-cpal, in `crates/engine/src/audio/`). The UI's library is still demo data
-(`apps/ui/src/lib/demo.ts`), played as a simulation.
+cpal, in `crates/engine/src/audio/`), and the library (`crates/library`) is
+scanned from the folders added in Settings. Data lives in the OS data
+directory (`MOTIF_DATA_DIR` overrides it, handy for tests).
 
 ## Rules
 
@@ -59,8 +60,10 @@ Windows and macOS.
 - Dev builds read URL parameters to set up a state without clicking, e.g.
   `?dev-layout=builtin:details.kdl&dev-theme=paper&dev-play=5&dev-sheet=1`
   (also `dev-drawer`, `dev-player=floating`). See `App.svelte`.
-  `?dev-stress&dev-library=50000` runs the webview stress test (results in
-  `docs/PLAN.md`); `dev-stress=scroll` measures plain scrolling.
+  `?dev-library` shows the generated demo library instead of the real one
+  (`dev-play` plays it); `?dev-stress&dev-library=50000` runs the webview
+  stress test (results in `docs/PLAN.md`); `dev-stress=scroll` measures plain
+  scrolling.
 - Performance rules from that test: nothing may run every frame while idle
   (update on a timer only as often as the change is visible, and move things
   with `transform`); no long-running CSS/Web Animations, which stall

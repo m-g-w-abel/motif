@@ -1,18 +1,53 @@
 <script lang="ts">
-  import { albumKey, distinctAlbums } from '../../albums';
+  import { groupConsecutive } from '../../albums';
   import { getApp, getViewState } from '../../context';
+  import { demoLibrary, isDemo } from '../../demo';
+  import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
-  import { trackListData } from '../../sources.svelte';
+  import type { TrackRef } from '../../protocol/TrackRef';
   import Artwork from '../player/Artwork.svelte';
 
   let { cardSize }: { cardSize: number } = $props();
 
-  const { engine } = getApp();
+  const { engine, library } = getApp();
   const view = getViewState();
 
-  const data = $derived(trackListData(engine, view.source));
-  const albums = $derived(distinctAlbums(data.tracks));
-  const playingKey = $derived(engine.current ? albumKey(engine.current.track) : null);
+  interface Card {
+    key: string;
+    title: string;
+    artist: string;
+    tracks: number;
+    duration_ms: number;
+    art?: string | null;
+    /** For the placeholder artwork when there is no real artwork. */
+    track?: TrackRef;
+  }
+
+  // Development's demo library, grouped into albums.
+  const demoAlbums: Card[] = isDemo
+    ? groupConsecutive(demoLibrary).map((g) => ({ ...g, tracks: g.count, track: demoLibrary[g.start] }))
+    : [];
+  const albums = $derived(isDemo ? null : library.albums(view.browse.search || null));
+  $effect(() => albums?.sync());
+  const count = $derived(albums ? albums.total : demoAlbums.length);
+  const card = (i: number): Card | undefined => (albums ? albums.get(i) : demoAlbums[i]);
+
+  function play(album: Card) {
+    if (album.track) {
+      const start = demoLibrary.indexOf(album.track);
+      engine.run({ type: 'set_queue', tracks: demoLibrary.slice(start, start + album.tracks), start: 0 });
+    } else {
+      engine.query({ type: 'play_album', album: album.key }).catch((e: Error) => (engine.error = e.message));
+    }
+  }
+
+  /** The playing track's album, keyed the way the library keys albums. */
+  const playingKey = $derived.by(() => {
+    const track = engine.current?.track;
+    if (!track) return null;
+    const artist = library.details(track)?.album_artist ?? track.artist ?? '';
+    return `${artist}\u001f${track.album ?? ''}`;
+  });
 
   // Only the rows of cards in view are in the DOM. Columns follow the CSS
   // grid's auto-fill rule; the card height is measured once rendered.
@@ -25,10 +60,14 @@
   // `width` includes the 16px side padding.
   const columns = $derived(Math.max(1, Math.floor((width - 2 * GAP + GAP) / (cardSize + GAP))));
   const rowHeight = $derived((cardHeight || cardSize + 48) + GAP);
-  const rowCount = $derived(Math.ceil(albums.length / columns));
+  const rowCount = $derived(Math.ceil(count / columns));
   const firstRow = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - 1));
   const lastRow = $derived(Math.min(rowCount, Math.ceil((scrollTop + viewHeight) / rowHeight) + 1));
-  const visible = $derived(albums.slice(firstRow * columns, lastRow * columns));
+  const visible = $derived.by(() => {
+    const indices = [];
+    for (let i = firstRow * columns; i < Math.min(count, lastRow * columns); i++) indices.push(i);
+    return indices;
+  });
 
   $effect(() => {
     void visible;
@@ -51,23 +90,36 @@
       style:padding-top="{GAP + firstRow * rowHeight}px"
       style:padding-bottom="{GAP + (rowCount - lastRow) * rowHeight}px"
     >
-      {#each visible as album (album.key)}
+      {#each visible as i (card(i)?.key ?? `#${i}`)}
+        {@const album = card(i)}
         <li>
-          <button
-            class="card"
-            class:playing={album.key === playingKey}
-            class:focused={album.key === view.browse.focusAlbum}
-            title="{album.title} — {album.artist} · {album.indices.length} tracks · {formatTime(album.durationMs)}"
-            onclick={() => (view.browse.focusAlbum = album.key)}
-            ondblclick={() => data.playIndices(album.indices)}
-          >
-            <Artwork track={data.tracks[album.indices[0]]} />
-            <span class="title">{album.title}</span>
-            <span class="artist">{album.artist}</span>
-          </button>
+          {#if album}
+            <button
+              class="card"
+              class:playing={album.key === playingKey}
+              class:focused={album.key === view.browse.focusAlbum}
+              title="{album.title} — {album.artist} · {album.tracks} tracks · {formatTime(album.duration_ms)}"
+              onclick={() => (view.browse.focusAlbum = album.key)}
+              ondblclick={() => play(album)}
+            >
+              <Artwork track={album.track} art={album.art} title={album.title} />
+              <span class="title">{album.title || 'Unknown album'}</span>
+              <span class="artist">{album.artist || 'Unknown artist'}</span>
+            </button>
+          {:else}
+            <div class="card loading" aria-hidden="true"><Artwork track={undefined} art={null} /></div>
+          {/if}
         </li>
       {/each}
     </ul>
+    {#if count === 0 && albums?.loaded !== false}
+      <div class="empty">
+        <p>{library.status?.roots.length ? 'No albums found.' : 'No music folders yet.'}</p>
+        {#if !library.status?.roots.length}
+          <button class="button primary" onclick={() => addFolder(engine)}>Add folder…</button>
+        {/if}
+      </div>
+    {/if}
   </div>
 </section>
 
@@ -142,6 +194,17 @@
 
   .artist {
     font-size: 0.88em;
+    color: var(--text-muted);
+  }
+
+  .loading {
+    min-height: calc(var(--card) + 40px);
+    cursor: default;
+  }
+
+  .empty {
+    padding: var(--space-6) var(--space-4);
+    text-align: center;
     color: var(--text-muted);
   }
 </style>

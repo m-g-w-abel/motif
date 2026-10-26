@@ -20,6 +20,7 @@ export default defineConfig(({ command }) => ({
     strictPort: true,
     proxy: {
       '/ws': { target: 'ws://127.0.0.1:7700', ws: true },
+      '/art': 'http://127.0.0.1:7700',
     },
   },
   build: {

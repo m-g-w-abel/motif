@@ -26,6 +26,7 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let url = tauri::async_runtime::block_on(start_engine())?;
             tracing::info!(%url, "engine");
@@ -84,6 +85,12 @@ async fn start_engine() -> Result<String, Box<dyn std::error::Error>> {
     let engine = Engine::spawn(server::LibraryResolver {
         library: library.as_ref().map(|(library, _)| library.clone()),
     });
+    if let Some(dir) = library.is_some().then(library::data_dir).flatten() {
+        tauri::async_runtime::spawn(server::settings::keep(
+            engine.clone(),
+            dir.join("engine.json"),
+        ));
+    }
     let config = server::Config {
         // Loopback only until pairing exists (phase 4).
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),

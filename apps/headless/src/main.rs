@@ -46,6 +46,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::spawn(server::LibraryResolver {
         library: Some(library.clone()),
     });
+    tokio::spawn(server::settings::keep(
+        engine.clone(),
+        data_dir.join("engine.json"),
+    ));
     let config = server::Config {
         addr,
         ui_dir: ui_dir.clone(),

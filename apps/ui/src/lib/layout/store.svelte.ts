@@ -20,6 +20,8 @@ export const SOURCES: Source[] = ['library'];
 export interface BrowseState {
   selected: string | null;
   focusAlbum: string | null;
+  /** What the library is filtered to; empty for everything. */
+  search: string;
 }
 
 function load(key: string): string | null {
@@ -101,7 +103,7 @@ export class LayoutStore {
   browseState(key: string): BrowseState {
     const existing = this.#browse.get(key);
     if (existing) return existing;
-    const created: BrowseState = $state({ selected: null, focusAlbum: null });
+    const created: BrowseState = $state({ selected: null, focusAlbum: null, search: '' });
     this.#browse.set(key, created);
     return created;
   }

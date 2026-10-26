@@ -1,10 +1,45 @@
 <script lang="ts">
   import { getApp } from '../../context';
+  import { addFolder } from '../../folders';
   import type { Settings } from '../../settings.svelte';
   import { SYSTEM_THEMES, THEMES, themeById } from '../../themes';
   import Icon from '../Icon.svelte';
 
-  const { settings } = getApp();
+  const { settings, engine, library } = getApp();
+
+  const decoderLabels: Record<string, string> = {
+    libopus: 'libopus · Opus',
+    symphonia: 'Symphonia · FLAC, MP3, AAC, Vorbis, WAV',
+    ffmpeg: 'FFmpeg · everything else',
+  };
+  /** Enabled decoders in order, then the disabled ones. */
+  const decoders = $derived.by(() => {
+    const player = engine.player;
+    if (!player) return [];
+    const disabled = player.available_decoders.filter((d) => !player.decoders.includes(d));
+    return [...player.decoders.map((name) => ({ name, on: true })), ...disabled.map((name) => ({ name, on: false }))];
+  });
+
+  function setDecoders(order: string[]) {
+    engine.run({ type: 'set_decoders', order });
+  }
+
+  function moveDecoder(name: string, by: -1 | 1) {
+    const order = [...(engine.player?.decoders ?? [])];
+    const i = order.indexOf(name);
+    if (i < 0 || i + by < 0 || i + by >= order.length) return;
+    [order[i], order[i + by]] = [order[i + by], order[i]];
+    setDecoders(order);
+  }
+
+  function toggleDecoder(name: string, on: boolean) {
+    const order = engine.player?.decoders ?? [];
+    setDecoders(on ? [...order, name] : order.filter((d) => d !== name));
+  }
+
+  function query(q: Parameters<typeof engine.query>[0]) {
+    engine.query(q).catch((e: Error) => (engine.error = e.message));
+  }
   let open = $state(false);
   let root = $state<HTMLElement>();
 
@@ -115,6 +150,54 @@
           </label>
         </div>
       </div>
+
+      {#if library.status}
+        {@const status = library.status}
+        <div class="row">
+          <span class="label">Music folders</span>
+          {#each status.roots as root (root)}
+            <div class="item">
+              <span class="path" title={root}>{root}</span>
+              <button class="icon-button small" aria-label="Remove {root}" title="Remove from the library (files stay)" onclick={() => query({ type: 'remove_root', path: root })}>
+                <Icon name="close" size={12} />
+              </button>
+            </div>
+          {/each}
+          <div class="actions">
+            <button class="button" onclick={() => addFolder(engine)}>Add folder…</button>
+            <button class="button" disabled={status.scanning || status.roots.length === 0} onclick={() => query({ type: 'rescan' })}>Rescan</button>
+          </div>
+          <p class="status">
+            {status.tracks} tracks
+            {#if status.scanning}{' · '}scanning ({status.scanned} files){/if}
+            {#if status.hashing}{' · '}hashing {status.hashing} files{/if}
+          </p>
+          {#if status.error}<p class="status error">{status.error}</p>{/if}
+        </div>
+      {/if}
+
+      {#if decoders.length}
+        <div class="row">
+          <span class="label">Decoders</span>
+          {#each decoders as decoder, i (decoder.name)}
+            <div class="item">
+              <label class="decoder">
+                <input type="checkbox" checked={decoder.on} onchange={(e) => toggleDecoder(decoder.name, e.currentTarget.checked)} />
+                {decoderLabels[decoder.name] ?? decoder.name}
+              </label>
+              {#if decoder.on}
+                <button class="icon-button small" aria-label="Try {decoder.name} earlier" disabled={i === 0} onclick={() => moveDecoder(decoder.name, -1)}>
+                  <Icon name="chevron-up" size={12} />
+                </button>
+                <button class="icon-button small" aria-label="Try {decoder.name} later" disabled={!decoders[i + 1]?.on} onclick={() => moveDecoder(decoder.name, 1)}>
+                  <Icon name="chevron-down" size={12} />
+                </button>
+              {/if}
+            </div>
+          {/each}
+          <p class="status">Each file plays with the first of these that can open it.</p>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -133,6 +216,8 @@
     flex-direction: column;
     gap: var(--space-3);
     width: 290px;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
     padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
@@ -144,6 +229,50 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
+  }
+
+  .item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: 24px;
+  }
+
+  .path,
+  .decoder {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+
+  .decoder {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    cursor: pointer;
+  }
+
+  .icon-button.small {
+    width: 22px;
+    height: 22px;
+  }
+
+  .actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .status {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .status.error {
+    color: var(--danger);
   }
 
   .label {

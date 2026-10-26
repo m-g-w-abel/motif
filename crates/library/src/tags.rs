@@ -53,8 +53,8 @@ pub fn read(path: &Path) -> Tags {
     let tagged = match lofty::read_from_path(path) {
         Ok(tagged) => tagged,
         Err(err) => {
-            tracing::debug!(path = %path.display(), %err, "unreadable tags");
-            return Tags::default();
+            tracing::debug!(path = %path.display(), %err, "lofty can't read it, trying symphonia");
+            return read_with_symphonia(path).unwrap_or_default();
         }
     };
     let properties = tagged.properties();
@@ -102,6 +102,69 @@ pub fn read(path: &Path) -> Tags {
             (p.data().to_vec(), ext)
         });
     tags
+}
+
+/// Symphonia's container readers, for files lofty can't parse (some MP4s).
+fn read_with_symphonia(path: &Path) -> Option<Tags> {
+    use symphonia::core::{
+        codecs::CodecParameters,
+        formats::{TrackType, probe::Hint},
+        io::MediaSourceStream,
+        meta::StandardTag as T,
+        units::Timestamp,
+    };
+    let stream = MediaSourceStream::new(Box::new(fs::File::open(path).ok()?), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let mut reader = symphonia::default::get_probe()
+        .probe(&hint, stream, Default::default(), Default::default())
+        .ok()?;
+    let mut tags = Tags {
+        codec: path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_uppercase),
+        ..Tags::default()
+    };
+    if let Some(track) = reader.default_track(TrackType::Audio) {
+        if let (Some(base), Some(duration)) = (track.time_base, track.duration) {
+            let time = base.calc_time(Timestamp::new(duration.get() as i64));
+            tags.duration_ms = time.map(|t| (t.as_secs_f64() * 1000.0) as u64);
+        }
+        if let Some(CodecParameters::Audio(params)) = &track.codec_params {
+            tags.sample_rate = params.sample_rate;
+            tags.bit_depth = params.bits_per_sample;
+            tags.channels = params.channels.as_ref().map(|c| c.count() as u32);
+        }
+    }
+    let mut metadata = reader.metadata();
+    let revision = metadata.skip_to_latest()?;
+    for tag in &revision.media.tags {
+        let text =
+            |s: &std::sync::Arc<String>| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+        match &tag.std {
+            Some(T::TrackTitle(s)) => tags.title = text(s),
+            Some(T::Artist(s)) => tags.artist = text(s),
+            Some(T::Album(s)) => tags.album = text(s),
+            Some(T::AlbumArtist(s)) => tags.album_artist = text(s),
+            Some(T::Genre(s)) => tags.genre = text(s),
+            Some(T::IdentIsrc(s)) => tags.isrc = text(s),
+            Some(T::MusicBrainzRecordingId(s)) => tags.musicbrainz_recording = text(s),
+            Some(T::TrackNumber(n)) => tags.track_no = u32::try_from(*n).ok(),
+            Some(T::DiscNumber(n)) => tags.disc_no = u32::try_from(*n).ok(),
+            Some(T::ReleaseDate(s) | T::RecordingDate(s)) if tags.year.is_none() => {
+                tags.year = s.get(..4).and_then(|y| y.parse().ok());
+            }
+            _ => {}
+        }
+    }
+    tags.picture = revision.media.visuals.first().map(|v| {
+        let png = v.media_type.as_deref() == Some("image/png");
+        (v.data.to_vec(), if png { "png" } else { "jpg" })
+    });
+    Some(tags)
 }
 
 fn codec_name(file_type: FileType, path: &Path) -> String {

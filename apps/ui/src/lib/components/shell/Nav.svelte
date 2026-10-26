@@ -1,15 +1,15 @@
 <script lang="ts">
   import { getApp } from '../../context';
-  import { demoLibrary } from '../../demo';
+  import { demoLibrary, isDemo } from '../../demo';
   import type { Source } from '../../layout/store.svelte';
   import Icon, { type IconName } from '../Icon.svelte';
   import SettingsMenu from './SettingsMenu.svelte';
 
-  const { engine, layout, drawer, settings } = getApp();
+  const { engine, library, layout, drawer, settings } = getApp();
   const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
 
   const sources: { id: Source; label: string; icon: IconName; count: () => number }[] = [
-    { id: 'library', label: 'Library', icon: 'library', count: () => demoLibrary.length },
+    { id: 'library', label: 'Library', icon: 'library', count: () => (isDemo ? demoLibrary.length : (library.status?.tracks ?? 0)) },
   ];
 </script>
 
@@ -38,7 +38,7 @@
     </ul>
 
     <h2>Playlists</h2>
-    <p class="note">Saved playlists arrive with the library in phase 1.</p>
+    <p class="note">Saved playlists arrive in a later phase.</p>
   </div>
 
   <!-- Pinned to the bottom of the screen. -->
