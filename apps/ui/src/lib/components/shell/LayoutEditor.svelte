@@ -121,8 +121,8 @@
   .editor {
     display: flex;
     flex-direction: column;
-    width: min(760px, calc(100vw - 32px));
-    height: min(680px, calc(100vh - 32px));
+    width: min(760px, calc((100vw - 32px) / var(--scale, 1)));
+    height: min(680px, calc((100vh - 32px) / var(--scale, 1)));
     padding: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);

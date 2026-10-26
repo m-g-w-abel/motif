@@ -66,7 +66,9 @@
     }
     // Zoom on the root scales everything, but media queries (the 700px phone
     // breakpoint) still see real pixels.
+    // The shell is sized in viewport units, so it divides the zoom back out to fit the window.
     root.style.zoom = scale === 100 ? '' : `${scale}%`;
+    root.style.setProperty('--scale', String(scale / 100));
     root.dataset.density = density;
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--accent-contrast', contrastFor(accent));
@@ -188,8 +190,8 @@
 <style>
   .shell {
     display: flex;
-    height: 100vh;
-    height: 100dvh;
+    height: calc(100vh / var(--scale, 1));
+    height: calc(100dvh / var(--scale, 1));
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   }
 
@@ -244,7 +246,7 @@
   }
 
   .toast {
-    max-width: min(520px, calc(100vw - 32px));
+    max-width: min(520px, calc((100vw - 32px) / var(--scale, 1)));
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);

@@ -65,6 +65,14 @@
     { key: 'player', label: 'Player', options: [['bar', 'Bar'], ['floating', 'Floating']] },
   ] as [Choice<'density'>, Choice<'player'>];
 
+  const snapScale = (v: number) => 90 + Math.round(v / 5) * 5;
+  // The number follows the thumb; the layout is only redone on release.
+  let scaleDraft = $state<number>();
+  const scaleShown = $derived(scaleDraft ?? settings.current.scale);
+  const OTHER = '\0other';
+  const FONTS = [['', 'Theme default'], ['system-ui', 'System UI'], ['sans-serif', 'Sans-serif'], ['serif', 'Serif'], ['monospace', 'Monospace'], ['Inter', 'Inter']];
+  let fontOther = $state(!FONTS.some(([v]) => v === settings.current.font));
+
   let themeInput = $state<HTMLInputElement>();
   const activeUserTheme = $derived(themes.byId(settings.current.theme));
 
@@ -179,26 +187,40 @@
               label="Interface scale"
               value={settings.current.scale - 90}
               max={60}
-              valueText="{settings.current.scale}%"
-              onchange={(v) => settings.set('scale', 90 + Math.round(v / 5) * 5)}
+              valueText="{scaleShown}%"
+              oninput={(v) => (scaleDraft = snapScale(v))}
+              onchange={(v) => {
+                settings.set('scale', snapScale(v));
+                scaleDraft = undefined;
+              }}
             />
-            <span class="status">{settings.current.scale}%</span>
+            <span class="status">{scaleShown}%</span>
           </div>
         </div>
 
         <div class="row">
           <span class="label">Font</span>
-          <input
+          <select
             class="select"
-            list="fonts"
-            placeholder="Theme default"
-            value={settings.current.font}
             aria-label="Font family"
-            onchange={(e) => settings.set('font', FONT_LIST.test(e.currentTarget.value) ? e.currentTarget.value : '')}
-          />
-          <datalist id="fonts">
-            {#each ['system-ui', 'serif', 'sans-serif', 'monospace', 'Inter', 'Noto Sans', 'Roboto', 'Georgia'] as f (f)}<option value={f}></option>{/each}
-          </datalist>
+            value={fontOther ? OTHER : settings.current.font}
+            onchange={(e) => {
+              fontOther = e.currentTarget.value === OTHER;
+              if (!fontOther) settings.set('font', e.currentTarget.value);
+            }}
+          >
+            {#each FONTS as [value, text] (value)}<option {value}>{text}</option>{/each}
+            <option value={OTHER}>Other…</option>
+          </select>
+          {#if fontOther}
+            <input
+              class="select"
+              placeholder="Installed font family"
+              aria-label="Other font family"
+              value={settings.current.font}
+              onchange={(e) => settings.set('font', FONT_LIST.test(e.currentTarget.value) ? e.currentTarget.value : '')}
+            />
+          {/if}
         </div>
 
         <div class="row">
