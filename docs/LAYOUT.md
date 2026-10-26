@@ -112,10 +112,8 @@ album is outlined in the accent colour.
 | `card-size` | minimum card width in pixels, 80–600 (default 180). The number of columns follows the width |
 | `columns` | fixed number of columns, 1–24, instead of the automatic count. Capped so cards stay at least 80 px wide |
 
-Ctrl+scroll over the grid, or the −/+ buttons above it, change the column
-count (scroll down or + for more). The choice is remembered per layout on each
-device; **Auto** (or **Reset**, when the layout sets `columns`) returns to the
-layout's setting.
+Ctrl+scroll over the grid changes the column count (scroll down for more).
+The choice is remembered per layout on each device.
 
 ### `artwork`
 

@@ -66,7 +66,7 @@
   const maxColumns = $derived(fit(MIN_CARD));
   const autoColumns = $derived(fit(cardSize));
 
-  // The user's choice (Ctrl+scroll, −/+) beats the layout's `columns`, which
+  // The user's choice (Ctrl+scroll) beats the layout's `columns`, which
   // beats the automatic count. Remembered per layout on this device.
   const colsKey = $derived(`album-columns.${view.layoutId}`);
   let chosen = $state<number>();
@@ -131,14 +131,6 @@
 </script>
 
 <section class="album-grid">
-  <div class="zoom" role="group" aria-label="Columns">
-    <button class="button" aria-label="Fewer columns" disabled={columns <= 1} onclick={() => choose(columns - 1)}>−</button>
-    <span>{columns}</span>
-    <button class="button" aria-label="More columns" disabled={columns >= maxColumns} onclick={() => choose(columns + 1)}>+</button>
-    <button class="button" disabled={chosen === undefined} onclick={() => choose(undefined)}>
-      {layoutColumns ? 'Reset' : 'Auto'}
-    </button>
-  </div>
   <div
     class="scroll"
     bind:this={scroller}
@@ -192,16 +184,6 @@
     flex-direction: column;
     height: 100%;
     background: var(--bg);
-  }
-
-  .zoom {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: var(--space-2);
-    padding: var(--space-1) 16px;
-    border-bottom: 1px solid var(--border);
-    color: var(--text-muted);
   }
 
   .scroll {
