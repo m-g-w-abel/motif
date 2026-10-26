@@ -41,7 +41,8 @@ describe('parseLayout', () => {
               kind: 'panel',
               panel: 'tracklist',
               size: { percent: 60 },
-              style: 'grouped',
+              albumBreaks: true,
+              headers: false,
               columns: ['index', 'artist', 'title', 'duration'],
               maxWidth: 900,
             },
@@ -60,13 +61,27 @@ describe('parseLayout', () => {
     });
   });
 
+  it('takes tracklist options independently of the style shorthand', () => {
+    const panel = (props: string) => {
+      const r = parseLayout(`layout version=1\ntracklist ${props}`, 'x');
+      if (!r.ok) throw new Error(JSON.stringify(r.errors));
+      return r.layout.root;
+    };
+    expect(panel('')).toMatchObject({ albumBreaks: false, headers: true });
+    expect(panel('style=grouped')).toMatchObject({ albumBreaks: true, headers: false, columns: ['index', 'artist', 'title', 'duration'] });
+    expect(panel('style=grouped headers=#true')).toMatchObject({ albumBreaks: true, headers: true });
+    expect(panel('album-breaks=#true')).toMatchObject({ albumBreaks: true, headers: true });
+    expect(panel('style=table headers=#false')).toMatchObject({ albumBreaks: false, headers: false });
+    expect(errorsOf('layout version=1\ntracklist headers=yes').map((e) => e.message)).toEqual(['`headers` must be #true or #false, got "yes"']);
+  });
+
   it('names unnamed layouts after the file and stacks several widgets', () => {
     const result = parseLayout('layout version=1\ntracklist\nalbum-grid card-size=150', 'from-file');
     expect(result.ok && result.layout.name).toBe('from-file');
     expect(result.ok && result.layout.root).toMatchObject({
       kind: 'split',
       direction: 'column',
-      children: [{ panel: 'tracklist', style: 'table' }, { panel: 'album-grid', cardSize: 150 }],
+      children: [{ panel: 'tracklist', albumBreaks: false, headers: true }, { panel: 'album-grid', cardSize: 150 }],
     });
   });
 
@@ -110,7 +125,7 @@ describe('parseLayout', () => {
     );
     expect(errors.map((e) => [e.line, e.message])).toEqual([
       [1, '`icon` must be one of `list`, `grid`, `split`, `info`, `columns`, got "star"'],
-      [3, '`tracklist` has no property `colour`; expected `style`, `max-width`, `size`'],
+      [3, '`tracklist` has no property `colour`; expected `style`, `album-breaks`, `headers`, `max-width`, `size`'],
       [4, 'unknown column `rating`; expected one of `index`, `title`, `artist`, `album`, `format`, `duration`'],
       [6, 'unknown widget `sidebar`; expected one of `split`, `tracklist`, `album-grid`, `artwork`, `track-info`, `controls`, `queue`'],
     ]);
@@ -144,7 +159,7 @@ describe('parseLayout', () => {
       direction: 'column',
       children: [
         { kind: 'panel', panel: 'artwork', size: { percent: 40 } },
-        { kind: 'panel', panel: 'tracklist', style: 'table', columns: ['index', 'title', 'artist', 'album', 'duration'] },
+        { kind: 'panel', panel: 'tracklist', albumBreaks: false, headers: true, columns: ['index', 'title', 'artist', 'album', 'duration'] },
       ],
     });
   });

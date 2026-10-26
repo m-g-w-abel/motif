@@ -5,7 +5,7 @@
   import { isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime, trackFormat, trackTitle } from '../../format';
-  import type { Column, TracklistStyle } from '../../layout/model';
+  import type { Column } from '../../layout/model';
   import type { SortKey } from '../../protocol/SortKey';
   import type { TrackGroup } from '../../protocol/TrackGroup';
   import { nextOneOff, sortLabel, viewSort } from '../../sort.svelte';
@@ -18,13 +18,15 @@
 
   let {
     source,
-    style = 'table',
+    albumBreaks = false,
+    headers = true,
     columns,
     maxWidth,
   }: {
     /** Defaults to whatever the music area is showing. */
     source?: ListSource;
-    style?: TracklistStyle;
+    albumBreaks?: boolean;
+    headers?: boolean;
     columns: Column[];
     /** Centres the list at this width on wide screens. */
     maxWidth?: number;
@@ -40,7 +42,7 @@
     trackListData(engine, library, kind, browsing ? view.browse.search || null : null, browsing ? viewSort(view) : [], shownList),
   );
   $effect(() => data.sync?.());
-  const groups = $derived(style === 'grouped' ? data.groups : null);
+  const groups = $derived(albumBreaks ? data.groups : null);
   const currentKey = $derived(data.currentKey);
 
   // Phones drop secondary columns rather than squeezing everything.
@@ -78,7 +80,8 @@
   }
 
   // Column widths are a per-device preference, remembered per view and list.
-  const widthsKey = $derived(`columns.${view.layoutId}.${style}.${columns.join(',')}`);
+  // The key keeps the `table` of when that was a style, so saved widths survive.
+  const widthsKey = $derived(`columns.${view.layoutId}.table.${columns.join(',')}`);
   let widths = $state<Partial<Record<Column, number>>>({});
   $effect(() => {
     try {
@@ -270,7 +273,7 @@
       if (index < 0 || !scroller) return;
       // Grouped lists scroll to the album header just above its first track.
       const at = rows.list.findIndex((row) => 'index' in row && row.index === index);
-      const target = style === 'grouped' ? at - 1 : at;
+      const target = albumBreaks ? at - 1 : at;
       // Scroll this list only; scrollIntoView would also scroll every
       // scrollable ancestor, moving the whole window.
       const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -284,7 +287,7 @@
     if (!t) return '';
     switch (column) {
       case 'index':
-        // Grouped lists number tracks within each album.
+        // Lists with album breaks number tracks within each album.
         return String(index - groupStart(index) + 1);
       case 'title':
         return trackTitle(t);
@@ -338,7 +341,7 @@
   const columnCount = $derived(shown.length + (data.remove ? 1 : 0));
 </script>
 
-<section class="tracklist {style}" style:--max-width={maxWidth ? `${maxWidth}px` : undefined}>
+<section class="tracklist" class:breaks={albumBreaks} style:--max-width={maxWidth ? `${maxWidth}px` : undefined}>
   {#if data.count === 0}
     <div class="empty">
       <p>{data.empty.message}</p>
@@ -362,7 +365,7 @@
           {/each}
           {#if data.remove}<col style:width="28px" />{/if}
         </colgroup>
-        {#if style === 'table'}
+        {#if headers}
           <thead>
             <tr>
               {#each shown as column, i (column)}
@@ -549,7 +552,7 @@
     border-right-color: var(--accent);
   }
 
-  .table tbody tr.alt {
+  .tracklist:not(.breaks) tbody tr.alt {
     background: color-mix(in srgb, var(--surface) 45%, transparent);
   }
 
