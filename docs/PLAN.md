@@ -287,6 +287,9 @@ battery killers, and release builds.
 
 ## Phase 1 plan: desktop player
 
+*Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game
+and MIDI formats were left for phase 10.*
+
 Goal: point Motif at your music folders on Linux, Windows or macOS and it
 plays them: gapless, every common format, real library browsing with
 artwork, and the OS media keys and widgets work. Android keeps compiling
