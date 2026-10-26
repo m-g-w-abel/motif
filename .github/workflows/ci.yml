@@ -7,6 +7,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # No debug info: CI never debugs, and it makes linking (slow on Windows) and the cache much bigger.
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   ui:
@@ -28,17 +30,26 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # Default is 6 hours; a cold Windows build is the slowest at ~15 minutes.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux system libraries
         if: runner.os == 'Linux'
+        # Normally ~35s; a stalled Ubuntu mirror otherwise hangs the job.
+        timeout-minutes: 5
+        env:
+          APT_OPTS: -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev
+          sudo apt-get $APT_OPTS update
+          sudo apt-get $APT_OPTS install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Otherwise a failed run saves nothing and the next one starts cold.
+          cache-on-failure: true
       # tauri::generate_context! embeds the built UI, so build it first.
       - uses: actions/setup-node@v4
         with:
