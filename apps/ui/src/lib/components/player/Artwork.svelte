@@ -25,21 +25,39 @@
   // Still being looked up: neither the gradient nor an image yet.
   const loading = $derived(art === undefined && details === undefined);
   let failed = $state<string | null>(null);
+  // The image on screen: the previous one stays until the next has decoded.
+  let shown = $state<string | null>(null);
+  const src = (a: string) => library.artUrl(a, size ?? 256);
+  $effect(() => {
+    if (loading) return;
+    if (!id) {
+      shown = null;
+      return;
+    }
+    const next = id;
+    const img = new Image();
+    img.src = src(next);
+    img.decode().then(
+      () => (shown = next),
+      () => (failed = next),
+    );
+    return () => (img.src = '');
+  });
 </script>
 
 <div
   class="art"
   style:width={size ? `${size}px` : undefined}
   style:height={size ? `${size}px` : undefined}
-  style:background={track && !loading && (!id || failed === id) ? placeholderArt(track) : undefined}
+  style:background={track && !loading && !shown && (!id || failed === id) ? placeholderArt(track) : undefined}
 >
-  {#if id && failed !== id}
+  {#if shown && failed !== shown}
     <img
-      src={library.artUrl(id, size ?? 256)}
+      src={src(shown)}
       alt={title ? `Cover of ${title}` : ''}
       loading="lazy"
       decoding="async"
-      onerror={() => (failed = id)}
+      onerror={() => (failed = shown)}
     />
   {:else if !track}
     <Icon name="music" size={size ? Math.round(size * 0.4) : 48} />

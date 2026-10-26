@@ -26,8 +26,9 @@ abstract class PagedList<T> {
   #version = $state(0);
   #revision = -1;
   #synced = 0;
+  #seeking = false;
   #timer: ReturnType<typeof setTimeout> | undefined;
-  #anchor: { index: number; key: string } | null = null;
+  #anchor: { index: number; key: string | null } | null = null;
   /** Called with the anchor row's new index when rows were inserted or removed above it. */
   onShift?: (index: number) => void;
 
@@ -49,6 +50,7 @@ abstract class PagedList<T> {
       }, wait);
       return;
     }
+    this.#pin();
     this.#synced = Date.now();
     this.#revision = revision;
     this.#load(0);
@@ -57,8 +59,15 @@ abstract class PagedList<T> {
 
   /** Remembers the first visible row so a shift of the rows above it can be reported. */
   setAnchor(index: number) {
-    const row = this.#pages.get(Math.floor(index / PAGE))?.rows[index % PAGE];
-    this.#anchor = row ? { index, key: this.key(row) } : null;
+    this.#anchor = { index, key: null };
+    this.#pin();
+  }
+
+  /** Names the anchor row; its page may not have been loaded when the anchor was set. */
+  #pin() {
+    const a = this.#anchor;
+    const row = a && this.#pages.get(Math.floor(a.index / PAGE))?.rows[a.index % PAGE];
+    if (a && row) a.key ??= this.key(row);
   }
 
   /** Row `i`, or `undefined` while its page loads. */
@@ -77,21 +86,58 @@ abstract class PagedList<T> {
     queueMicrotask(() => {
       const revision = this.#revision;
       this.fetch(page * PAGE, PAGE)
-        .then(({ total, rows }) => {
+        .then(async ({ total, rows }) => {
+          const a = this.#anchor;
+          // The anchor row left its page: find it before swapping, so the view doesn't show the wrong rows meanwhile.
+          if (a?.key && page === Math.floor(a.index / PAGE) && !this.#seeking && !rows.some((r) => this.key(r) === a.key)) {
+            this.total = total;
+            await this.#seek(a, revision);
+          }
           this.#pages.set(page, { rows, revision });
           this.total = total;
           this.loaded = true;
           this.#version++;
-          const a = this.#anchor;
-          const at = a ? rows.findIndex((row) => this.key(row) === a.key) : -1;
-          if (a && at >= 0 && page * PAGE + at !== a.index) {
-            a.index = page * PAGE + at;
-            this.onShift?.(a.index);
-          }
+          this.#land(page, rows);
         })
         .catch((e: Error) => console.warn('library page', e.message))
         .finally(() => this.#loading.delete(page));
     });
+  }
+
+  /** Moves the anchor if `rows` hold it at another index; true if they hold it. */
+  #land(page: number, rows: T[]): boolean {
+    const a = this.#anchor;
+    const at = a?.key ? rows.findIndex((row) => this.key(row) === a.key) : -1;
+    if (!a || at < 0) return false;
+    if (page * PAGE + at !== a.index) {
+      a.index = page * PAGE + at;
+      this.onShift?.(a.index);
+    }
+    return true;
+  }
+
+  /** The anchor row left its page: look for it in nearby pages, nearest first. */
+  async #seek(a: { index: number; key: string | null }, revision: number) {
+    this.#seeking = true;
+    const home = Math.floor(a.index / PAGE);
+    const last = Math.ceil(this.total / PAGE) - 1;
+    try {
+      // shortcut: gives up after 10 pages each way; a bigger shift is left where it is.
+      for (let k = 1; k <= 10 && this.#anchor === a && revision === this.#revision; k++) {
+        for (const page of [home + k, home - k]) {
+          if (page < 0 || page > last) continue;
+          const { total, rows } = await this.fetch(page * PAGE, PAGE);
+          this.#pages.set(page, { rows, revision });
+          this.total = total;
+          this.#version++;
+          if (this.#land(page, rows)) return;
+        }
+      }
+    } catch (e) {
+      console.warn('library seek', (e as Error).message);
+    } finally {
+      this.#seeking = false;
+    }
   }
 
   /** Identifies a row across refetches. */
@@ -145,6 +191,7 @@ export class LibraryClient {
   #details = new SvelteMap<string, LibraryTrack | null>();
   #wanted = new Set<string>();
   #revision = -1;
+  #refreshed = 0;
   private engine: EngineClient;
 
   constructor(engine: EngineClient) {
@@ -168,8 +215,9 @@ export class LibraryClient {
     if (track?.source !== 'local') return null;
     // Details can change with the library (e.g. new artwork).
     const revision = this.engine.library?.revision ?? -1;
-    if (revision !== this.#revision) {
+    if (revision !== this.#revision && Date.now() - this.#refreshed >= SYNC_INTERVAL) {
       this.#revision = revision;
+      this.#refreshed = Date.now();
       // Keep what's known (stale) and look it all up again.
       for (const path of this.#details.keys()) this.#wanted.add(path);
       if (this.#wanted.size) queueMicrotask(() => this.#lookup());
