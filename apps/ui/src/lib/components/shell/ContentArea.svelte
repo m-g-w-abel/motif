@@ -7,6 +7,7 @@
   import type { SortKey } from '../../protocol/SortKey';
   import type { SortRule } from '../../protocol/SortRule';
   import { DEFAULT_RULES, isDefault, SORT_KEYS, sortRules, viewSort } from '../../sort.svelte';
+  import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData } from '../../sources.svelte';
   import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
@@ -29,7 +30,10 @@
   );
   setViewState(view);
 
-  const data = $derived(trackListData(engine, library, view.source, view.browse.search || null, viewSort(view)));
+  const shownList: Shown<LibraryTracks> = {};
+  const data = $derived(
+    trackListData(engine, library, view.source, view.browse.search || null, viewSort(view), shownList),
+  );
   $effect(() => data.sync?.());
 
   // The search box filters the library once typing pauses.

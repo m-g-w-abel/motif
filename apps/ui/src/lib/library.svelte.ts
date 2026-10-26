@@ -189,8 +189,6 @@ export class LibraryAlbums extends PagedList<LibraryAlbum> {
 export class LibraryClient {
   #tracks = new Map<string, LibraryTracks>();
   #albums = new Map<string, LibraryAlbums>();
-  /** The lists last handed out, kept on screen while a new order's first page loads. */
-  #shown: { tracks?: LibraryTracks; albums?: LibraryAlbums } = {};
   /** Path → library details, or `null` if the file isn't in the library. */
   #details = new SvelteMap<string, LibraryTrack | null>();
   #wanted = new Set<string>();
@@ -206,14 +204,15 @@ export class LibraryClient {
     return this.engine.library;
   }
 
-  tracks(search: string | null, sort: SortRule[] = []): LibraryTracks {
+  /** With a `shown` slot of its own, a caller keeps the last list until the new one's first page is in. */
+  tracks(search: string | null, sort: SortRule[] = [], shown?: Shown<LibraryTracks>): LibraryTracks {
     const list = cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort));
-    return (this.#shown.tracks = hold(list, this.#shown.tracks));
+    return shown ? hold(list, shown) : list;
   }
 
-  albums(search: string | null, sort: SortRule[] = []): LibraryAlbums {
+  albums(search: string | null, sort: SortRule[] = [], shown?: Shown<LibraryAlbums>): LibraryAlbums {
     const list = cached(this.#albums, search, sort, () => new LibraryAlbums(this.engine, search, sort));
-    return (this.#shown.albums = hold(list, this.#shown.albums));
+    return shown ? hold(list, shown) : list;
   }
 
   /** Library details for a queued or playing track; `undefined` while being looked up. */
@@ -274,9 +273,16 @@ function cached<T>(map: Map<string, T>, search: string | null, sort: SortRule[],
   return value;
 }
 
-/** `next` once its first page is in; until then `previous` stays, so a new order doesn't blank the view. */
-function hold<T extends PagedList<unknown>>(next: T, previous: T | undefined): T {
-  if (next.loaded || !previous) return next;
-  next.sync(); // start the fetch; `loaded` flipping re-runs whoever asked
-  return previous;
+/** What a caller last showed. */
+export interface Shown<T> {
+  list?: T;
+}
+
+/** `next` once its first page is in; until then what was shown stays, so a new order doesn't blank the view. */
+function hold<T extends PagedList<unknown>>(next: T, shown: Shown<T>): T {
+  if (!next.loaded && shown.list) {
+    next.sync(); // start the fetch; `loaded` flipping re-runs whoever asked
+    return shown.list;
+  }
+  return (shown.list = next);
 }

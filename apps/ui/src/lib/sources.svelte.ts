@@ -1,7 +1,7 @@
 import { groupConsecutive } from './albums';
 import { demoLibrary, isDemo } from './demo';
 import type { EngineClient } from './engine.svelte';
-import type { LibraryClient } from './library.svelte';
+import type { LibraryClient, LibraryTracks, Shown } from './library.svelte';
 import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
@@ -50,10 +50,11 @@ export function trackListData(
   kind: ListSource,
   search: string | null = null,
   sort: SortRule[] = [],
+  shown?: Shown<LibraryTracks>,
 ): TrackListData {
   if (kind === 'queue') return queueData(engine);
   if (isDemo) return demoData(engine);
-  return libraryData(engine, library, search, sort);
+  return libraryData(engine, library, search, sort, shown);
 }
 
 /** Memoises a value computed from the data object's inputs. */
@@ -119,8 +120,9 @@ function libraryData(
   library: LibraryClient,
   search: string | null,
   sort: SortRule[],
+  shown?: Shown<LibraryTracks>,
 ): TrackListData {
-  const list = library.tracks(search, sort);
+  const list = library.tracks(search, sort, shown);
   const run = (query: Parameters<EngineClient['query']>[0]) =>
     engine.query(query).catch((e: Error) => (engine.error = e.message));
   return {

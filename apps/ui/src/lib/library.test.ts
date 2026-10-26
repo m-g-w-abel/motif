@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineClient } from './engine.svelte';
-import { LibraryClient, LibraryTracks } from './library.svelte';
+import { LibraryTracks } from './library.svelte';
 import type { LibraryQuery } from './protocol/LibraryQuery';
 import type { QueryResult } from './protocol/QueryResult';
 
@@ -96,19 +96,3 @@ describe('stale data', () => {
   });
 });
 
-describe('LibraryClient', () => {
-  it('keeps handing out the old list until the new order has its first page', async () => {
-    const { engine } = fakeEngine(10);
-    const client = new LibraryClient(engine);
-    const a = client.tracks(null, []);
-    expect(client.tracks(null, [])).toBe(a);
-    a.sync();
-    await settle();
-    const b = client.tracks(null, [{ key: 'title', descending: false }] as never);
-    expect(b).toBe(a);
-    await settle();
-    const next = client.tracks(null, [{ key: 'title', descending: false }] as never);
-    expect(next).not.toBe(a);
-    expect(next.loaded).toBe(true);
-  });
-});

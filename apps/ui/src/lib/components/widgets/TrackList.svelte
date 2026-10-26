@@ -9,6 +9,7 @@
   import type { SortKey } from '../../protocol/SortKey';
   import type { TrackGroup } from '../../protocol/TrackGroup';
   import { nextOneOff, sortLabel, viewSort } from '../../sort.svelte';
+  import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
@@ -33,8 +34,9 @@
 
   const kind = $derived(source ?? view.source);
   const browsing = $derived(kind === 'library');
+  const shownList: Shown<LibraryTracks> = {};
   const data = $derived(
-    trackListData(engine, library, kind, browsing ? view.browse.search || null : null, browsing ? viewSort(view) : []),
+    trackListData(engine, library, kind, browsing ? view.browse.search || null : null, browsing ? viewSort(view) : [], shownList),
   );
   $effect(() => data.sync?.());
   const groups = $derived(style === 'grouped' ? data.groups : null);

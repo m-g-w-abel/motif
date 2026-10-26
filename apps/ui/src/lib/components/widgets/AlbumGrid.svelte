@@ -5,6 +5,7 @@
   import { demoLibrary, isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
+  import type { LibraryAlbums, Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { sortLabel, viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
@@ -32,7 +33,8 @@
     ? groupConsecutive(demoLibrary).map((g) => ({ ...g, tracks: g.count, track: demoLibrary[g.start] }))
     : [];
   const sort = $derived(viewSort(view));
-  const albums = $derived(isDemo ? null : library.albums(view.browse.search || null, sort));
+  const shownList: Shown<LibraryAlbums> = {};
+  const albums = $derived(isDemo ? null : library.albums(view.browse.search || null, sort, shownList));
   $effect(() => albums?.sync());
   const count = $derived(albums ? albums.total : demoAlbums.length);
   const card = (i: number): Card | undefined => (albums ? albums.get(i) : demoAlbums[i]);
