@@ -109,6 +109,15 @@
     return indices;
   });
 
+  // A new order or search starts at the top.
+  let shownAlbums: object | null | undefined;
+  $effect(() => {
+    const next = albums;
+    untrack(() => {
+      if (shownAlbums && next !== shownAlbums && scroller) scroller.scrollTop = 0;
+      shownAlbums = next;
+    });
+  });
   // Cards inserted above the first visible row (a scan) must not push it away.
   let scroller = $state<HTMLElement>();
   let anchorOffset = 0;

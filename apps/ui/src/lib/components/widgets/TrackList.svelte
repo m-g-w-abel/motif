@@ -198,6 +198,15 @@
   const visible = $derived(rows.list.slice(range[0], range[1]));
   const padTop = $derived(rows.tops[range[0]] ?? 0);
   const padBottom = $derived(rows.height - (rows.tops[range[1]] ?? rows.height));
+  // A new order or search starts at the top.
+  let order: object | undefined;
+  $effect(() => {
+    const next = data.order;
+    untrack(() => {
+      if (order && next !== order && scroller) scroller.scrollTop = 0;
+      order = next;
+    });
+  });
   // Rows inserted above the first visible one (a scan) must not push it away.
   // Re-pinned on scroll only: a refetch changes `rows` before the shift is reported.
   let anchorOffset = 0;

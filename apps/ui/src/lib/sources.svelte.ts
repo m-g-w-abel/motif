@@ -24,6 +24,8 @@ export interface TrackListData {
   details?(index: number): LibraryTrack | undefined;
   /** Stable per-row key. */
   key(index: number): string;
+  /** Changes when the rows are replaced by another order or search, not when they refetch. */
+  readonly order?: object;
   /** Album runs in list order. */
   readonly groups: TrackGroup[];
   readonly totalMs: number;
@@ -124,6 +126,7 @@ function libraryData(
   return {
     title: 'Library',
     kind: 'library',
+    order: list,
     get count() {
       return list.total;
     },

@@ -189,6 +189,8 @@ export class LibraryAlbums extends PagedList<LibraryAlbum> {
 export class LibraryClient {
   #tracks = new Map<string, LibraryTracks>();
   #albums = new Map<string, LibraryAlbums>();
+  /** The lists last handed out, kept on screen while a new order's first page loads. */
+  #shown: { tracks?: LibraryTracks; albums?: LibraryAlbums } = {};
   /** Path → library details, or `null` if the file isn't in the library. */
   #details = new SvelteMap<string, LibraryTrack | null>();
   #wanted = new Set<string>();
@@ -205,11 +207,13 @@ export class LibraryClient {
   }
 
   tracks(search: string | null, sort: SortRule[] = []): LibraryTracks {
-    return cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort));
+    const list = cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort));
+    return (this.#shown.tracks = hold(list, this.#shown.tracks));
   }
 
   albums(search: string | null, sort: SortRule[] = []): LibraryAlbums {
-    return cached(this.#albums, search, sort, () => new LibraryAlbums(this.engine, search, sort));
+    const list = cached(this.#albums, search, sort, () => new LibraryAlbums(this.engine, search, sort));
+    return (this.#shown.albums = hold(list, this.#shown.albums));
   }
 
   /** Library details for a queued or playing track; `undefined` while being looked up. */
@@ -268,4 +272,11 @@ function cached<T>(map: Map<string, T>, search: string | null, sort: SortRule[],
     map.set(key, value);
   }
   return value;
+}
+
+/** `next` once its first page is in; until then `previous` stays, so a new order doesn't blank the view. */
+function hold<T extends PagedList<unknown>>(next: T, previous: T | undefined): T {
+  if (next.loaded || !previous) return next;
+  next.sync(); // start the fetch; `loaded` flipping re-runs whoever asked
+  return previous;
 }
