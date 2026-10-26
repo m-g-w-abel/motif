@@ -27,14 +27,13 @@
     ['.transport', '.controls .transport', 'even', true],
     ['.seek .slider', '.controls .seek .slider', 'box', true],
     ['.time', '.controls .seek .time:first-child', 'text', true],
-    // Inside the bar's `.time`, whose ghost already carries it.
-    ['.total', '.controls .seek .time:last-child', 'text', false],
+    ['.total', '.controls .seek .time:last-child', 'text', true],
     ['[aria-label^="Repeat"]', '.controls [aria-label^="Repeat"]', 'even', true],
     ['.volume', '.controls .volume', 'even', true],
     ['.end > [aria-label="Expand player"]', 'header .icon-button', 'even', true],
   ];
-  /** Everything else (and anything the bar doesn't show) fades in once the background has mostly grown. */
-  const FADE = 'header .handle, .queue-slot, .hero-album';
+  /** The handle (and anything the bar doesn't show) fades in once the background has mostly grown. */
+  const FADE = 'header .handle';
   const EASE = '260ms cubic-bezier(0.2, 0.8, 0.2, 1)';
 
   type Mode = 'box' | 'even' | 'text';
@@ -81,6 +80,8 @@
   function ghost(a: HTMLElement, b: HTMLElement, mode: Mode, at: DOMRect): Part {
     const r = a.getBoundingClientRect();
     const el = a.cloneNode(true) as HTMLElement;
+    // Nested parts (the total inside the bar's time) travel as their own ghosts.
+    for (const [from] of MORPH) for (const n of el.querySelectorAll(from)) n.remove();
     Object.assign(el.style, {
       position: 'absolute',
       left: `${r.left - at.left}px`,
@@ -132,6 +133,20 @@
         found.push({ el: b, ...fit(e, inner[0], inner[1], mode), ghost: false, fade: from !== '.art' });
         if (copy) found.push(ghost(a, b, mode, at));
       }
+      // The album line has no counterpart in the bar; it rides along with the artist.
+      const artist = found.find((p) => !p.ghost && p.el.matches('.hero-artist'));
+      const album = section.querySelector<HTMLElement>('.hero-album');
+      if (artist && album) {
+        const e = artist.el.getBoundingClientRect();
+        const r = album.getBoundingClientRect();
+        album.style.transformOrigin = '0 0';
+        const dx = artist.dx + (r.left - e.left) * (artist.sx - 1);
+        const dy = artist.dy + (r.top - e.top) * (artist.sy - 1);
+        found.push({ ...artist, el: album, dx, dy });
+      } else if (album) fades.push(album);
+      // The queue rises from below the page, as the whole sheet used to.
+      const queue = section.querySelector<HTMLElement>('.queue-slot');
+      if (queue) found.push({ el: queue, dx: 0, dy: at.bottom - queue.getBoundingClientRect().top, sx: 1, sy: 1, ghost: false, fade: false });
       parts = found;
     }
     apply(sheet.progress, true);
