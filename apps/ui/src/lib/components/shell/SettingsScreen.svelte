@@ -9,6 +9,8 @@
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import Slider from '../Slider.svelte';
+  import { FONT_LIST } from '../../themeFile';
 
   const { settings, themes, engine, library, settingsView } = getApp();
   let panel = $state<HTMLElement>();
@@ -169,6 +171,35 @@
             </div>
           </div>
         {/each}
+
+        <div class="row">
+          <span class="label">Scale</span>
+          <div class="scale">
+            <Slider
+              label="Interface scale"
+              value={settings.current.scale - 90}
+              max={60}
+              valueText="{settings.current.scale}%"
+              onchange={(v) => settings.set('scale', 90 + Math.round(v / 5) * 5)}
+            />
+            <span class="status">{settings.current.scale}%</span>
+          </div>
+        </div>
+
+        <div class="row">
+          <span class="label">Font</span>
+          <input
+            class="select"
+            list="fonts"
+            placeholder="Theme default"
+            value={settings.current.font}
+            aria-label="Font family"
+            onchange={(e) => settings.set('font', FONT_LIST.test(e.currentTarget.value) ? e.currentTarget.value : '')}
+          />
+          <datalist id="fonts">
+            {#each ['system-ui', 'serif', 'sans-serif', 'monospace', 'Inter', 'Noto Sans', 'Roboto', 'Georgia'] as f (f)}<option value={f}></option>{/each}
+          </datalist>
+        </div>
 
         <div class="row">
           <span class="label">Accent</span>
@@ -527,6 +558,17 @@
   .theme.active .name {
     color: var(--text);
     font-weight: 600;
+  }
+
+  .scale {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 220px;
+  }
+
+  .scale :global(.slider) {
+    flex: 1;
   }
 
   .swatches {

@@ -11,6 +11,7 @@
   import { LayoutStore } from './lib/layout/store.svelte';
   import { SettingsStore } from './lib/settings.svelte';
   import { SYSTEM_THEMES, themeById } from './lib/themes';
+  import { FONT_LIST } from './lib/themeFile';
   import { UserThemes } from './lib/userThemes.svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { PlayerSheet } from './lib/sheet.svelte';
@@ -53,14 +54,19 @@
   // A removed or broken user theme falls back to the first built-in.
   const theme = $derived(themes.byId(themeId) ?? themeById(themeId));
   $effect(() => {
-    const { accent, density } = settings.current;
+    const { accent, density, scale, font } = settings.current;
     const root = document.documentElement;
     for (const [token, value] of Object.entries(theme.tokens)) root.style.setProperty(`--${token}`, value);
     root.style.colorScheme = theme.scheme;
-    for (const [prop, font] of [['--font-sans', theme.fonts?.sans], ['--font-mono', theme.fonts?.mono]] as const) {
-      if (font) root.style.setProperty(prop, font);
+    // The user's own font beats the theme's, which beats the app's.
+    for (const [prop, themed] of [['--font-sans', theme.fonts?.sans], ['--font-mono', theme.fonts?.mono]] as const) {
+      const value = (prop === '--font-sans' && FONT_LIST.test(font) && font) || themed;
+      if (value) root.style.setProperty(prop, value);
       else root.style.removeProperty(prop);
     }
+    // Zoom on the root scales everything, but media queries (the 700px phone
+    // breakpoint) still see real pixels.
+    root.style.zoom = scale === 100 ? '' : `${scale}%`;
     root.dataset.density = density;
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--accent-contrast', contrastFor(accent));

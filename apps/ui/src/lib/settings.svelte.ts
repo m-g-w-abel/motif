@@ -7,6 +7,10 @@ export interface Settings {
   theme: string;
   accent: string;
   density: 'compact' | 'comfortable';
+  /** Interface scale in percent, 90 to 150. */
+  scale: number;
+  /** A font family list that overrides the theme's; empty keeps the theme's (or the app's). */
+  font: string;
   /** The always-visible player: a bar along the bottom, or a floating widget. */
   player: 'bar' | 'floating';
   /** Desktop: the left panel folded away. */
@@ -17,6 +21,8 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'graphite',
   accent: '#e8a33d',
   density: 'compact',
+  scale: 100,
+  font: '',
   player: 'bar',
   navCollapsed: false,
 };
