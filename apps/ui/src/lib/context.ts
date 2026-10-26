@@ -6,6 +6,7 @@ import type { BrowseState, LayoutStore, Source } from './layout/store.svelte';
 import type { SettingsStore } from './settings.svelte';
 import type { SettingsView } from './settingsView.svelte';
 import type { PlayerSheet } from './sheet.svelte';
+import type { UserThemes } from './userThemes.svelte';
 
 /** App-wide objects shared through Svelte context instead of prop drilling. */
 export interface AppContext {
@@ -14,6 +15,7 @@ export interface AppContext {
   position: PlaybackPosition;
   layout: LayoutStore;
   settings: SettingsStore;
+  themes: UserThemes;
   sheet: PlayerSheet;
   drawer: Drawer;
   settingsView: SettingsView;

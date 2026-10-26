@@ -11,6 +11,7 @@
   import { LayoutStore } from './lib/layout/store.svelte';
   import { SettingsStore } from './lib/settings.svelte';
   import { SYSTEM_THEMES, themeById } from './lib/themes';
+  import { UserThemes } from './lib/userThemes.svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { PlayerSheet } from './lib/sheet.svelte';
   import { toasts } from './lib/toast.svelte';
@@ -25,11 +26,12 @@
   const position = new PlaybackPosition(engine);
   const library = new LibraryClient(engine);
   const layout = new LayoutStore();
+  const themes = new UserThemes();
   const settings = new SettingsStore();
   const sheet = new PlayerSheet();
   const drawer = new Drawer();
   const settingsView = new SettingsView();
-  setApp({ engine, library, position, layout, settings, sheet, drawer, settingsView });
+  setApp({ engine, library, position, layout, themes, settings, sheet, drawer, settingsView });
 
   // On phones the left panel is a drawer: swipe in from the left edge to open
   // it, swipe left to close it.
@@ -43,18 +45,22 @@
   // Apply appearance settings to the document: the theme's colour tokens,
   // the accent and the density.
   const prefersDark = new MediaQuery('(prefers-color-scheme: dark)');
-  const theme = $derived(
-    themeById(
-      settings.current.theme === 'system'
-        ? SYSTEM_THEMES[prefersDark.current ? 'dark' : 'light']
-        : settings.current.theme,
-    ),
+  const themeId = $derived(
+    settings.current.theme === 'system'
+      ? SYSTEM_THEMES[prefersDark.current ? 'dark' : 'light']
+      : settings.current.theme,
   );
+  // A removed or broken user theme falls back to the first built-in.
+  const theme = $derived(themes.byId(themeId) ?? themeById(themeId));
   $effect(() => {
     const { accent, density } = settings.current;
     const root = document.documentElement;
     for (const [token, value] of Object.entries(theme.tokens)) root.style.setProperty(`--${token}`, value);
     root.style.colorScheme = theme.scheme;
+    for (const [prop, font] of [['--font-sans', theme.fonts?.sans], ['--font-mono', theme.fonts?.mono]] as const) {
+      if (font) root.style.setProperty(prop, font);
+      else root.style.removeProperty(prop);
+    }
     root.dataset.density = density;
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--accent-contrast', contrastFor(accent));
@@ -77,7 +83,7 @@
     if (!target.closest('input, textarea, [contenteditable="true"]')) e.preventDefault();
   }
 
-  // Dropping .kdl files anywhere installs them as layouts.
+  // Dropping .kdl files anywhere installs them as layouts or themes.
   let dragDepth = $state(0);
   const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes('Files') ?? false;
 
@@ -94,7 +100,7 @@
     if (!hasFiles(e)) return;
     e.preventDefault();
     dragDepth = 0;
-    void installLayoutFiles(layout, e.dataTransfer?.files ?? []);
+    void installLayoutFiles(layout, e.dataTransfer?.files ?? [], themes);
   }
 
   // Development only (stripped from builds): URL parameters that set up a
@@ -164,7 +170,7 @@
 {#if editing}<LayoutEditor onClose={() => (editing = false)} />{/if}
 
 {#if dragDepth > 0}
-  <div class="drop-overlay" aria-hidden="true"><span>Drop a .kdl file to install it as a layout</span></div>
+  <div class="drop-overlay" aria-hidden="true"><span>Drop a .kdl file to install it as a layout or theme</span></div>
 {/if}
 
 <div class="toasts" role="status">
