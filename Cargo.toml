@@ -11,6 +11,7 @@ license = "GPL-3.0-or-later"
 [workspace.dependencies]
 protocol = { path = "crates/protocol" }
 engine = { path = "crates/engine" }
+library = { path = "crates/library" }
 server = { path = "crates/server" }
 
 axum = { version = "0.8.9", features = ["ws"] }
@@ -23,6 +24,7 @@ thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread", "sync", "time", "net", "signal"] }
 tower-http = { version = "0.7.1", features = ["fs"] }
 tracing = "0.1.44"
+dirs = "7.0.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 ts-rs = "12.0.1"
 

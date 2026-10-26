@@ -9,7 +9,9 @@ license.workspace = true
 [dependencies]
 axum.workspace = true
 engine.workspace = true
+library.workspace = true
 futures-util.workspace = true
+serde.workspace = true
 protocol.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

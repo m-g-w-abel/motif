@@ -44,6 +44,11 @@ struct Shared {
     gain: AtomicU32,
     /// Frames of real audio the device has played.
     played: AtomicU64,
+    /// Callbacks that ran out of audio while playing.
+    underruns: AtomicU64,
+    /// Underruns only count once audio has arrived after a flush; an empty
+    /// buffer right after a load or seek is expected.
+    armed: AtomicBool,
     /// Set by the decode thread to have the callback discard buffered audio;
     /// the callback clears it once done.
     flush: AtomicBool,
@@ -87,6 +92,8 @@ impl Audio {
             playing: AtomicBool::new(false),
             gain: AtomicU32::new(1.0f32.to_bits()),
             played: AtomicU64::new(0),
+            underruns: AtomicU64::new(0),
+            armed: AtomicBool::new(false),
             flush: AtomicBool::new(false),
         });
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -181,6 +188,12 @@ impl Audio {
             .store(volume.powi(3).to_bits(), Ordering::Relaxed);
     }
 
+    /// How many times the device ran out of audio while playing (including
+    /// at the end of the queue).
+    pub fn underruns(&self) -> u64 {
+        self.shared.underruns.load(Ordering::Relaxed)
+    }
+
     /// What the listener is hearing now.
     pub fn playhead(&self) -> Option<Playhead> {
         let played = self.shared.played.load(Ordering::Acquire);
@@ -256,6 +269,9 @@ fn build<T: SizedSample + FromSample<f32>>(
                     }
                     chunk.commit_all();
                 }
+                if take < data.len() && shared.armed.load(Ordering::Relaxed) {
+                    shared.underruns.fetch_add(1, Ordering::Relaxed);
+                }
                 data[take..].fill(silence);
                 shared
                     .played
@@ -292,6 +308,9 @@ impl Feeder {
     fn run(mut self) {
         let mut current: Option<Loaded> = None;
         let mut next: Option<Loaded> = None;
+        // A preload waits to be opened until the buffer is full, so opening a
+        // file (slow on a busy disk) never starves the current track.
+        let mut next_request: Option<(u64, u64, PathBuf)> = None;
         let mut stream = Stream::new(self.rate, self.channels);
         stream.reset(self.shared.played.load(Ordering::Acquire));
         let mut decoded = Vec::new();
@@ -301,6 +320,13 @@ impl Feeder {
 
         loop {
             let full = self.producer.slots() < self.channels * 256;
+            if full {
+                // Filled since the last flush: from now on running dry is an underrun.
+                self.shared.armed.store(true, Ordering::Relaxed);
+                if let Some((token, item, path)) = next_request.take() {
+                    next = self.open(token, item, &path);
+                }
+            }
             let busy = current.is_some() || sent < pending.len();
             let command = if !busy {
                 match self.commands.recv() {
@@ -330,6 +356,7 @@ impl Feeder {
                 }) => {
                     self.flush(&mut stream, &mut pending, &mut sent);
                     next = None;
+                    next_request = None;
                     current = self.open(token, item, &path).and_then(|mut loaded| {
                         let reached = if start.is_zero() {
                             Duration::ZERO
@@ -345,9 +372,13 @@ impl Feeder {
                     });
                 }
                 Some(Command::Preload { token, item, path }) => {
-                    next = self.open(token, item, &path)
+                    next = None;
+                    next_request = Some((token, item, path));
                 }
-                Some(Command::ClearPreload) => next = None,
+                Some(Command::ClearPreload) => {
+                    next = None;
+                    next_request = None;
+                }
                 Some(Command::Seek(to)) => {
                     if let Some(loaded) = &mut current {
                         self.flush(&mut stream, &mut pending, &mut sent);
@@ -369,6 +400,7 @@ impl Feeder {
                     self.flush(&mut stream, &mut pending, &mut sent);
                     current = None;
                     next = None;
+                    next_request = None;
                 }
                 None => {}
             }
@@ -391,6 +423,9 @@ impl Feeder {
                     Ok(true) => {}
                     Ok(false) => {
                         // Track done: the preloaded one starts on the very next frame.
+                        if let Some((token, item, path)) = next_request.take() {
+                            next = self.open(token, item, &path);
+                        }
                         current = next.take();
                         match &current {
                             Some(n) => self.lock().start(
@@ -458,6 +493,7 @@ impl Feeder {
     fn flush(&mut self, stream: &mut Stream, pending: &mut Vec<f32>, sent: &mut usize) {
         pending.clear();
         *sent = 0;
+        self.shared.armed.store(false, Ordering::Relaxed);
         self.shared.flush.store(true, Ordering::Release);
         // The callback runs every few milliseconds; give up after a while in
         // case the device has stalled.

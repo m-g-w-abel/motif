@@ -1,31 +1,46 @@
-//! Exposes an [`Engine`] over WebSocket at `/ws` and serves the web UI.
+//! Exposes an [`Engine`] and the [`Library`] over WebSocket at `/ws`, serves
+//! artwork at `/art/<id>` and the web UI.
 //!
 //! Phase 0 has no authentication, so callers must bind to loopback only, and
 //! browsers may only connect from pages served by this machine.
 //! Pairing tokens arrive in phase 4 before the server is exposed on the LAN.
+
+mod resolver;
 
 use std::{net::SocketAddr, path::PathBuf};
 
 use axum::{
     Router,
     extract::{
-        State,
+        Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, StatusCode, Uri, header::ORIGIN},
+    http::{HeaderMap, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
 };
 use engine::Engine;
 use futures_util::{SinkExt, StreamExt};
-use protocol::{ClientMessage, Event, PROTOCOL_VERSION, ServerMessage};
+use library::Library;
+use protocol::{
+    ClientMessage, Command, Event, LibraryQuery, PROTOCOL_VERSION, QueryResult, ServerMessage,
+};
 use tokio::{net::TcpListener, sync::mpsc};
 use tower_http::services::{ServeDir, ServeFile};
+
+pub use resolver::LibraryResolver;
 
 pub struct Config {
     pub addr: SocketAddr,
     /// Built web UI (`apps/ui/dist`). `None` serves only `/ws`.
     pub ui_dir: Option<PathBuf>,
+    pub library: Option<Library>,
+}
+
+#[derive(Clone)]
+struct AppState {
+    engine: Engine,
+    library: Option<Library>,
 }
 
 /// Binds the listener and returns its address plus a future that serves it.
@@ -36,12 +51,15 @@ pub async fn bind(
 ) -> std::io::Result<(SocketAddr, impl Future<Output = std::io::Result<()>>)> {
     let listener = TcpListener::bind(config.addr).await?;
     let addr = listener.local_addr()?;
-    let app = router(engine, config.ui_dir);
+    let app = router(engine, config.library, config.ui_dir);
     Ok((addr, async move { axum::serve(listener, app).await }))
 }
 
-pub fn router(engine: Engine, ui_dir: Option<PathBuf>) -> Router {
-    let router = Router::new().route("/ws", get(upgrade)).with_state(engine);
+pub fn router(engine: Engine, library: Option<Library>, ui_dir: Option<PathBuf>) -> Router {
+    let router = Router::new()
+        .route("/ws", get(upgrade))
+        .route("/art/{key}", get(art))
+        .with_state(AppState { engine, library });
     match ui_dir {
         Some(dir) => {
             // Unknown paths fall back to index.html so client-side routes work.
@@ -55,12 +73,86 @@ pub fn router(engine: Engine, ui_dir: Option<PathBuf>) -> Router {
 async fn upgrade(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
-    State(engine): State<Engine>,
+    State(state): State<AppState>,
 ) -> Response {
-    if !origin_allowed(headers.get(ORIGIN).map(|v| v.to_str().unwrap_or(""))) {
+    if !origin_allowed(
+        headers
+            .get(header::ORIGIN)
+            .map(|v| v.to_str().unwrap_or("")),
+    ) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.on_upgrade(move |socket| session(socket, engine))
+    ws.on_upgrade(move |socket| session(socket, state))
+}
+
+#[derive(serde::Deserialize)]
+struct ArtParams {
+    /// Fit within this many pixels; full size if absent.
+    size: Option<u32>,
+}
+
+/// Artwork by id. Ids are content hashes, so responses never change and the
+/// browser may cache them forever.
+async fn art(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Query(params): Query<ArtParams>,
+) -> Response {
+    let Some(library) = state.library else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let file = tokio::task::spawn_blocking(move || {
+        let path = library.art(&key, params.size)?;
+        Ok::<_, library::Error>((std::fs::read(&path)?, path))
+    })
+    .await;
+    match file {
+        Ok(Ok((bytes, path))) => {
+            let png = path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+            let headers = [
+                (
+                    header::CONTENT_TYPE,
+                    if png { "image/png" } else { "image/jpeg" },
+                ),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ];
+            (headers, bytes).into_response()
+        }
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Answers a library query. Play queries become a queue for the engine.
+async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, String> {
+    let library = state.library.clone().ok_or("this engine has no library")?;
+    if matches!(
+        query,
+        LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. }
+    ) {
+        let (tracks, start) = tokio::task::spawn_blocking(move || library.selection(&query))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        if tracks.is_empty() {
+            return Err("nothing to play".into());
+        }
+        let command = Command::SetQueue {
+            tracks,
+            start: Some(start),
+        };
+        state
+            .engine
+            .send(command)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(QueryResult::Done);
+    }
+    tokio::task::spawn_blocking(move || library.query(query))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// Browsers let any website open a WebSocket to localhost, so a page must come
@@ -80,7 +172,8 @@ fn origin_allowed(origin: Option<&str>) -> bool {
 }
 
 /// One connected client: forwards state changes out and commands in.
-async fn session(socket: WebSocket, engine: Engine) {
+async fn session(socket: WebSocket, state: AppState) {
+    let engine = state.engine.clone();
     let (mut sink, mut stream) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<ServerMessage>(32);
 
@@ -104,8 +197,15 @@ async fn session(socket: WebSocket, engine: Engine) {
     let mut queue = engine.subscribe_queue();
     states.mark_changed();
     queue.mark_changed();
+    // Without a library, a channel that never changes stands in.
+    let (no_library, mut library) = tokio::sync::watch::channel(Default::default());
+    if let Some(lib) = &state.library {
+        library = lib.subscribe();
+        library.mark_changed();
+    }
     let event_tx = out_tx.clone();
     let publisher = tokio::spawn(async move {
+        let _no_library = no_library;
         loop {
             // Biased towards the queue: the engine updates it before the
             // state that indexes into it.
@@ -113,6 +213,7 @@ async fn session(socket: WebSocket, engine: Engine) {
                 biased;
                 Ok(()) = queue.changed() => Event::Queue { items: queue.borrow_and_update().clone() },
                 Ok(()) = states.changed() => Event::State { state: states.borrow_and_update().clone() },
+                Ok(()) = library.changed() => Event::Library { status: library.borrow_and_update().clone() },
                 else => break,
             };
             if event_tx.send(ServerMessage::Event { event }).await.is_err() {
@@ -128,10 +229,24 @@ async fn session(socket: WebSocket, engine: Engine) {
             _ => continue,
         };
         let reply = match serde_json::from_str::<ClientMessage>(&text) {
-            Ok(ClientMessage { id, command }) => ServerMessage::Response {
+            Ok(ClientMessage::Command { id, command }) => ServerMessage::Response {
                 id,
                 error: engine.send(command).await.err().map(|e| e.to_string()),
             },
+            Ok(ClientMessage::Query { id, query: q }) => {
+                // Queries can take a moment; don't hold up commands behind them.
+                let (state, out_tx) = (state.clone(), out_tx.clone());
+                tokio::spawn(async move {
+                    let (result, error) = match query(&state, q).await {
+                        Ok(result) => (Some(result), None),
+                        Err(error) => (None, Some(error)),
+                    };
+                    let _ = out_tx
+                        .send(ServerMessage::QueryResult { id, error, result })
+                        .await;
+                });
+                continue;
+            }
             Err(err) => {
                 tracing::debug!(%err, "malformed client message");
                 ServerMessage::Response {
@@ -174,6 +289,7 @@ mod tests {
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
             ui_dir: None,
+            library: None,
         };
         let (addr, serve) = bind(engine, config).await.unwrap();
         tokio::spawn(serve);
@@ -206,7 +322,7 @@ mod tests {
             ),
             (2, Command::Play),
         ] {
-            let json = serde_json::to_string(&ClientMessage { id, command }).unwrap();
+            let json = serde_json::to_string(&ClientMessage::Command { id, command }).unwrap();
             ws.send(WsMessage::Text(json.into())).await.unwrap();
         }
 

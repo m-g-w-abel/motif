@@ -1,0 +1,170 @@
+//! Scans the fixture folder (two small albums) and checks what the library
+//! answers.
+
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
+
+use library::Library;
+use protocol::{LibraryQuery, QueryResult, TrackRef};
+
+fn temp_dir(name: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir =
+        std::env::temp_dir().join(format!("motif-test-{name}-{}-{nanos}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            fs::create_dir_all(&target).unwrap();
+            copy_dir(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+fn wait_until(library: &Library, done: impl Fn(&protocol::LibraryStatus) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !done(&library.status()) {
+        assert!(
+            Instant::now() < deadline,
+            "timed out: {:?}",
+            library.status()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn titles(library: &Library, search: Option<&str>) -> Vec<String> {
+    let query = LibraryQuery::Tracks {
+        search: search.map(Into::into),
+        offset: 0,
+        limit: 100,
+    };
+    let QueryResult::Tracks { tracks, .. } = library.query(query).unwrap() else {
+        panic!()
+    };
+    tracks.into_iter().map(|t| t.track.title.unwrap()).collect()
+}
+
+#[test]
+fn scans_queries_matches_and_rescans() {
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &music,
+    );
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 4 && !s.scanning && s.hashing == 0);
+
+    assert_eq!(
+        titles(&library, None),
+        ["Opening", "Closing", "Beginning", "Ending"]
+    );
+    assert_eq!(titles(&library, Some("clos")), ["Closing"]);
+
+    let QueryResult::Groups { groups } = library
+        .query(LibraryQuery::Groups { search: None })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        groups
+            .iter()
+            .map(|g| (g.start, g.count))
+            .collect::<Vec<_>>(),
+        [(0, 2), (2, 2)]
+    );
+
+    let query = LibraryQuery::Albums {
+        search: None,
+        offset: 0,
+        limit: 10,
+    };
+    let QueryResult::Albums { total, albums, .. } = library.query(query).unwrap() else {
+        panic!()
+    };
+    assert_eq!(total, 2);
+    assert_eq!(albums[1].title, "Second Album");
+    let art = albums[1]
+        .art
+        .clone()
+        .expect("folder cover.png is the album art");
+    assert!(library.art(&art, Some(32)).unwrap().is_file());
+    assert_eq!(albums[0].art, None);
+
+    let query = LibraryQuery::AlbumPosition {
+        search: None,
+        album: albums[1].key.clone(),
+    };
+    assert_eq!(
+        library.query(query).unwrap(),
+        QueryResult::Position { index: Some(2) }
+    );
+
+    // A reference from another device: matched by ISRC, or by artist + title.
+    let elsewhere = |isrc: Option<&str>, title: &str, artist: &str| TrackRef {
+        source: "local".into(),
+        id: "/some/other/device/file.flac".into(),
+        keys: protocol::TrackKeys {
+            isrc: isrc.map(Into::into),
+            ..Default::default()
+        },
+        title: Some(title.into()),
+        artist: Some(artist.into()),
+        ..Default::default()
+    };
+    let found = library
+        .find(&elsewhere(Some("USABC1234567"), "?", "?"))
+        .unwrap();
+    assert!(found.ends_with("01 Opening.flac"), "{found:?}");
+    let found = library
+        .find(&elsewhere(None, "ending", "ARTIST B"))
+        .unwrap();
+    assert!(found.ends_with("02 Ending.ogg"), "{found:?}");
+    assert_eq!(library.find(&elsewhere(None, "Missing", "Nobody")), None);
+
+    let (refs, _) = library
+        .selection(&LibraryQuery::Play {
+            search: None,
+            start: 0,
+        })
+        .unwrap();
+    let hashes: Vec<_> = refs
+        .iter()
+        .map(|r| r.keys.audio_hash.clone().unwrap())
+        .collect();
+    assert!(
+        hashes[0].starts_with("flac-md5:") && hashes[2].starts_with("pcm-b3:"),
+        "{hashes:?}"
+    );
+
+    fs::remove_file(music.join("Artist A/First Album/02 Closing.flac")).unwrap();
+    library.query(LibraryQuery::Rescan).unwrap();
+    wait_until(&library, |s| s.tracks == 3 && !s.scanning);
+
+    library
+        .query(LibraryQuery::RemoveRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 0);
+    let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
+}

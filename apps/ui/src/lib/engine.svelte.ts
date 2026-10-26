@@ -120,7 +120,7 @@ export class EngineClient {
       case 'event':
         if (message.event.type === 'state') {
           this.player = message.event.state;
-        } else {
+        } else if (message.event.type === 'queue') {
           this.queue = message.event.items;
         }
         break;

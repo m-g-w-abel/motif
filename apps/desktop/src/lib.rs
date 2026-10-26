@@ -27,9 +27,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            let addr = tauri::async_runtime::block_on(start_engine())?;
-            tracing::info!(%addr, "engine listening");
-            app.manage(EngineUrl(format!("ws://{addr}/ws")));
+            let url = tauri::async_runtime::block_on(start_engine())?;
+            tracing::info!(%url, "engine");
+            app.manage(EngineUrl(url));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![engine_url])
@@ -66,17 +66,41 @@ fn keep_gpu_rendering_on_nvidia() {
     }
 }
 
-async fn start_engine() -> std::io::Result<SocketAddr> {
+/// Starts the embedded engine and returns its address. If another engine
+/// (e.g. the headless one) already owns this machine's library, the window
+/// connects to that one instead.
+async fn start_engine() -> Result<String, Box<dyn std::error::Error>> {
+    let library = match library::data_dir() {
+        Some(dir) => match library::Claim::take(&dir)? {
+            Ok(claim) => Some((library::Library::open(&dir)?, claim)),
+            Err(Some(owner)) => return Ok(owner),
+            Err(None) => {
+                return Err(format!("{} is locked by another engine", dir.display()).into());
+            }
+        },
+        // shortcut: no data directory (Android) means no library, give Android its app data dir in phase 5.
+        None => None,
+    };
+    let engine = Engine::spawn(server::LibraryResolver {
+        library: library.as_ref().map(|(library, _)| library.clone()),
+    });
     let config = server::Config {
         // Loopback only until pairing exists (phase 4).
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         ui_dir: None,
+        library: library.as_ref().map(|(library, _)| library.clone()),
     };
-    let (addr, serve) = server::bind(Engine::spawn(engine::LocalFiles), config).await?;
+    let (addr, serve) = server::bind(engine, config).await?;
+    let url = format!("ws://{addr}/ws");
+    if let Some((_, mut claim)) = library {
+        claim.publish(&url)?;
+        // The claim lasts as long as the process.
+        std::mem::forget(claim);
+    }
     tauri::async_runtime::spawn(async move {
         if let Err(err) = serve.await {
             tracing::error!(%err, "engine server stopped");
         }
     });
-    Ok(addr)
+    Ok(url)
 }

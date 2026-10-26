@@ -8,15 +8,17 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Bumped on any incompatible change to the types below.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
-/// A message sent from a client to the engine.
+/// A message sent from a client: a command for the engine, or a query for
+/// the library. `id` is echoed back in the matching
+/// [`ServerMessage::Response`] or [`ServerMessage::QueryResult`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(untagged)]
 #[ts(export)]
-pub struct ClientMessage {
-    /// Echoed back in the matching [`ServerMessage::Response`].
-    pub id: u32,
-    pub command: Command,
+pub enum ClientMessage {
+    Command { id: u32, command: Command },
+    Query { id: u32, query: LibraryQuery },
 }
 
 /// A message sent from the engine to a client.
@@ -33,8 +35,14 @@ pub enum ServerMessage {
         #[ts(type = "number")]
         now_ms: u64,
     },
-    /// The outcome of the [`ClientMessage`] with the same `id`.
+    /// The outcome of the [`ClientMessage::Command`] with the same `id`.
     Response { id: u32, error: Option<String> },
+    /// The answer to the [`ClientMessage::Query`] with the same `id`.
+    QueryResult {
+        id: u32,
+        error: Option<String>,
+        result: Option<QueryResult>,
+    },
     /// Pushed whenever engine state changes.
     Event { event: Event },
 }
@@ -98,6 +106,10 @@ pub enum Event {
     /// tracks) and always before the [`Event::State`] that refers to it.
     Queue {
         items: Vec<QueueItem>,
+    },
+    /// The library changed: scanning progress, or new contents (`revision`).
+    Library {
+        status: LibraryStatus,
     },
 }
 
@@ -201,6 +213,142 @@ pub struct TrackKeys {
     pub audio_hash: Option<String>,
 }
 
+/// Questions and requests for the library. Lists are paged so a large
+/// library never crosses the wire at once; all use the same order (album
+/// artist, album, disc, track) and an optional search.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum LibraryQuery {
+    Status,
+    Tracks {
+        search: Option<String>,
+        offset: u32,
+        limit: u32,
+    },
+    /// Runs of consecutive tracks from one album, for album headers.
+    Groups {
+        search: Option<String>,
+    },
+    Albums {
+        search: Option<String>,
+        offset: u32,
+        limit: u32,
+    },
+    /// Index of an album's first track in [`LibraryQuery::Tracks`].
+    AlbumPosition {
+        search: Option<String>,
+        album: String,
+    },
+    /// Replaces the queue with the matching tracks and plays from `start`.
+    Play {
+        search: Option<String>,
+        start: u32,
+    },
+    PlayAlbum {
+        album: String,
+    },
+    AddRoot {
+        path: String,
+    },
+    RemoveRoot {
+        path: String,
+    },
+    Rescan,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum QueryResult {
+    Status {
+        status: LibraryStatus,
+    },
+    Tracks {
+        total: u32,
+        offset: u32,
+        tracks: Vec<LibraryTrack>,
+    },
+    Groups {
+        groups: Vec<TrackGroup>,
+    },
+    Albums {
+        total: u32,
+        offset: u32,
+        albums: Vec<LibraryAlbum>,
+    },
+    Position {
+        index: Option<u32>,
+    },
+    Done,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LibraryStatus {
+    /// Folders being scanned.
+    pub roots: Vec<String>,
+    pub tracks: u32,
+    pub scanning: bool,
+    /// Files looked at so far in the current scan.
+    pub scanned: u32,
+    /// Tracks still waiting for their audio hash.
+    pub hashing: u32,
+    /// Bumped whenever the contents change, so clients refetch what they show.
+    #[ts(type = "number")]
+    pub revision: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LibraryTrack {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub track: TrackRef,
+    pub album_artist: Option<String>,
+    pub track_no: Option<u32>,
+    pub disc_no: Option<u32>,
+    pub year: Option<u32>,
+    pub genre: Option<String>,
+    /// Codec or container, e.g. `FLAC`, `MP3`.
+    pub codec: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub bit_depth: Option<u32>,
+    pub channels: Option<u32>,
+    /// kbps.
+    pub bitrate: Option<u32>,
+    /// Artwork id, served at `/art/<id>`.
+    pub art: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LibraryAlbum {
+    /// Album artist and title, as used by [`LibraryQuery::PlayAlbum`].
+    pub key: String,
+    pub title: String,
+    pub artist: String,
+    pub year: Option<u32>,
+    pub tracks: u32,
+    #[ts(type = "number")]
+    pub duration_ms: u64,
+    pub art: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TrackGroup {
+    /// Index of the first track in [`LibraryQuery::Tracks`].
+    pub start: u32,
+    pub count: u32,
+    pub key: String,
+    pub title: String,
+    pub artist: String,
+    #[ts(type = "number")]
+    pub duration_ms: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,9 +360,18 @@ mod tests {
                 .unwrap();
         assert_eq!(
             msg,
-            ClientMessage {
+            ClientMessage::Command {
                 id: 7,
                 command: Command::Seek { position_ms: 1500 }
+            }
+        );
+        let query: ClientMessage =
+            serde_json::from_str(r#"{"id":8,"query":{"type":"rescan"}}"#).unwrap();
+        assert_eq!(
+            query,
+            ClientMessage::Query {
+                id: 8,
+                query: LibraryQuery::Rescan
             }
         );
 

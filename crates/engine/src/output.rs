@@ -32,6 +32,7 @@ pub struct Output {
     preloaded: Option<(u64, u64, PathBuf)>,
     /// The player's seek count when the output last followed it.
     seeks: u64,
+    underruns: u64,
 }
 
 impl Output {
@@ -43,6 +44,7 @@ impl Output {
             loaded: None,
             preloaded: None,
             seeks: 0,
+            underruns: 0,
         }
     }
 
@@ -126,6 +128,14 @@ impl Output {
         let Some(head) = audio.playhead() else {
             return false;
         };
+        let underruns = audio.underruns();
+        if underruns > self.underruns && !head.ended {
+            tracing::warn!(
+                count = underruns - self.underruns,
+                "audio underrun: decoding fell behind"
+            );
+        }
+        self.underruns = underruns;
         if head.token != token {
             // Older audio still drains after a load; only a splice into the
             // preloaded track counts.

@@ -20,6 +20,7 @@ tauri-build = { workspace = true, features = [] }
 
 [dependencies]
 engine.workspace = true
+library.workspace = true
 server.workspace = true
 tauri = { workspace = true, features = [] }
 tracing.workspace = true

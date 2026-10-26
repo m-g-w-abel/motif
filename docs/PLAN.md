@@ -380,7 +380,10 @@ try.
 4. **More decoders.** *(done; the order is not saved across restarts until milestone 6)* The libopus plugin, then the FFmpeg plugin. Choosing
    and falling back between plugins, the order setting, and a per-file
    reason when nothing can play it ("needs FFmpeg").
-5. **Library scan.** `library` walks the configured folders, reads tags with
+5. **Library scan.** *(done. Measured on an 8,267-track library on a USB
+   hard drive through NTFS-3G: first scan 7 minutes, disk-bound at ~50 ms a
+   file, and parallel reads didn't help; unchanged rescan 0.5 s; playback
+   doesn't underrun while hashing.)* `library` walks the configured folders, reads tags with
    lofty, and stores tracks/albums/artists with their identity keys in SQLite
    (rusqlite with its bundled SQLite, FTS5 for search). Rescans are
    incremental by path, size and mtime; `notify` picks up changes while
