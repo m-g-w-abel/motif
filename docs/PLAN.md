@@ -54,7 +54,7 @@ apps/
 
 | Concern | Choice |
 |---|---|
-| Decoding | Symphonia first, FFmpeg fallback ("plays anything") |
+| Decoding | Built-in decoder plugins chosen per file: Symphonia, libopus, FFmpeg as an external program for the rest ("plays anything") |
 | Exotic formats | libopenmpt (trackers), game-music-emu (SPC/NSF/VGM…), FluidSynth (MIDI + soundfonts) |
 | Output | cpal + exclusive/bit-perfect paths: WASAPI exclusive, ALSA `hw:`, CoreAudio hog mode, Android AAudio |
 | Resampling | libsoxr (rubato as pure-Rust fallback) |
@@ -66,7 +66,9 @@ apps/
 
 ## Feature design
 
-**Plays any audio file.** Probe the format, try Symphonia, fall back to FFmpeg.
+**Plays any audio file.** Decoders are built-in plugins behind one interface;
+for each file the engine picks the best one that can open it and falls back to
+the next on failure (details in the phase 1 plan).
 Support gapless playback, CUE sheets (external and embedded), and ReplayGain /
 EBU R128 (scanned in the background).
 
@@ -293,16 +295,65 @@ artwork, and the OS media keys and widgets work. Android keeps compiling
 ### Where things live
 
 - **`crates/engine`**: the audio pipeline (decode → resample → volume →
-  output) and the queue. Still playback-only.
-- **`crates/library`** (new): folder scanning, tags, the SQLite database,
-  artwork extraction, file watching. It knows nothing about playback; the
-  engine knows nothing about it.
+  output), the decoder plugins and the queue. Still playback-only.
+- **`crates/library`** (new): folder scanning, tags, identity keys, the
+  SQLite database, artwork extraction, file watching. It knows nothing about
+  playback; the engine knows nothing about it.
 - **`crates/protocol` / `crates/server`**: library queries go over the same
   WebSocket; artwork is served over HTTP (`/art/<id>`) so the UI can use
   plain `<img>` tags and the browser cache. Library data is not a UI concern,
   so this fits the engine rule; layouts, themes and view state still stay out.
 - **`apps/desktop` / `apps/headless`**: wire engine + library + server
-  together and own OS integration (media controls).
+  together, supply the engine's resolver (below), and own OS integration
+  (media controls).
+
+### Decoder plugins
+
+All decoders implement one `Decoder` trait and are compiled in; nothing is
+loaded at runtime.
+
+- Each plugin declares what it can open (file signatures, extensions,
+  codecs) and a quality rank per format.
+- For each file the engine tries the best-ranked plugin that claims it and
+  falls back to the next on failure (corrupt header, FFmpeg missing).
+- The order is a user setting with defaults that just work.
+- Each platform builds the plugins that suit it (cargo features); Android
+  leaves out the FFmpeg process.
+
+Phase 1 plugins:
+
+| Plugin | Formats | Notes |
+|---|---|---|
+| Symphonia | FLAC, MP3, AAC/ALAC (MP4), Vorbis, WAV/AIFF/CAF, ADPCM | Pure Rust, sample-exact seeking |
+| libopus | Opus | The most common format Symphonia lacks; exact seeking and gapless |
+| FFmpeg (external program) | WavPack, APE, DSD (as PCM), WMA, TTA, anything else | Uses `ffmpeg` from the PATH or bundled with releases (an audio-only GPL build); seeking restarts the process; a crash only kills that process |
+
+Later plugins (libopenmpt, game-music-emu, FluidSynth, native DSD) slot in the
+same way.
+
+### One library per device
+
+Each device keeps its own library database, because only it knows which
+files it has and where they are. On one computer the desktop app and the
+headless engine share it: it lives in the user's data directory, the first
+engine to start owns it, and the other connects to that engine as a remote
+instead of starting its own. Ratings, play counts, playlists and history are
+shared between devices by sync in phase 6, not by sharing the database.
+
+So a queue item can be played by whichever device has it, every track gets
+**identity keys** when it is scanned:
+- MusicBrainz recording/release IDs and ISRC from tags, when present;
+- normalised artist, title, album and duration, as a fallback;
+- a hash of the audio data only (tag edits don't change it), to recognise
+  the exact same file. Hashing reads every file in full, so it runs in the
+  background after the scan and never delays browsing or playback.
+
+The engine resolves queue items through a **resolver** it is given rather
+than knowing about the library: "what on this device can play this
+reference?". The order is a local file on this device, then a synced or
+downloaded copy (phase 6), then the original streaming source, then a match
+on another source (phase 8). A track nothing can play is reported, not
+skipped silently.
 
 ### Milestones
 
@@ -310,39 +361,41 @@ Each milestone ends with every check passing, a commit, and something you can
 try.
 
 1. **Track references.** Replace `TrackInfo` in queue items with the
-   source-independent reference the streaming design needs: `source` + `id`
-   (for local files, a library ID and the path), plus title, artist, album,
-   duration, ISRC when known. A track that can't be resolved is reported, not
-   dropped. Protocol v4.
-2. **It makes sound.** One decode thread per playing track (Symphonia) feeds
-   a lock-free ring buffer that the cpal output callback drains. Play,
-   pause, seek and volume act on real audio; position comes from samples
-   actually played, replacing the simulated clock. Volume is a smoothed
-   software gain. Output runs in shared mode at the device's rate, and
-   tracks at other rates go through rubato.
+   source-independent reference: `source` + `id`, identity keys when known,
+   plus title, artist, album and duration for display. The engine plays a
+   reference through the resolver; for now the resolver only knows local
+   paths. Protocol v4.
+2. **It makes sound.** The decoder trait and the Symphonia plugin. One
+   decode thread feeds a lock-free ring buffer that the cpal output callback
+   drains. Play, pause, seek and volume act on real audio; position comes
+   from samples actually played, replacing the simulated clock. Volume is a
+   smoothed software gain. Output runs in shared mode at the device's rate,
+   and tracks at other rates go through rubato.
 3. **Gapless.** Decode the next queue item ahead of time and splice it into
    the same buffer at the exact sample, honouring encoder delay and padding
-   (LAME/iTunSMPB). A rate or channel change between tracks reopens the
-   stream at the boundary instead. Test: two halves of one sine wave played
-   back to back show no discontinuity.
-4. **FFmpeg fallback.** Anything Symphonia can't open (Opus, WavPack, APE,
-   DSD, WMA, TTA…) is decoded by an `ffmpeg` process piping raw PCM, behind
-   the same decoder trait. Seeking restarts the process at the new position.
-   Its absence is reported per file ("needs FFmpeg"), never a crash.
+   (LAME/iTunSMPB, Opus pre-skip). A rate or channel change between tracks
+   reopens the stream at the boundary instead. Test: two halves of one sine
+   wave played back to back show no discontinuity.
+4. **More decoders.** The libopus plugin, then the FFmpeg plugin. Choosing
+   and falling back between plugins, the order setting, and a per-file
+   reason when nothing can play it ("needs FFmpeg").
 5. **Library scan.** `library` walks the configured folders, reads tags with
-   lofty, and stores tracks/albums/artists in SQLite (rusqlite with its
-   bundled SQLite, FTS5 for search). Rescans are incremental by path, size
-   and mtime; `notify` picks up changes while running. Embedded and
-   folder artwork (`cover.jpg`, `folder.png`…) is extracted once into a
-   cache with thumbnails. Targets: 50k tracks scan in under 2 minutes on
-   an SSD and rescan unchanged in seconds.
+   lofty, and stores tracks/albums/artists with their identity keys in SQLite
+   (rusqlite with its bundled SQLite, FTS5 for search). Rescans are
+   incremental by path, size and mtime; `notify` picks up changes while
+   running; audio hashes fill in in the background. Embedded and folder
+   artwork (`cover.jpg`, `folder.png`…) is extracted once into a cache with
+   thumbnails. The resolver now matches references to library tracks by
+   identity key. The library-owner rule for desktop + headless lands here.
+   Targets: 50k tracks scanned in under 2 minutes on an SSD (hashing
+   excluded), unchanged rescans in seconds.
 6. **Library in the UI.** The demo library goes (it stays as the
    `dev-library` stress-test generator). Track lists and the album grid
    fetch windows of rows from the server, with sorting, grouping and search
    done in SQL, so 50k tracks never cross the wire at once. Settings get a
    Library section: folders (native picker under Tauri, a path field in a
-   browser), rescan, scan progress. Album art replaces the placeholder
-   gradients.
+   browser), rescan, scan and hashing progress, decoder order. Album art
+   replaces the placeholder gradients.
 7. **OS media controls.** souvlaki in the desktop and headless apps: MPRIS
    on Linux, SMTC on Windows, Now Playing on macOS, so media keys, the
    lock screen and desktop widgets show and control Motif.
@@ -352,22 +405,14 @@ try.
      erroring, and an output device picker is added.
    - CI installs ALSA headers for cpal on Linux and runs decode and gapless
      tests against small generated fixture files.
-   - Performance budgets: playback stays glitch-free while scanning, and
-     idle CPU stays under 1%.
+   - Performance budgets: playback stays glitch-free while scanning and
+     hashing, and idle CPU stays under 1%.
 
 ### Deferred on purpose
 
-Bit-perfect/exclusive output, sample-rate switching, DSD native, crossfade
+Bit-perfect/exclusive output, sample-rate switching, native DSD, crossfade
 and EQ (phase 9); ReplayGain (phase 3); CUE sheets and tracker/game/MIDI
-formats (later in phase 1 if time allows, otherwise phase 10); tag editing
-(phase 10); libsoxr (phase 9, rubato until then).
-
-### Open questions
-
-- **FFmpeg:** use one from the system PATH and bundle a GPL static build
-  with releases, or link the FFmpeg libraries? Planned: the process
-  approach, because linking makes builds on three OSes much harder.
-- **Library location:** one shared database per machine for the desktop app
-  and headless engine, or one each? Planned: one per machine, in the OS data
-  directory.
-
+formats (late in phase 1 if time allows, otherwise phase 10); tag editing
+(phase 10); libsoxr (phase 9, rubato until then); AcoustID fingerprints as
+an identity key (phase 10); measuring background hashing cost on phones
+(phase 5).
