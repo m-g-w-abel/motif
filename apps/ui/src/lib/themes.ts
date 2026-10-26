@@ -1,6 +1,6 @@
 /**
  * Colour themes. Each is a set of values for the CSS tokens in app.css, so
- * user theme files (later) only have to supply the same keys. The accent
+ * user theme files (lib/themeFile.ts) only have to supply the same keys. The accent
  * colour is a separate setting and works with every theme.
  */
 
@@ -8,6 +8,8 @@ export interface Theme {
   id: string;
   name: string;
   scheme: 'light' | 'dark';
+  /** Font stacks; left out, the app's own are used. */
+  fonts?: { sans?: string; mono?: string };
   tokens: {
     bg: string;
     surface: string;
