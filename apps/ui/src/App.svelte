@@ -3,6 +3,8 @@
   import { setApp } from './lib/context';
   import { demoLibrary } from './lib/demo';
   import { Drawer } from './lib/drawer.svelte';
+  import { SETTINGS_GROUPS, SettingsView, type SettingsGroup } from './lib/settingsView.svelte';
+  import SettingsScreen from './lib/components/shell/SettingsScreen.svelte';
   import { EngineClient, PlaybackPosition } from './lib/engine.svelte';
   import { LibraryClient } from './lib/library.svelte';
   import { installLayoutFiles } from './lib/layout/install';
@@ -26,7 +28,8 @@
   const settings = new SettingsStore();
   const sheet = new PlayerSheet();
   const drawer = new Drawer();
-  setApp({ engine, library, position, layout, settings, sheet, drawer });
+  const settingsView = new SettingsView();
+  setApp({ engine, library, position, layout, settings, sheet, drawer, settingsView });
 
   // On phones the left panel is a drawer: swipe in from the left edge to open
   // it, swipe left to close it.
@@ -107,6 +110,8 @@
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     if (params.has('dev-sheet')) sheet.expand();
     if (params.has('dev-drawer')) drawer.open = true;
+    const devSettings = params.get('dev-settings') as SettingsGroup;
+    if (SETTINGS_GROUPS.includes(devSettings)) settingsView.open(devSettings);
     if (params.has('dev-stress')) import('./lib/components/StressTest.svelte').then((m) => (StressTest = m.default));
     const devPlay = params.get('dev-play');
     if (devPlay !== null) {
@@ -137,9 +142,13 @@
     {/if}
 
     <main>
-      {#key `${layout.source}/${layout.activeId}`}
-        <ContentArea onEditLayout={() => (editing = true)} />
-      {/key}
+      {#if settingsView.group}
+        <SettingsScreen />
+      {:else}
+        {#key `${layout.source}/${layout.activeId}`}
+          <ContentArea onEditLayout={() => (editing = true)} />
+        {/key}
+      {/if}
     </main>
 
     {#if player === 'bar'}<NowPlayingBar />{/if}

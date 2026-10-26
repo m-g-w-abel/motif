@@ -3,9 +3,8 @@
   import { demoLibrary, isDemo } from '../../demo';
   import type { Source } from '../../layout/store.svelte';
   import Icon, { type IconName } from '../Icon.svelte';
-  import SettingsMenu from './SettingsMenu.svelte';
 
-  const { engine, library, layout, drawer, settings } = getApp();
+  const { engine, library, layout, drawer, settings, settingsView } = getApp();
   const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
 
   const sources: { id: Source; label: string; icon: IconName; count: () => number }[] = [
@@ -22,10 +21,11 @@
       {#each sources as source (source.id)}
         <li>
           <button
-            class:active={layout.source === source.id}
+            class:active={layout.source === source.id && !settingsView.group}
             aria-current={layout.source === source.id ? 'page' : undefined}
             onclick={() => {
               layout.browse(source.id);
+              settingsView.close();
               drawer.close();
             }}
           >
@@ -46,7 +46,18 @@
     <span class="connection {engine.status}" title={statusLabel[engine.status]} role="status">
       <span class="dot"></span>{statusLabel[engine.status]}
     </span>
-    <SettingsMenu />
+    <button
+      class="icon-button"
+      class:active={settingsView.group !== null}
+      aria-label="Settings"
+      title="Settings"
+      onclick={() => {
+        settingsView.open();
+        drawer.close();
+      }}
+    >
+      <Icon name="settings" size={16} />
+    </button>
   </div>
 </nav>
 
