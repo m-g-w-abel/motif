@@ -29,13 +29,9 @@
     return DEFAULT_POS;
   }
 
-  /** The area above the bottom inset, measured with a throwaway probe. */
+  /** The area above the bottom inset (a px value, when something sets one). */
   function box(): FloatBox {
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position:fixed;left:0;height:0;bottom:var(--bottom-inset,0px)';
-    document.body.append(probe);
-    const inset = window.innerHeight - probe.getBoundingClientRect().bottom;
-    probe.remove();
+    const inset = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bottom-inset')) || 0;
     return {
       w: el?.offsetWidth ?? 0,
       h: el?.offsetHeight ?? 0,
