@@ -1,5 +1,7 @@
 import { format, parse } from '@bgotink/kdl';
-import type { Layout } from './model';
+import { MediaQuery } from 'svelte/reactivity';
+import type { Layout, LayoutNode, Size } from './model';
+import { orderOf, prune, type Overlay } from './overlay';
 import { parseLayout, type LayoutError } from './parse';
 import type { SortRule } from '../protocol/SortRule';
 import { builtinLayouts, type LayoutSource } from './presets';
@@ -9,6 +11,13 @@ import { builtinLayouts, type LayoutSource } from './presets';
 const USER_KEY = 'layouts.user';
 const SOURCE_KEY = 'browse.source';
 const activeKey = (source: Source) => `layouts.active.${source}`;
+const editsKey = (id: string, variant: Variant) => `layouts.edits.${id}.${variant}`;
+
+/** Which tree of a layout is showing: its `when phone` one at 700px or less, else the main one. */
+export type Variant = 'desktop' | 'phone';
+const VARIANTS: Variant[] = ['desktop', 'phone'];
+const rootOf = (layout: Layout, variant: Variant): LayoutNode | undefined =>
+  variant === 'phone' ? layout.phone : layout.root;
 
 /** What the music area is showing; picked in the left bar. Saved playlists join this in phase 1. */
 export type Source = 'library';
@@ -32,6 +41,14 @@ function load(key: string): string | null {
     return localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+
+function loadEdits(key: string): Overlay {
+  try {
+    return JSON.parse(load(key) ?? '{}');
+  } catch {
+    return {};
   }
 }
 
@@ -85,6 +102,20 @@ export class LayoutStore {
   active: LayoutEntry = $derived(this.all.find((e) => e.id === this.activeId) ?? this.builtins[0]);
   layout: Layout = $derived(this.active.layout);
 
+  // No window under unit tests.
+  #narrow = typeof window === 'undefined' ? { current: false } : new MediaQuery('(max-width: 700px)');
+  variant: Variant = $derived(this.#narrow.current && this.layout.phone ? 'phone' : 'desktop');
+  /** The tree on screen, before in-place edits. */
+  root: LayoutNode = $derived(rootOf(this.layout, this.variant) ?? this.layout.root);
+  /** In-place edits written this session, by storage key; the rest are read from storage. */
+  #edits = $state<Record<string, Overlay>>({});
+  #editsKey = $derived(editsKey(this.active.id, this.variant));
+  /** In-place edits to the tree on screen. */
+  edits: Overlay = $derived(this.#edits[this.#editsKey] ?? loadEdits(this.#editsKey));
+  edited = $derived(Object.keys(this.edits).length > 0);
+  /** Edit mode: widgets show handles to drag them into another place in their split. */
+  arranging = $state(false);
+
   constructor() {
     try {
       const stored: LayoutSource[] = JSON.parse(load(USER_KEY) ?? '[]');
@@ -134,6 +165,7 @@ export class LayoutStore {
     const entry: LayoutEntry = { id: `user:${name}`, fileName: name, text, builtin: false, layout: result.layout };
     this.user = [...this.user.filter((e) => e.id !== entry.id), entry];
     this.persist();
+    this.#pruneEdits(entry.id, entry.layout);
     this.select(entry.id);
     return { ok: true, entry };
   }
@@ -160,11 +192,49 @@ export class LayoutStore {
   remove(id: string) {
     this.user = this.user.filter((e) => e.id !== id);
     this.persist();
+    this.#pruneEdits(id, null);
     for (const source of SOURCES) {
       if (this.activeBySource[source] === id) {
         this.activeBySource[source] = this.builtins[0].id;
         save(activeKey(source), null);
       }
+    }
+  }
+
+  /** Sets or (with no size) clears the size of the node at `path`. */
+  resize(path: string, size: Size | undefined) {
+    const sizes = { ...this.edits.sizes };
+    if (size) sizes[path] = size;
+    else delete sizes[path];
+    this.#setEdits({ ...this.edits, sizes });
+  }
+
+  /** Moves a child of the split at `path`, which has `count` children, from one shown position to another. */
+  move(path: string, count: number, from: number, to: number) {
+    const order = [...orderOf(this.edits, path, count)];
+    order.splice(to, 0, ...order.splice(from, 1));
+    this.#setEdits({ ...this.edits, order: { ...this.edits.order, [path]: order } });
+  }
+
+  /** Drops the in-place edits to the tree on screen. */
+  resetEdits() {
+    this.#setEdits({});
+  }
+
+  #setEdits(edits: Overlay) {
+    const pruned = prune(this.root, edits);
+    this.#edits[this.#editsKey] = pruned;
+    save(this.#editsKey, Object.keys(pruned).length ? JSON.stringify(pruned) : null);
+  }
+
+  /** Keeps only the edits that still fit a layout's trees, e.g. after its file changed. */
+  #pruneEdits(id: string, layout: Layout | null) {
+    for (const variant of VARIANTS) {
+      const key = editsKey(id, variant);
+      const root = layout && rootOf(layout, variant);
+      const pruned = root ? prune(root, this.#edits[key] ?? loadEdits(key)) : {};
+      this.#edits[key] = pruned;
+      save(key, Object.keys(pruned).length ? JSON.stringify(pruned) : null);
     }
   }
 

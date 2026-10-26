@@ -13,6 +13,7 @@
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import { rootPath } from '../../layout/overlay';
   import LayoutNode from './LayoutNode.svelte';
 
   let { onEditLayout }: { onEditLayout: () => void } = $props();
@@ -169,6 +170,9 @@
       {/if}
     </div>
 
+    {#if layout.arranging}
+      <button class="button primary" onclick={() => (layout.arranging = false)}>Done</button>
+    {/if}
     <div class="layouts" role="radiogroup" aria-label="Layout">
       {#each layout.all as entry (entry.id)}
         <button
@@ -198,6 +202,26 @@
         {#if menuOpen}
           <div class="popover" role="menu">
             <div class="current">{layout.layout.name}</div>
+            <button
+              role="menuitem"
+              onclick={() => {
+                menuOpen = false;
+                layout.arranging = !layout.arranging;
+              }}
+            >
+              {layout.arranging ? 'Stop arranging' : 'Arrange widgets'}
+            </button>
+            {#if layout.edited}
+              <button
+                role="menuitem"
+                onclick={() => {
+                  menuOpen = false;
+                  layout.resetEdits();
+                }}
+              >
+                Reset layout
+              </button>
+            {/if}
             <button role="menuitem" onclick={() => fileInput?.click()}>Add layout file…</button>
             <button
               role="menuitem"
@@ -228,7 +252,7 @@
   </header>
 
   <div class="area" bind:this={area}>
-    <LayoutNode node={layout.layout.root} />
+    <LayoutNode node={layout.root} path={rootPath(layout.root)} />
   </div>
   <Scrollbar target={area} />
 

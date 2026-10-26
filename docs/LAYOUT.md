@@ -41,6 +41,20 @@ built-in saves your version as a new "(custom)" layout; the built-in itself
 never changes. Errors are listed with line numbers, and nothing is applied
 until the file is valid.
 
+## Arranging in place
+
+Drag the line between two widgets to resize them (double-click it to go back
+to the file's size). **⋯ → Arrange widgets** shows a handle on each widget:
+drag it onto another widget in the same split to move it there, or focus it and
+use the arrow keys; **Done** ends it. Mouse and touch both work.
+
+These edits never change the layout file, built-ins included. Each device
+keeps them per layout, and separately for the phone variant (below), keyed by
+where each widget sits in the file, e.g. `split-row/1.split-column/0.artwork`.
+When the file changes so that a path no longer matches, that edit is dropped.
+**⋯ → Reset layout** discards them. Sizes and order are all they cover;
+adding or removing widgets is done in the file.
+
 ## Format
 
 Layouts are written in [KDL](https://kdl.dev). A node is a name followed by
@@ -78,6 +92,26 @@ top-level widgets are stacked top to bottom.
 Every widget and split accepts `size`: a number of pixels (`size=300`) or a
 percentage of its parent (`size="35%"`). Widgets without a size share the
 remaining space equally.
+
+### Phone variant
+
+`when phone { ... }` holds a separate arrangement for screens 700 px wide or
+less; the widgets outside it are used everywhere else. Without one, phones use
+the main arrangement with row splits stacked.
+
+```kdl
+layout version=1 name="Art + list"
+
+split row {
+    tracklist
+    artwork size=300
+}
+
+when phone {
+    artwork size="40%"
+    queue
+}
+```
 
 ### `split`
 
@@ -149,6 +183,5 @@ library list.
 
 These will be added without breaking existing files:
 - more widgets: lyrics, visualiser, spectrogram, waveform, stats
-- per-device layouts (phone vs desktop)
 - column sorting, saved per track list
-- drag-to-rearrange, writing the change back into the file
+- **Save as…**: writing in-place edits back into a layout file

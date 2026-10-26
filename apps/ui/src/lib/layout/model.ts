@@ -52,6 +52,8 @@ export interface Layout {
   description: string;
   icon: LayoutIcon;
   root: LayoutNode;
+  /** The `when phone { ... }` variant, used at 700px wide or less instead of `root`. */
+  phone?: LayoutNode;
 }
 
 export const DEFAULT_COLUMNS: Record<TracklistStyle, Column[]> = {
