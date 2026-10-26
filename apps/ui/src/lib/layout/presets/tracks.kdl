@@ -2,4 +2,4 @@
 // it, and drop it onto the window to install it. See docs/LAYOUT.md.
 layout version=1 name=Tracks description="Album-grouped track list" icon=list
 
-tracklist style=grouped max-width=1200
+tracklist album-breaks=#true headers=#true max-width=1200
