@@ -18,13 +18,18 @@ export interface FloatBox {
 }
 
 export const SNAP = 24;
+/** Gap kept between the player and the window edges. */
+export const MARGIN = 16;
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
-/** Position from a top-left corner, anchored to the nearest sides and clamped on screen. */
+/** Smallest top offset: the margin, or more where something sits at the top. */
+const topFloor = (b: FloatBox) => Math.max(b.minTop, MARGIN);
+
+/** Position from a top-left corner, anchored to the nearest sides and kept MARGIN inside the window. */
 export function place(left: number, top: number, b: FloatBox): FloatPos {
-  const l = clamp(left, 0, Math.max(0, b.W - b.w));
-  const t = clamp(top, b.minTop, Math.max(b.minTop, b.H - b.h));
+  const l = clamp(left, MARGIN, Math.max(MARGIN, b.W - b.w - MARGIN));
+  const t = clamp(top, topFloor(b), Math.max(topFloor(b), b.H - b.h - MARGIN));
   const h = l + b.w / 2 < b.W / 2 ? 'left' : 'right';
   const v = t + b.h / 2 < b.H / 2 ? 'top' : 'bottom';
   return {
@@ -44,12 +49,13 @@ export function resolve(p: FloatPos, b: FloatBox): { left: number; top: number }
   };
 }
 
-/** Magnetic edges: an offset within SNAP of its edge goes flush to it. */
+/** Magnetic edges: within SNAP of the margin, the player settles on it. */
 export function snap(p: FloatPos, b: FloatBox): FloatPos {
+  const floor = p.v === 'top' ? topFloor(b) : MARGIN;
   return {
     ...p,
-    x: p.x <= SNAP ? 0 : p.x,
-    y: p.v === 'top' ? (p.y <= b.minTop + SNAP ? b.minTop : p.y) : p.y <= SNAP ? 0 : p.y,
+    x: p.x <= MARGIN + SNAP ? MARGIN : p.x,
+    y: p.y <= floor + SNAP ? floor : p.y,
   };
 }
 

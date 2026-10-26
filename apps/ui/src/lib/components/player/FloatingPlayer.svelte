@@ -2,13 +2,12 @@
   import { getApp } from '../../context';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
-  import { isFloatPos, place, resolve, snap, type FloatBox, type FloatPos } from './floating';
+  import { isFloatPos, MARGIN, place, resolve, snap, type FloatBox, type FloatPos } from './floating';
   import SeekBar from './SeekBar.svelte';
   import TrackLabel from './TrackLabel.svelte';
   import Transport from './Transport.svelte';
 
   const { engine, sheet } = getApp();
-  const MARGIN = 16;
   const KEY_STEP = 16;
   const POSITION_KEY = 'floating-player.position';
   /** Phone width: keep clear of the drawer toggle at the top left. */
