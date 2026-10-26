@@ -233,7 +233,7 @@
   }
 
   .slider:focus-visible .rail {
-    outline: 1px solid var(--accent);
+    outline: 2px solid var(--text);
     outline-offset: 2px;
   }
 </style>

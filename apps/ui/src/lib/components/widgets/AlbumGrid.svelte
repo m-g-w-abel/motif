@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { groupConsecutive } from '../../albums';
   import { getApp, getViewState } from '../../context';
   import { demoLibrary, isDemo } from '../../demo';
@@ -7,6 +7,7 @@
   import { formatTime } from '../../format';
   import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
+  import { navTarget, scrollInto } from '../../keynav';
   import { sortLabel, viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
@@ -121,6 +122,40 @@
       shownAlbums = next;
     });
   });
+
+  // Roving focus: one card is in the tab order. If it is virtualised away, the
+  // first rendered card stands in so Tab still lands in the grid.
+  let cursor = $state(0);
+  const tabStop = $derived(visible.includes(cursor) ? cursor : (visible[0] ?? -1));
+
+  async function onKey(e: KeyboardEvent, i: number, album: Card) {
+    if (e.key === 'Enter') {
+      e.preventDefault(); // the button's own Enter would only select
+      play(album);
+      return;
+    }
+    const page = Math.max(1, Math.floor((scroller?.clientHeight ?? viewHeight) / rowHeight));
+    const to = navTarget(e, i, count, columns, page);
+    if (to === null || !scroller) return;
+    e.preventDefault();
+    cursor = to;
+    viewHeight = scroller.clientHeight; // the bound value can lag a layout change
+    const top = Math.floor(to / columns) * rowHeight + GAP;
+    scroller.scrollTop = scrollInto(scroller.scrollTop, scroller.clientHeight, top - GAP, top + rowHeight - GAP);
+    scrollTop = scroller.scrollTop;
+    await tick();
+    const card = () => list?.querySelector<HTMLElement>(`[data-index="${to}"]`);
+    if (!card()) await new Promise(requestAnimationFrame);
+    const el = card();
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    // The row height is an estimate until the artwork has loaded; correct by the real position.
+    const c = el.getBoundingClientRect();
+    const v = scroller.getBoundingClientRect();
+    if (c.top < v.top) scroller.scrollTop -= v.top - c.top;
+    else if (c.bottom > v.bottom) scroller.scrollTop += c.bottom - v.bottom;
+  }
+
   // Cards inserted above the first visible row (a scan) must not push it away.
   let scroller = $state<HTMLElement>();
   let anchorOffset = 0;
@@ -175,6 +210,10 @@
           {#if album}
             <button
               class="card"
+              data-index={i}
+              tabindex={i === tabStop ? 0 : -1}
+              onfocus={() => (cursor = i)}
+              onkeydown={(e) => onKey(e, i, album)}
               class:playing={album.key === playingKey}
               class:focused={album.key === view.browse.focusAlbum}
               title="{album.title} — {album.artist} · {album.tracks} tracks · {formatTime(album.duration_ms)}"
@@ -257,6 +296,10 @@
 
   .card.playing {
     outline-color: var(--accent);
+  }
+
+  .card:focus-visible {
+    outline-color: var(--text);
   }
 
   .title,
