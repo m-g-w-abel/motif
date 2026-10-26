@@ -173,7 +173,7 @@
             <span class="label">Music folders</span>
             {#each status.roots as root (root)}
               <div class="item">
-                <span class="path" title={root}>{root}</span>
+                <span class="path selectable" title={root}>{root}</span>
                 <button class="icon-button small" aria-label="Remove {root}" title="Remove from the library (files stay)" onclick={() => query({ type: 'remove_root', path: root })}>
                   <Icon name="close" size={12} />
                 </button>
@@ -189,7 +189,7 @@
               {#if status.scanning}{' · '}scanning ({status.scanned} files){/if}
               {#if status.hashing}{' · '}hashing {status.hashing} files{/if}
             </p>
-            {#if status.error}<p class="status error">{status.error}</p>{/if}
+            {#if status.error}<p class="status error selectable">{status.error}</p>{/if}
             <label class="decoder">
               <input
                 type="checkbox"
