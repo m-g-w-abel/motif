@@ -57,9 +57,23 @@
     const b = box();
     el.setPointerCapture(e.pointerId);
 
-    const move = (ev: PointerEvent) => (pos = place(ev.clientX - dx, ev.clientY - dy, b));
+    // Pointer events can outpace the screen: apply at most one move per frame.
+    let last = e;
+    let frame = 0;
+    const apply = () => {
+      frame = 0;
+      pos = place(last.clientX - dx, last.clientY - dy, b);
+    };
+    const move = (ev: PointerEvent) => {
+      last = ev;
+      frame ||= requestAnimationFrame(apply);
+    };
     const end = () => {
       el?.removeEventListener('pointermove', move);
+      if (frame) {
+        cancelAnimationFrame(frame);
+        apply();
+      }
       pos = snap(pos, b);
       save();
     };
@@ -146,9 +160,9 @@
     padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    backdrop-filter: blur(12px);
-    box-shadow: var(--shadow);
+    /* Opaque and unblurred: it moves over scrolling content (see CLAUDE.md). */
+    background: var(--surface);
+    will-change: transform;
     cursor: grab;
     touch-action: none;
     user-select: none;
