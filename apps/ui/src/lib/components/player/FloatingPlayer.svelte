@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { getApp } from '../../context';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
@@ -93,14 +94,15 @@
   }
 
   // Edge offsets follow the window by themselves; re-clamp on resize (and on
-  // load) so a smaller window never leaves it off screen.
+  // load) so a smaller window never leaves it off screen. Untracked: reading
+  // `pos` here would re-run this on every move, and writing it loops.
   $effect(() => {
     const onResize = () => {
       const b = box();
       const { left, top } = resolve(pos, b);
       pos = place(left, top, b);
     };
-    onResize();
+    untrack(onResize);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   });
