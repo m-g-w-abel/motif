@@ -124,16 +124,18 @@ The tracks of whatever is being browsed.
 
 | Property | Values |
 |---|---|
-| `style` | `table`: one row per track with column headers (default). `grouped`: tracks under album headers, numbered per album |
+| `album-breaks` | `#true`: tracks under album header rows, numbered per album. Default `#false` |
+| `headers` | `#true`: show column titles, which carry resizing and one-off sorting. Default `#true` |
+| `style` | shorthand kept for older files: `table` = `headers=#true`, `grouped` = `album-breaks=#true headers=#false`. `album-breaks` and `headers` override it |
 | `max-width` | pixels; centres the list at this width on wide screens |
 
 Child `columns` lists the columns in order: `index`, `title`, `artist`,
 `album`, `format`, `duration`. Defaults: `columns index title artist album
-duration` for `table`, `columns index artist title duration` for `grouped`.
+duration` without album breaks, `columns index artist title duration` with them.
 
 Title takes the remaining width. Drag the edge between two column headers to
 move it (double-click to reset). Widths are remembered per layout on each
-device. Double-click a track to play the list from it.
+device and still apply when `headers=#false`, but can't be changed then. Double-click a track to play the list from it.
 
 ### `album-grid`
 

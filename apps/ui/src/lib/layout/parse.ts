@@ -3,6 +3,7 @@ import {
   COLUMNS,
   DEFAULT_CARD_SIZE,
   DEFAULT_COLUMNS,
+  STYLE_OPTIONS,
   INFO_STYLES,
   LAYOUT_ICONS,
   LAYOUT_VERSION,
@@ -136,14 +137,16 @@ class Reader {
         return { kind: 'split', direction, size: this.size(node), children };
       }
       case 'tracklist': {
-        this.check(node, ['style', 'max-width', 'size'], 0, true);
+        this.check(node, ['style', 'album-breaks', 'headers', 'max-width', 'size'], 0, true);
         const style = this.oneOf(node, 'style', TRACKLIST_STYLES, 'table');
+        const albumBreaks = this.bool(node, 'album-breaks') ?? STYLE_OPTIONS[style].albumBreaks;
         return {
           kind: 'panel',
           panel: 'tracklist',
           size: this.size(node),
-          style,
-          columns: this.columns(node, DEFAULT_COLUMNS[style]),
+          albumBreaks,
+          headers: this.bool(node, 'headers') ?? STYLE_OPTIONS[style].headers,
+          columns: this.columns(node, DEFAULT_COLUMNS[albumBreaks ? 'grouped' : 'table']),
           maxWidth: this.pixels(node, 'max-width', 400, 4000),
         };
       }
@@ -166,11 +169,7 @@ class Reader {
         };
       case 'queue': {
         this.check(node, ['collapsible', 'size']);
-        const collapsible = node.getProperty('collapsible');
-        if (collapsible !== undefined && typeof collapsible !== 'boolean') {
-          this.error(node, `\`collapsible\` must be #true or #false, got ${fmt(collapsible)}`);
-        }
-        return { kind: 'panel', panel: 'queue', size: this.size(node), collapsible: collapsible === true };
+        return { kind: 'panel', panel: 'queue', size: this.size(node), collapsible: this.bool(node, 'collapsible') === true };
       }
       case 'artwork':
       case 'controls':
@@ -239,6 +238,15 @@ class Reader {
     if (typeof value === 'string') return value;
     this.error(node, `\`${prop}\` must be text, got ${fmt(value)}`);
     return fallback;
+  }
+
+  bool(node: Node, prop: string): boolean | undefined {
+    const value = node.getProperty(prop);
+    if (value !== undefined && typeof value !== 'boolean') {
+      this.error(node, `\`${prop}\` must be #true or #false, got ${fmt(value)}`);
+      return undefined;
+    }
+    return value as boolean | undefined;
   }
 
   oneOf<T extends string>(node: Node, prop: string, allowed: readonly T[], fallback: T): T {
