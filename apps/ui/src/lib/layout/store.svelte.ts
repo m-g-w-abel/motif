@@ -4,6 +4,7 @@ import type { Layout, LayoutNode, Size } from './model';
 import { orderOf, prune, type Overlay } from './overlay';
 import { parseLayout, type LayoutError } from './parse';
 import type { SortRule } from '../protocol/SortRule';
+import type { TrackRef } from '../protocol/TrackRef';
 import { builtinLayouts, type LayoutSource } from './presets';
 
 // Layouts are a client-side concern: user layouts and the choice of layout
@@ -29,6 +30,8 @@ export const SOURCES: Source[] = ['library'];
  */
 export interface BrowseState {
   selected: string | null;
+  /** The selected row's track, for widgets (the info pane) that show it. */
+  selectedTrack: TrackRef | null;
   focusAlbum: string | null;
   /** What the library is filtered to; empty for everything. */
   search: string;
@@ -137,7 +140,7 @@ export class LayoutStore {
   browseState(key: string): BrowseState {
     const existing = this.#browse.get(key);
     if (existing) return existing;
-    const created: BrowseState = $state({ selected: null, focusAlbum: null, search: '', oneOff: null });
+    const created: BrowseState = $state({ selected: null, selectedTrack: null, focusAlbum: null, search: '', oneOff: null });
     this.#browse.set(key, created);
     return created;
   }

@@ -158,7 +158,9 @@ the player.
 
 ### `track-info`
 
-Details of the playing track.
+Details of the track selected in a track list (click or arrow to it); a hint
+shows until something is selected. The artwork widget keeps showing the
+playing track.
 
 | Property | Values |
 |---|---|

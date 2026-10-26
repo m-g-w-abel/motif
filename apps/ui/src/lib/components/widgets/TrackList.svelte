@@ -154,7 +154,10 @@
 
   // Selection lives in shared browse state so it survives layout switches.
   const selected = $derived(view.browse.selected);
-  const select = (key: string) => (view.browse.selected = key);
+  const select = (index: number) => {
+    view.browse.selected = data.key(index);
+    view.browse.selectedTrack = data.track(index) ?? null;
+  };
   let scroller = $state<HTMLElement>();
 
   /** In grouped lists, where the album containing track `index` starts. */
@@ -277,7 +280,7 @@
       // scrollable ancestor, moving the whole window.
       const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
       scroller.scrollTo({ top: rows.tops[target], behavior: reduceMotion ? 'auto' : 'smooth' });
-      view.browse.selected = data.key(index);
+      select(index);
     });
   });
 
@@ -420,9 +423,12 @@
                 class:selected={selected === key}
                 tabindex={i === tabStop ? 0 : -1}
                 data-index={i}
-                onfocus={() => (cursor = i)}
+                onfocus={() => {
+                  cursor = i;
+                  select(i);
+                }}
                 aria-selected={selected === key}
-                onclick={() => select(key)}
+                onclick={() => select(i)}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}
               >

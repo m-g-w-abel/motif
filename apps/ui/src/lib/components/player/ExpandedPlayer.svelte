@@ -43,7 +43,7 @@
     <div class="now">
       <div class="art"><ArtworkWidget expands={false} /></div>
       <div class="details">
-        <TrackInfo style="hero" />
+        <TrackInfo style="hero" playing />
         <Controls />
       </div>
     </div>
