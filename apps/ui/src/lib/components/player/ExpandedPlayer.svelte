@@ -14,34 +14,85 @@
   let tint = $state<HTMLElement>();
   setViewState({ source: 'library', layoutId: 'now-playing', browse: layout.browseState('now-playing') });
 
-  /** Bar/floating element → its counterpart here; `true` scales evenly (text and buttons). */
-  const MORPH: [string, string, boolean][] = [
-    ['.art', '.frame', false],
-    ['.label', '.info', true],
-    ['.transport', '.controls .transport', true],
-    ['.seek', '.controls .seek', false],
+  /**
+   * Bar/floating element → its counterpart here. `box` stretches to fit,
+   * `even` scales evenly (buttons), `text` matches the first letter's size and
+   * place. `ghost`: a copy of the bar's element travels along and crossfades
+   * with the sheet's, so differing fonts, sizes and ellipses don't jump.
+   */
+  const MORPH: [string, string, Mode, boolean][] = [
+    ['.art', '.frame', 'box', false],
+    ['.label .title', '.info h1', 'text', true],
+    ['.label .sub', '.info .hero-artist', 'text', true],
+    ['.transport', '.controls .transport', 'even', true],
+    ['.seek .slider', '.controls .seek .slider', 'box', true],
+    ['.time', '.controls .seek .time:first-child', 'text', true],
+    // Inside the bar's `.time`, whose ghost already carries it.
+    ['.total', '.controls .seek .time:last-child', 'text', false],
+    ['[aria-label^="Repeat"]', '.controls [aria-label^="Repeat"]', 'even', true],
+    ['.volume', '.controls .volume', 'even', true],
+    ['.end > [aria-label="Expand player"]', 'header .icon-button', 'even', true],
   ];
-  /** Everything else fades in once the background has mostly grown. */
-  const FADE = 'header, .queue-slot, .controls .side, .controls .seek .time';
+  /** Everything else (and anything the bar doesn't show) fades in once the background has mostly grown. */
+  const FADE = 'header .handle, .queue-slot, .hero-album';
   const EASE = '260ms cubic-bezier(0.2, 0.8, 0.2, 1)';
 
-  type Part = { el: HTMLElement; dx: number; dy: number; sx: number; sy: number };
+  type Mode = 'box' | 'even' | 'text';
+  /**
+   * `el` is moved by `t` of (dx, dy, sx, sy): the sheet's own parts are at the
+   * bar when `t` = 1 - progress, ghosts reach the sheet when `t` = progress.
+   */
+  type Part = { el: HTMLElement; dx: number; dy: number; sx: number; sy: number; ghost: boolean; fade: boolean };
   // Plain, not state: measured once per gesture, read by the effect below.
   let parts: Part[] = [];
   let fades: HTMLElement[] = [];
+  let ghosts = $state<HTMLElement>();
 
   function shown(root: Element, selector: string) {
     return [...root.querySelectorAll<HTMLElement>(selector)].find((e) => e.offsetWidth > 0);
   }
 
-  /** FLIP: the transform that puts `el` (at rest) over `from`. */
-  function part(el: HTMLElement, from: DOMRect, even: boolean): Part | undefined {
-    const to = el.getBoundingClientRect();
-    if (!to.width || !to.height) return;
-    let sx = from.width / to.width;
-    let sy = from.height / to.height;
-    if (even) sx = sy = Math.min(sx, sy);
-    return { el, dx: from.left - to.left, dy: from.top - to.top, sx, sy };
+  /** The box of the first letter or digit, or of the element without one. */
+  function glyph(el: HTMLElement): DOMRect {
+    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const i = n.textContent?.search(/[\p{L}\p{N}]/u) ?? -1;
+      if (i < 0) continue;
+      const range = document.createRange();
+      range.setStart(n, i);
+      range.setEnd(n, i + 1);
+      return range.getBoundingClientRect();
+    }
+    return el.getBoundingClientRect();
+  }
+
+  /** FLIP: the transform (origin top left) that puts box `x`, inside `e`, over box `y`. */
+  function fit(e: DOMRect, x: DOMRect, y: DOMRect, mode: Mode) {
+    let sx = y.width / x.width;
+    let sy = y.height / x.height;
+    if (mode === 'text') sx = sy;
+    else if (mode === 'even') sx = sy = Math.min(sx, sy);
+    const dx = y.left + y.width / 2 - e.left - (x.left + x.width / 2 - e.left) * sx;
+    const dy = y.top + y.height / 2 - e.top - (x.top + x.height / 2 - e.top) * sy;
+    return { dx, dy, sx, sy };
+  }
+
+  /** A copy of the bar's `a`, laid over it here so it can travel to `b`. */
+  function ghost(a: HTMLElement, b: HTMLElement, mode: Mode, at: DOMRect): Part {
+    const r = a.getBoundingClientRect();
+    const el = a.cloneNode(true) as HTMLElement;
+    Object.assign(el.style, {
+      position: 'absolute',
+      left: `${r.left - at.left}px`,
+      top: `${r.top - at.top}px`,
+      width: `${r.width}px`,
+      height: `${r.height}px`,
+      margin: '0',
+      transformOrigin: '0 0',
+    });
+    ghosts?.append(el);
+    const inner = mode === 'text' ? [glyph(a), glyph(b)] : [r, b.getBoundingClientRect()];
+    return { el, ...fit(r, inner[0], inner[1], mode), ghost: true, fade: true };
   }
 
   /**
@@ -51,22 +102,37 @@
    * out of, or with reduced motion, the whole sheet fades instead.
    */
   function measure() {
-    if (!section || !backdrop) return;
-    for (const { el } of parts) {
+    if (!section || !backdrop || !ghosts) return;
+    for (const el of [...parts.map((p) => p.el), ...fades]) {
       el.style.transition = 'none';
       el.style.transform = '';
+      el.style.opacity = '';
     }
+    ghosts.replaceChildren();
     parts = [];
     fades = [...section.querySelectorAll<HTMLElement>(FADE)];
     const origin = sheet.origin;
     if (origin && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      const found = [part(backdrop, origin.getBoundingClientRect(), false)];
-      for (const [from, to, even] of MORPH) {
-        const a = shown(origin, from);
+      const at = section.getBoundingClientRect();
+      const o = origin.getBoundingClientRect();
+      const bd = backdrop.getBoundingClientRect();
+      const found: Part[] = [{ el: backdrop, ...fit(bd, bd, o, 'box'), ghost: false, fade: false }];
+      for (const [from, to, mode, copy] of MORPH) {
         const b = shown(section, to);
-        if (a && b) found.push(part(b, a.getBoundingClientRect(), even));
+        if (!b) continue;
+        const a = shown(origin, from);
+        if (!a) {
+          fades.push(b);
+          continue;
+        }
+        const e = b.getBoundingClientRect();
+        const inner = mode === 'text' ? [glyph(b), glyph(a)] : [e, a.getBoundingClientRect()];
+        b.style.transformOrigin = '0 0';
+        // The artwork is the same picture in both, so it needn't crossfade.
+        found.push({ el: b, ...fit(e, inner[0], inner[1], mode), ghost: false, fade: from !== '.art' });
+        if (copy) found.push(ghost(a, b, mode, at));
       }
-      parts = found.filter((p) => !!p);
+      parts = found;
     }
     apply(sheet.progress, true);
     // Commit the start styles before the transition to the new progress.
@@ -76,10 +142,13 @@
   function apply(p: number, instant: boolean) {
     if (!section || !tint) return;
     const q = 1 - p;
-    const transition = instant ? 'none' : `transform ${EASE}`;
-    for (const { el, dx, dy, sx, sy } of parts) {
+    const transition = instant ? 'none' : `transform ${EASE}, opacity ${EASE}`;
+    for (const { el, dx, dy, sx, sy, ghost, fade } of parts) {
+      const t = ghost ? p : q;
       el.style.transition = transition;
-      el.style.transform = q ? `translate(${dx * q}px, ${dy * q}px) scale(${1 + (sx - 1) * q}, ${1 + (sy - 1) * q})` : '';
+      el.style.transform = t ? `translate(${dx * t}px, ${dy * t}px) scale(${1 + (sx - 1) * t}, ${1 + (sy - 1) * t})` : '';
+      // Crossfade: the bar's copy goes over the first half, the sheet's comes in over it.
+      if (fade) el.style.opacity = String(Math.min(1, 2 * (1 - t)));
     }
     const morphing = parts.length > 0;
     section.style.opacity = morphing ? '' : String(p);
@@ -119,6 +188,7 @@
   inert={!sheet.open}
 >
   <div class="backdrop" bind:this={backdrop}><div class="tint" bind:this={tint}></div></div>
+  <div class="ghosts" bind:this={ghosts} inert aria-hidden="true"></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <header onpointerdown={(e) => sheet.drag(e, 'sheet')}>
     <span class="handle"></span>
@@ -182,8 +252,12 @@
     opacity: 0;
   }
 
-  .now :global(:is(.frame, .info, .transport, .seek)) {
-    transform-origin: 0 0;
+  /* Copies of the bar's parts, on top while they crossfade. */
+  .ghosts {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
   }
 
   /* Let the artwork travel to the bar instead of being clipped by its box. */
