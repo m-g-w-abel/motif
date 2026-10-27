@@ -11,7 +11,7 @@
   import { nextOneOff, sortLabel, viewSort } from '../../sort.svelte';
   import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
-  import { navTarget, scrollInto } from '../../keynav';
+  import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { scrollMemory } from '../../scrollMemory';
   import { menu } from '../../contextMenu.svelte';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
@@ -454,9 +454,23 @@
     row()?.focus({ preventScroll: true });
   }
 
+  let vimPending = '';
   function onKey(e: KeyboardEvent, index: number) {
     if (e.target !== e.currentTarget) return; // keys on the remove button
-    const to = navTarget(e, index, data.count, 1, Math.max(1, Math.floor((scroller?.clientHeight ?? viewHeight) / rowHeight) - 1));
+    const page = Math.max(1, Math.floor((scroller?.clientHeight ?? viewHeight) / rowHeight) - 1);
+    if (settings.current.vimKeys) {
+      const vim = vimTarget(e, vimPending, index, data.count, 1, page);
+      vimPending = vim.pending;
+      if (vim.handled) {
+        e.preventDefault();
+        if (vim.to !== null) {
+          select(vim.to);
+          moveTo(vim.to);
+        }
+        return;
+      }
+    }
+    const to = navTarget(e, index, data.count, 1, page);
     if (to !== null) {
       e.preventDefault();
       if (e.shiftKey) extend(to);

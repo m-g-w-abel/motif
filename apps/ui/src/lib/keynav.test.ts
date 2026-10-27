@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { navTarget, scrollInto, type NavKey } from './keynav';
+import { navTarget, scrollInto, vimTarget, type NavKey } from './keynav';
 
 const key = (k: string, mods: Partial<NavKey> = {}): NavKey => ({ key: k, altKey: false, metaKey: false, ctrlKey: false, ...mods });
 
@@ -46,5 +46,49 @@ describe('scrollInto', () => {
     expect(scrollInto(100, 200, 150, 180)).toBe(100);
     expect(scrollInto(100, 200, 50, 80)).toBe(50);
     expect(scrollInto(100, 200, 290, 320)).toBe(120);
+  });
+});
+
+describe('vimTarget', () => {
+  const v = (k: string, pending = '', index = 5, count = 20, cols = 1, mods: Partial<NavKey> = {}) =>
+    vimTarget(key(k, mods), pending, index, count, cols, 10);
+  it('moves with j/k, and h/l only in a grid', () => {
+    expect(v('j').to).toBe(6);
+    expect(v('k').to).toBe(4);
+    expect(v('k', '', 0).to).toBe(0);
+    expect(v('l').handled).toBe(false);
+    expect(v('j', '', 5, 20, 4).to).toBe(9);
+    expect(v('l', '', 5, 20, 4).to).toBe(6);
+    expect(v('h', '', 5, 20, 4).to).toBe(4);
+  });
+  it('n and N step to the next and previous item', () => {
+    expect(v('n').to).toBe(6);
+    expect(v('N', '2', 5, 20, 4).to).toBe(3);
+  });
+  it('takes counts', () => {
+    const a = v('1');
+    expect(a).toEqual({ pending: '1', handled: true, to: null });
+    const b = v('2', a.pending);
+    expect(b.pending).toBe('12');
+    expect(v('j', '3').to).toBe(8);
+    expect(v('j', '30').to).toBe(19);
+    expect(v('0').handled).toBe(false);
+    expect(v('G', '3').to).toBe(2);
+  });
+  it('goes to the ends with gg and G', () => {
+    const g = v('g');
+    expect(g).toEqual({ pending: 'g', handled: true, to: null });
+    expect(v('g', g.pending).to).toBe(0);
+    expect(v('g', '4g').to).toBe(3);
+    expect(v('G').to).toBe(19);
+  });
+  it('pages by half with Ctrl-d/u', () => {
+    expect(v('d', '', 5, 20, 1, { ctrlKey: true }).to).toBe(10);
+    expect(v('u', '', 5, 20, 1, { ctrlKey: true }).to).toBe(0);
+    expect(v('x', '', 5, 20, 1, { ctrlKey: true }).handled).toBe(false);
+  });
+  it('drops pending input on other keys and ignores empty lists', () => {
+    expect(v('x', '3')).toEqual({ pending: '', handled: false, to: null });
+    expect(vimTarget(key('j'), '', 0, 0, 1, 10).handled).toBe(false);
   });
 });

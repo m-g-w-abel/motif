@@ -7,7 +7,7 @@
   import { formatTime } from '../../format';
   import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
-  import { navTarget, scrollInto } from '../../keynav';
+  import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
   import { albumMenu, playTracks, queueTracks } from '../../menus';
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
@@ -27,7 +27,7 @@
     at?: string;
   } = $props();
 
-  const { engine, library } = getApp();
+  const { engine, library, settings } = getApp();
   const view = getViewState();
   const memoryKey = $derived(at === undefined ? undefined : `${view.source}/${view.layoutId}/${at}`);
 
@@ -218,6 +218,7 @@
   let cursor = $state(0);
   const tabStop = $derived(visible.includes(cursor) ? cursor : (visible[0] ?? -1));
 
+  let vimPending = '';
   async function onKey(e: KeyboardEvent, i: number, album: Card) {
     if (e.key === 'Enter') {
       e.preventDefault(); // the button's own Enter would only select
@@ -235,10 +236,22 @@
       return;
     }
     const page = Math.max(1, Math.floor((scroller?.clientHeight ?? viewHeight) / rowHeight));
-    const to = navTarget(e, i, count, columns, page);
+    let to: number | null = null;
+    let vimMove = false;
+    if (settings.current.vimKeys) {
+      const vim = vimTarget(e, vimPending, i, count, columns, page);
+      vimPending = vim.pending;
+      if (vim.handled) {
+        e.preventDefault();
+        if (vim.to === null) return; // a count or `g` waiting
+        to = vim.to;
+        vimMove = true;
+      }
+    }
+    to ??= navTarget(e, i, count, columns, page);
     if (to === null || !scroller) return;
     e.preventDefault();
-    if (e.shiftKey) extend(to);
+    if (e.shiftKey && !vimMove) extend(to);
     else anchor = to;
     cursor = to;
     viewHeight = scroller.clientHeight; // the bound value can lag a layout change

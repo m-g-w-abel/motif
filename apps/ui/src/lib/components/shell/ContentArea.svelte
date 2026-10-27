@@ -125,7 +125,13 @@
 
     <div class="search">
       <Icon name="search" size={14} />
-      <input type="search" placeholder="Search" aria-label="Search the library" bind:value={search} />
+      <input type="search" placeholder="Search" aria-label="Search the library"
+        bind:value={search}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' && settings.current.vimKeys)
+            document.querySelector<HTMLElement>('main tr.track[tabindex="0"], main button.card[tabindex="0"]')?.focus();
+        }}
+      />
     </div>
 
     <div class="menu" bind:this={sortMenu}>
