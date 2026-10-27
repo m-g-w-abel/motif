@@ -12,6 +12,9 @@ export const DEFAULT_WIDTHS: Record<Column, number> = {
 /** Small columns that keep their width when space runs out. */
 const COMPACT = new Set<Column>(['index', 'format', 'duration']);
 
+/** Width the `#` column needs for numbers up to `count`: cell padding plus digits (tabular, ~0.62em at the smallest font) with some slack. */
+export const indexWidth = (count: number) => Math.max(44, 20 + 8 * String(Math.max(1, count)).length);
+
 /** The least room the flexible column is given: a quarter of the table, at least 100px. */
 export const flexReserve = (tableWidth: number) => Math.max(100, tableWidth * 0.25);
 
@@ -19,7 +22,7 @@ export const flexReserve = (tableWidth: number) => Math.max(100, tableWidth * 0.
  * Widths to apply to every shown column except `flex`, which absorbs what's
  * left. When the table is too narrow, wide columns shrink proportionally (to
  * no less than 30%) so `flex` keeps `reserved` px; compact columns keep their
- * size. A table not measured yet (`tableWidth` 0) gets the requested widths.
+ * size. `minIndex` is a floor for the `#` column. A table not measured yet (`tableWidth` 0) gets the requested widths.
  */
 export function fitColumns(
   widths: Partial<Record<Column, number>>,
@@ -27,8 +30,9 @@ export function fitColumns(
   flex: Column,
   tableWidth: number,
   reserved: number,
+  minIndex = 0,
 ): Partial<Record<Column, number>> {
-  const requested = (c: Column) => widths[c] ?? DEFAULT_WIDTHS[c];
+  const requested = (c: Column) => Math.max(widths[c] ?? DEFAULT_WIDTHS[c], c === 'index' ? minIndex : 0);
   const fixed = shown.filter((c) => c !== flex);
   const compactSum = fixed.filter((c) => COMPACT.has(c)).reduce((n, c) => n + requested(c), 0);
   const wideSum = fixed.filter((c) => !COMPACT.has(c)).reduce((n, c) => n + requested(c), 0);

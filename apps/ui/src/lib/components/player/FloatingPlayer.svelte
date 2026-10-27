@@ -153,7 +153,7 @@
     position: fixed;
     z-index: 20;
     width: 300px;
-    max-width: calc(100vw - 32px);
+    max-width: calc((100vw - 32px) / var(--scale, 1));
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
