@@ -22,6 +22,7 @@
     grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
     search: 'M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM15.5 15.5 20 20',
     folder: 'M3 6h6l2 2h10v11H3z',
+    copy: 'M9 9h11v11H9zM5 15V4h11',
   } as const;
 
   const filled = new Set<IconName>(['play', 'pause', 'next', 'previous']);

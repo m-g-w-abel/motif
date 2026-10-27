@@ -15,6 +15,7 @@
   import { UserThemes } from './lib/userThemes.svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { PlayerSheet } from './lib/sheet.svelte';
+  import CopyButton from './lib/components/CopyButton.svelte';
   import { toasts } from './lib/toast.svelte';
   import { shortcutFor } from './lib/shortcuts';
   import ContextMenu from './lib/components/ContextMenu.svelte';
@@ -182,6 +183,7 @@
     {#if engine.error}
       <div class="error" role="alert">
         <span>{engine.error}</span>
+        <CopyButton text={engine.error} />
         <button class="icon-button" aria-label="Dismiss" onclick={() => (engine.error = null)}>×</button>
       </div>
     {/if}
@@ -219,7 +221,10 @@
 
 <div class="toasts" role="status">
   {#each toasts.items as toast (toast.id)}
-    <button class="toast selectable {toast.kind}" onclick={() => !getSelection()?.toString() && toasts.dismiss(toast.id)}>{toast.message}</button>
+    <div class="toast {toast.kind}">
+      <button class="message selectable" onclick={() => !getSelection()?.toString() && toasts.dismiss(toast.id)}>{toast.message}</button>
+      {#if toast.kind === 'error'}<CopyButton text={toast.message} />{/if}
+    </div>
   {/each}
 </div>
 
@@ -256,6 +261,10 @@
     flex: none;
   }
 
+  .error span {
+    flex: 1;
+  }
+
   .drop-overlay {
     position: fixed;
     inset: 0;
@@ -288,9 +297,20 @@
     border-radius: var(--radius-md);
     background: var(--surface);
     box-shadow: var(--shadow);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    pointer-events: auto;
+  }
+
+  .toast .message {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
     text-align: left;
     cursor: pointer;
-    pointer-events: auto;
   }
 
   .toast.error {
