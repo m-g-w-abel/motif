@@ -6,6 +6,8 @@ export interface Settings {
   /** A theme id from themes.ts, or `system` to follow the OS light/dark mode. */
   theme: string;
   accent: string;
+  /** Take the accent from the playing album's art instead. */
+  artAccent: boolean;
   density: 'compact' | 'comfortable';
   /** Interface scale in percent, 90 to 150. */
   scale: number;
@@ -20,6 +22,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'graphite',
   accent: '#e8a33d',
+  artAccent: false,
   density: 'compact',
   scale: 100,
   font: '',

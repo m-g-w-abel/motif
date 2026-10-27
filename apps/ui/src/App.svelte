@@ -6,6 +6,7 @@
   import { SETTINGS_GROUPS, SettingsView, type SettingsGroup } from './lib/settingsView.svelte';
   import SettingsScreen from './lib/components/shell/SettingsScreen.svelte';
   import { EngineClient, PlaybackPosition } from './lib/engine.svelte';
+  import { accentFromPixels } from './lib/artAccent';
   import { LibraryClient } from './lib/library.svelte';
   import { installLayoutFiles } from './lib/layout/install';
   import { LayoutStore } from './lib/layout/store.svelte';
@@ -58,7 +59,8 @@
   // A removed or broken user theme falls back to the first built-in.
   const theme = $derived(themes.byId(themeId) ?? themeById(themeId));
   $effect(() => {
-    const { accent, density, scale, font } = settings.current;
+    const { density, scale, font } = settings.current;
+    const accent = artColor ?? settings.current.accent;
     const root = document.documentElement;
     for (const [token, value] of Object.entries(theme.tokens)) root.style.setProperty(`--${token}`, value);
     root.style.colorScheme = theme.scheme;
@@ -76,6 +78,45 @@
     root.dataset.density = density;
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--accent-contrast', contrastFor(accent));
+  });
+
+  // The accent from the playing track's art: read from a 64px thumbnail once
+  // per track (and cached per art id), never while idle.
+  let artColor = $state<string | null>(null);
+  const artColors = new Map<string, string | null>();
+  const artId = $derived(settings.current.artAccent ? library.details(engine.current?.track)?.art : null);
+  $effect(() => {
+    const id = artId;
+    const bg = theme.tokens.bg;
+    if (!id) {
+      artColor = null;
+      return;
+    }
+    const key = `${id} ${bg}`;
+    if (artColors.has(key)) {
+      artColor = artColors.get(key)!;
+      return;
+    }
+    let stale = false;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 16;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      let color: string | null = null;
+      try {
+        ctx?.drawImage(img, 0, 0, 16, 16);
+        color = accentFromPixels(ctx!.getImageData(0, 0, 16, 16).data, bg);
+      } catch {
+        // Tainted canvas (art served from another origin): keep the theme accent.
+      }
+      artColors.set(key, color);
+      if (!stale) artColor = color;
+    };
+    img.onerror = () => !stale && (artColor = null);
+    img.src = library.artUrl(id, 64);
+    return () => (stale = true);
   });
 
   /** Black or white text, whichever reads better on the accent colour. */
