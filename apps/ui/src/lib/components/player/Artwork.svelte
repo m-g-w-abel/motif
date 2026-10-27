@@ -29,7 +29,7 @@
   // The decoded image on screen. It stays while the track is from the same album, even while
   // its own art id is unknown or decoding (no flicker); another album gets the placeholder.
   let shown = $state<ShownArt | null>(null);
-  const kept = $derived(keptArt(shown, track));
+  const kept = $derived(keptArt(shown, track, id));
   const visible = $derived(kept !== null && failed !== kept);
   const src = (a: string) => library.artUrl(a, size ?? 256);
   $effect(() => {
