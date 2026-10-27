@@ -7,19 +7,28 @@ export class PlayerSheet {
   progress = $state(0);
   /** True while a finger or pointer is moving the sheet, to disable easing. */
   dragging = $state(false);
+  /** The bar or floating player the sheet grows out of, when one is shown. */
+  origin: HTMLElement | null = null;
+  /** Set by the sheet: measures the morph's start and end boxes. */
+  measure?: () => void;
 
   get open() {
     return this.progress > 0;
   }
 
   expand() {
-    this.dragging = false;
-    this.progress = 1;
+    this.measure?.();
+    this.settle(1);
   }
 
   collapse() {
+    this.measure?.();
+    this.settle(0);
+  }
+
+  private settle(progress: number) {
     this.dragging = false;
-    this.progress = 0;
+    this.progress = progress;
   }
 
   /**
@@ -40,6 +49,7 @@ export class PlayerSheet {
     const move = (ev: PointerEvent) => {
       const dy = ev.clientY - startY;
       if (!moved && Math.abs(dy) < 8) return;
+      if (!moved) this.measure?.();
       moved = true;
       this.dragging = true;
       this.progress = Math.min(1, Math.max(0, startProgress - dy / height));
@@ -60,8 +70,7 @@ export class PlayerSheet {
       // A flick decides by direction; a slow drag by how far it got.
       const flick = Math.abs(velocity) > 0.5;
       const open = flick ? velocity < 0 : this.progress > (from === 'bar' ? 0.25 : 0.75);
-      if (open) this.expand();
-      else this.collapse();
+      this.settle(open ? 1 : 0);
     };
 
     // On the window, so a fast flick that leaves the bar still counts.

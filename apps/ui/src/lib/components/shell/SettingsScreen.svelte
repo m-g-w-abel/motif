@@ -6,9 +6,11 @@
   import type { Settings } from '../../settings.svelte';
   import type { SettingsGroup } from '../../settingsView.svelte';
   import { SYSTEM_THEMES, THEMES, themeById } from '../../themes';
+  import CopyButton from '../CopyButton.svelte';
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import ShortcutList from './ShortcutList.svelte';
   import Slider from '../Slider.svelte';
   import { FONT_LIST } from '../../themeFile';
 
@@ -19,6 +21,7 @@
     { id: 'interface', label: 'Interface' },
     { id: 'library', label: 'Library' },
     { id: 'playback', label: 'Playback' },
+    { id: 'keyboard', label: 'Keyboard' },
     { id: 'technical', label: 'Technical' },
     { id: 'about', label: 'About' },
   ];
@@ -268,7 +271,7 @@
               {#if status.scanning}{' · '}scanning ({status.scanned} files){/if}
               {#if status.hashing}{' · '}hashing {status.hashing} files{/if}
             </p>
-            {#if status.error}<p class="status error selectable">{status.error}</p>{/if}
+            {#if status.error}<p class="status error selectable">{status.error} <CopyButton text={status.error} /></p>{/if}
             <label class="decoder">
               <input
                 type="checkbox"
@@ -324,6 +327,8 @@
         {:else if !engine.player}
           <p class="status">Not connected to the engine.</p>
         {/if}
+      {:else if group === 'keyboard'}
+        <ShortcutList />
       {:else if group === 'technical'}
         <div class="row">
           <span class="label">Engine connection</span>

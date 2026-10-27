@@ -9,7 +9,7 @@ import type { ServerMessage } from './protocol/ServerMessage';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
-const PROTOCOL_VERSION = 5;
+const PROTOCOL_VERSION = 6;
 const MAX_BACKOFF_MS = 5000;
 
 /** Where the engine lives: the embedded one under Tauri, else the page's host. */

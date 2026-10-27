@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, type Component } from 'svelte';
+  import { onDestroy, tick, type Component } from 'svelte';
   import { setApp } from './lib/context';
   import { demoLibrary } from './lib/demo';
   import { Drawer } from './lib/drawer.svelte';
@@ -15,7 +15,11 @@
   import { UserThemes } from './lib/userThemes.svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { PlayerSheet } from './lib/sheet.svelte';
+  import CopyButton from './lib/components/CopyButton.svelte';
   import { toasts } from './lib/toast.svelte';
+  import { shortcutFor } from './lib/shortcuts';
+  import ContextMenu from './lib/components/ContextMenu.svelte';
+  import ShortcutHelp from './lib/components/shell/ShortcutHelp.svelte';
   import LayoutEditor from './lib/components/shell/LayoutEditor.svelte';
   import ContentArea from './lib/components/shell/ContentArea.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
@@ -84,6 +88,34 @@
     return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? '#111111' : '#ffffff';
   }
 
+  // In-app shortcuts (the table is in lib/shortcuts.ts). Plain keys leave
+  // buttons, sliders and list rows to their own handling.
+  let helpOpen = $state(false);
+  const typing = (t: EventTarget | null) => !!(t as Element | null)?.closest?.('input, textarea, select, [contenteditable="true"]');
+  const focusable = (t: EventTarget | null) => !!(t as Element | null)?.closest?.('button, a, [tabindex]');
+
+  async function onShortcut(e: KeyboardEvent) {
+    if (e.defaultPrevented || helpOpen || typing(e.target)) return;
+    const id = shortcutFor(e);
+    if (!id || ((e.key === ' ' || e.key.startsWith('Arrow')) && focusable(e.target))) return;
+    e.preventDefault();
+    const seek = (by: number) => engine.run({ type: 'seek', position_ms: Math.max(0, position.ms + by) });
+    switch (id) {
+      case 'play_pause': engine.run({ type: 'toggle_playback' }); break;
+      case 'seek_back': seek(-5000); break;
+      case 'seek_forward': seek(5000); break;
+      case 'previous': engine.run({ type: 'previous' }); break;
+      case 'next': engine.run({ type: 'next' }); break;
+      case 'help': helpOpen = true; break;
+      case 'settings': if (settingsView.group) settingsView.close(); else settingsView.open(); break;
+      case 'search':
+        settingsView.close();
+        await tick();
+        document.querySelector<HTMLInputElement>('input[aria-label="Search the library"]')?.focus();
+        break;
+    }
+  }
+
   // The app has its own interactions; the browser's context menu ("Inspect",
   // "Reload"…) only makes sense in text fields.
   function onContextMenu(e: MouseEvent) {
@@ -142,7 +174,7 @@
 </script>
 
 <svelte:document oncontextmenu={onContextMenu} />
-<svelte:window onpointerdown={onPointerDown} ondragenter={onDragEnter} ondragleave={onDragLeave} ondragover={onDragOver} ondrop={onDrop} />
+<svelte:window onkeydown={onShortcut} onpointerdown={onPointerDown} ondragenter={onDragEnter} ondragleave={onDragLeave} ondragover={onDragOver} ondrop={onDrop} />
 
 <div class="shell">
   <Nav />
@@ -151,6 +183,7 @@
     {#if engine.error}
       <div class="error" role="alert">
         <span>{engine.error}</span>
+        <CopyButton text={engine.error} />
         <button class="icon-button" aria-label="Dismiss" onclick={() => (engine.error = null)}>×</button>
       </div>
     {/if}
@@ -170,8 +203,13 @@
     <ExpandedPlayer />
   </div>
 
-  {#if player === 'floating' && !sheet.open}<FloatingPlayer />{/if}
+  <!-- Hidden, not unmounted, while the sheet is open: it collapses back into it. -->
+  {#if player === 'floating'}<FloatingPlayer />{/if}
 </div>
+
+{#if helpOpen}<ShortcutHelp onClose={() => (helpOpen = false)} />{/if}
+
+<ContextMenu />
 
 {#if StressTest}<StressTest />{/if}
 
@@ -183,7 +221,10 @@
 
 <div class="toasts" role="status">
   {#each toasts.items as toast (toast.id)}
-    <button class="toast selectable {toast.kind}" onclick={() => !getSelection()?.toString() && toasts.dismiss(toast.id)}>{toast.message}</button>
+    <div class="toast {toast.kind}">
+      <button class="message selectable" onclick={() => !getSelection()?.toString() && toasts.dismiss(toast.id)}>{toast.message}</button>
+      {#if toast.kind === 'error'}<CopyButton text={toast.message} />{/if}
+    </div>
   {/each}
 </div>
 
@@ -220,6 +261,10 @@
     flex: none;
   }
 
+  .error span {
+    flex: 1;
+  }
+
   .drop-overlay {
     position: fixed;
     inset: 0;
@@ -252,9 +297,20 @@
     border-radius: var(--radius-md);
     background: var(--surface);
     box-shadow: var(--shadow);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    pointer-events: auto;
+  }
+
+  .toast .message {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
     text-align: left;
     cursor: pointer;
-    pointer-events: auto;
   }
 
   .toast.error {
