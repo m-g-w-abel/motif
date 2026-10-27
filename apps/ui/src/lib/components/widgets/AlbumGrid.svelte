@@ -9,7 +9,8 @@
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
-  import { albumMenu } from '../../menus';
+  import { albumMenu, playTracks, queueTracks } from '../../menus';
+  import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
   import { sortLabel, viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
@@ -67,6 +68,76 @@
     } else {
       engine.query({ type: 'play_album', album: album.key, sort }).catch((e: Error) => (engine.error = e.message));
     }
+  }
+
+  /** The tracks of these albums, album by album. */
+  async function albumTracks(keys: string[]): Promise<TrackRef[]> {
+    if (isDemo) {
+      return keys.flatMap((key) => {
+        const album = demoAlbums.find((a) => a.key === key);
+        const start = album?.track ? demoLibrary.indexOf(album.track) : -1;
+        return start < 0 ? [] : demoLibrary.slice(start, start + album!.tracks);
+      });
+    }
+    const result = await engine.query({ type: 'album_tracks', albums: keys, sort });
+    return result.type === 'tracks' ? result.tracks.map((t) => t.track) : [];
+  }
+
+  // Picked cards live in shared browse state, like the track list's rows;
+  // `focusAlbum` is the last clicked one.
+  const picked = $derived(view.browse.pickedAlbums);
+  const itemAt: ItemAt<string> = (i) => {
+    const key = card(i)?.key;
+    return key === undefined ? undefined : [key, key];
+  };
+  /** Where a Shift-click or Shift+arrow range starts. */
+  let anchor = 0;
+  function select(i: number) {
+    view.browse.pickedAlbums = span(itemAt, i, i);
+    view.browse.focusAlbum = card(i)?.key ?? null;
+    anchor = i;
+  }
+  async function extend(i: number) {
+    const from = anchor;
+    await albums?.load(Math.min(from, i), Math.max(from, i));
+    view.browse.pickedAlbums = span(itemAt, from, i);
+    view.browse.focusAlbum = card(i)?.key ?? null;
+  }
+  async function selectAll() {
+    await albums?.load(0, count - 1);
+    view.browse.pickedAlbums = span(itemAt, 0, count - 1);
+  }
+  function clear() {
+    view.browse.pickedAlbums = new Map();
+    view.browse.focusAlbum = null;
+  }
+  /** The albums an action on `album` applies to: the selection, in grid order, if the album is part of it. */
+  const keysFor = (album: Card) => (inSelection(picked, album.key) ? ordered(picked) : [album.key]);
+  function playAll(album: Card) {
+    if (!inSelection(picked, album.key)) return play(album);
+    albumTracks(keysFor(album))
+      .then((tracks) => playTracks(engine, tracks))
+      .catch((e: Error) => (engine.error = e.message));
+  }
+
+  // As in the track list: a press inside a selection waits for the click,
+  // so a right-click acts on all of it.
+  function press(e: PointerEvent, i: number, album: Card) {
+    if (e.button === 2) {
+      if (!picked.has(album.key)) select(i);
+    } else if (e.button !== 0) {
+      return;
+    } else if (e.shiftKey) {
+      e.preventDefault();
+      extend(i);
+    } else if (e.ctrlKey || e.metaKey) {
+      view.browse.pickedAlbums = toggle(picked, itemAt, i);
+      view.browse.focusAlbum = album.key;
+      anchor = i;
+    } else if (!inSelection(picked, album.key)) select(i);
+  }
+  function release(e: MouseEvent, i: number) {
+    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) select(i);
   }
 
   /** The playing track's album, keyed the way the library keys albums. */
@@ -150,13 +221,25 @@
   async function onKey(e: KeyboardEvent, i: number, album: Card) {
     if (e.key === 'Enter') {
       e.preventDefault(); // the button's own Enter would only select
-      play(album);
+      playAll(album);
+      return;
+    }
+    if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      selectAll();
+      return;
+    }
+    if (e.key === 'Escape' && picked.size > 1) {
+      e.stopPropagation(); // the selection goes first, then the sheet or menu
+      clear();
       return;
     }
     const page = Math.max(1, Math.floor((scroller?.clientHeight ?? viewHeight) / rowHeight));
     const to = navTarget(e, i, count, columns, page);
     if (to === null || !scroller) return;
     e.preventDefault();
+    if (e.shiftKey) extend(to);
+    else anchor = to;
     cursor = to;
     viewHeight = scroller.clientHeight; // the bound value can lag a layout change
     const top = Math.floor(to / columns) * rowHeight + GAP;
@@ -255,10 +338,15 @@
 </script>
 
 <section class="album-grid">
+  <!-- Esc does the same from the keyboard. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
     class="scroll"
     bind:this={scroller}
     bind:clientHeight={viewHeight}
+    onclick={(e) => {
+      if (!(e.target as Element).closest('.card')) clear();
+    }}
     onscroll={(e) => {
       scrollTop = (e.currentTarget as HTMLElement).scrollTop;
       if (memoryKey && arrived) scrollMemory.set(memoryKey, scrollTop);
@@ -282,11 +370,20 @@
               tabindex={i === tabStop ? 0 : -1}
               onfocus={() => (cursor = i)}
               onkeydown={(e) => onKey(e, i, album)}
-              use:menu={() => albumMenu(album, () => play(album))}
+              use:menu={() =>
+                albumMenu(engine, album, () => playAll(album), () => albumTracks(keysFor(album)), keysFor(album).length)}
               class:playing={album.key === playingKey}
-              class:focused={album.key === view.browse.focusAlbum}
+              class:focused={picked.has(album.key) || album.key === view.browse.focusAlbum}
+              aria-pressed={picked.has(album.key)}
               title="{album.title} — {album.artist} · {album.tracks} tracks · {formatTime(album.duration_ms)}"
-              onclick={() => (view.browse.focusAlbum = album.key)}
+              onpointerdown={(e) => press(e, i, album)}
+              onclick={(e) => release(e, i)}
+              onauxclick={(e) => {
+                if (e.button !== 1) return;
+                if (!inSelection(picked, album.key)) select(i);
+                const keys = keysFor(album);
+                queueTracks(engine, albumTracks(keys), false, keys.length > 1 ? `${keys.length} albums` : album.title || 'Unknown album');
+              }}
               ondblclick={() => play(album)}
             >
               <Artwork track={album.track} art={album.art} title={album.title} />
@@ -309,10 +406,12 @@
     {/if}
   </div>
   <Scrollbar target={scroller} {snaps} label={topLabel} />
+  {#if picked.size > 1}<div class="count">{picked.size} selected</div>{/if}
 </section>
 
 <style>
   .album-grid {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -387,6 +486,19 @@
   .artist {
     font-size: 0.88em;
     color: var(--text-muted);
+  }
+
+  .count {
+    position: absolute;
+    bottom: var(--space-3);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    font-size: 0.88em;
+    pointer-events: none;
   }
 
   .loading {

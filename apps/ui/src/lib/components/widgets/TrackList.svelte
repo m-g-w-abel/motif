@@ -14,7 +14,9 @@
   import { navTarget, scrollInto } from '../../keynav';
   import { scrollMemory } from '../../scrollMemory';
   import { menu } from '../../contextMenu.svelte';
-  import { trackMenu } from '../../menus';
+  import { playTracks, queueTracks, trackMenu } from '../../menus';
+  import type { TrackRef } from '../../protocol/TrackRef';
+  import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, indexWidth, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
@@ -160,13 +162,68 @@
   }
 
   // Selection lives in shared browse state so it survives layout switches.
-  const selected = $derived(view.browse.selected);
-  // A track picked after an album was focused makes the track the selection.
-  const select = (index: number) => {
-    view.browse.focusAlbum = null;
+  const picked = $derived(view.browse.picked);
+  const itemAt: ItemAt<TrackRef> = (i) => {
+    const track = data.track(i);
+    return track && [data.key(i), track];
+  };
+  /** Where a Shift-click or Shift+arrow range starts. */
+  let anchor = 0;
+  /** Makes row `index` the last clicked one, which the info pane shows. */
+  function touch(index: number) {
     view.browse.selected = data.key(index);
     view.browse.selectedTrack = data.track(index) ?? null;
-  };
+  }
+  // A track picked after an album was focused makes the track the selection.
+  function select(index: number) {
+    view.browse.focusAlbum = null;
+    view.browse.pickedAlbums = new Map();
+    view.browse.picked = span(itemAt, index, index);
+    anchor = index;
+    touch(index);
+  }
+  /** Shift-click or Shift+arrow: the rows from the anchor to `index`. */
+  async function extend(index: number) {
+    const from = anchor;
+    await data.load?.(Math.min(from, index), Math.max(from, index));
+    view.browse.picked = span(itemAt, from, index);
+    touch(index);
+  }
+  async function selectAll() {
+    await data.load?.(0, data.count - 1);
+    view.browse.picked = span(itemAt, 0, data.count - 1);
+  }
+  function clear() {
+    view.browse.picked = new Map();
+    view.browse.selected = null;
+    view.browse.selectedTrack = null;
+  }
+  /** The tracks an action on row `i` applies to: the selection if the row is part of it. */
+  const tracksAt = (i: number) => (inSelection(picked, data.key(i)) ? ordered(picked) : [data.track(i)].filter((t) => t !== undefined));
+
+  // A press selects; a press inside a selection waits for the click, so a
+  // right-click (or later a drag) acts on all of it. Focus that follows a
+  // press must not select again.
+  let pressing = false;
+  function press(e: PointerEvent, i: number) {
+    pressing = true;
+    const key = data.key(i);
+    if (e.button === 2) {
+      if (!picked.has(key)) select(i);
+    } else if (e.button !== 0) {
+      return;
+    } else if (e.shiftKey) {
+      e.preventDefault(); // no text selection
+      extend(i);
+    } else if (e.ctrlKey || e.metaKey) {
+      view.browse.picked = toggle(picked, itemAt, i);
+      anchor = i;
+      touch(i);
+    } else if (!inSelection(picked, key)) select(i);
+  }
+  function release(e: MouseEvent, i: number) {
+    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) select(i);
+  }
   let scroller = $state<HTMLElement>();
 
   /** In grouped lists, where the album containing track `index` starts. */
@@ -325,10 +382,10 @@
     // Scroll this list only; scrollIntoView would also scroll every
     // scrollable ancestor, moving the whole window.
     scroller.scrollTop = rows.tops[albumBreaks ? at - 1 : at];
-    const track = data.track(index);
-    if (track) {
-      view.browse.selected = data.key(index);
-      view.browse.selectedTrack = track;
+    if (data.track(index)) {
+      view.browse.picked = span(itemAt, index, index);
+      anchor = index;
+      touch(index);
     }
   }
 
@@ -402,10 +459,23 @@
     const to = navTarget(e, index, data.count, 1, Math.max(1, Math.floor((scroller?.clientHeight ?? viewHeight) / rowHeight) - 1));
     if (to !== null) {
       e.preventDefault();
+      if (e.shiftKey) extend(to);
+      else select(to);
       moveTo(to);
     }
-    if (e.key === 'Enter') data.play(index);
+    if (e.key === 'Enter') {
+      if (inSelection(picked, data.key(index))) playTracks(engine, ordered(picked));
+      else data.play(index);
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && data.remove) data.remove(index);
+    if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      selectAll();
+    }
+    if (e.key === 'Escape' && picked.size > 1) {
+      e.stopPropagation(); // the selection goes first, then the sheet or menu
+      clear();
+    }
   }
 
   const columnCount = $derived(shown.length + (data.remove ? 1 : 0));
@@ -421,9 +491,14 @@
       {/if}
     </div>
   {:else}
+    <!-- Esc does the same from the keyboard. -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div
       class="scroll"
       bind:this={scroller}
+      onclick={(e) => {
+        if (!(e.target as Element).closest('tr.track, thead')) clear();
+      }}
       bind:clientWidth={tableWidth}
       bind:clientHeight={viewHeight}
       onscroll={() => {
@@ -491,15 +566,23 @@
                 class:alt={i % 2 === 1}
                 class:current={key === currentKey}
                 class:unplayable={!!error}
-                class:selected={selected === key}
+                class:selected={picked.has(key)}
                 tabindex={i === tabStop ? 0 : -1}
                 data-index={i}
                 onfocus={() => {
                   cursor = i;
-                  select(i);
+                  // Tabbing in selects the row; a click or arrow key already has.
+                  if (!pressing && !picked.has(key)) select(i);
+                  pressing = false;
                 }}
-                aria-selected={selected === key}
-                onclick={() => select(i)}
+                aria-selected={picked.has(key)}
+                onpointerdown={(e) => press(e, i)}
+                onclick={(e) => release(e, i)}
+                onauxclick={(e) => {
+                  if (e.button !== 1) return;
+                  if (!inSelection(picked, key)) select(i);
+                  queueTracks(engine, tracksAt(i));
+                }}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}
                 use:menu={() => trackMenu(engine, data, view, i)}
@@ -539,11 +622,13 @@
       </table>
     </div>
     <Scrollbar target={scroller} snaps={browsing ? snaps : undefined} label={browsing ? topLabel : undefined} />
+    {#if picked.size > 1}<div class="count">{picked.size} selected</div>{/if}
   {/if}
 </section>
 
 <style>
   .tracklist {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -555,6 +640,19 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
+  }
+
+  .count {
+    position: absolute;
+    bottom: var(--space-3);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    font-size: 0.88em;
+    pointer-events: none;
   }
 
   table {

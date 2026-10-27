@@ -81,6 +81,25 @@ abstract class PagedList<T> {
     return cached?.rows[i - page * PAGE];
   }
 
+  /** Fetches rows `from` to `to` in one request where they aren't loaded yet, e.g. for Ctrl+A. */
+  async load(from: number, to: number) {
+    const first = Math.floor(from / PAGE);
+    const last = Math.floor(to / PAGE);
+    const fresh = (page: number) => this.#pages.get(page)?.revision === this.#revision;
+    let start = first;
+    while (start <= last && fresh(start)) start++;
+    let end = last;
+    while (end >= start && fresh(end)) end--;
+    if (start > end) return;
+    const revision = this.#revision;
+    const { total, rows } = await this.fetch(start * PAGE, (end - start + 1) * PAGE);
+    for (let page = start; page <= end; page++) {
+      this.#pages.set(page, { rows: rows.slice((page - start) * PAGE, (page - start + 1) * PAGE), revision });
+    }
+    this.total = total;
+    this.#version++;
+  }
+
   #load(page: number) {
     if (this.#loading.has(page) || this.engine.status !== 'open') return;
     this.#loading.add(page);
