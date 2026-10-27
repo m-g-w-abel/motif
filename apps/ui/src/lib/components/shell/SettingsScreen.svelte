@@ -6,6 +6,7 @@
   import type { Settings } from '../../settings.svelte';
   import type { SettingsGroup } from '../../settingsView.svelte';
   import { SYSTEM_THEMES, THEMES, themeById } from '../../themes';
+  import CopyButton from '../CopyButton.svelte';
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
@@ -268,7 +269,7 @@
               {#if status.scanning}{' · '}scanning ({status.scanned} files){/if}
               {#if status.hashing}{' · '}hashing {status.hashing} files{/if}
             </p>
-            {#if status.error}<p class="status error selectable">{status.error}</p>{/if}
+            {#if status.error}<p class="status error selectable">{status.error} <CopyButton text={status.error} /></p>{/if}
             <label class="decoder">
               <input
                 type="checkbox"
