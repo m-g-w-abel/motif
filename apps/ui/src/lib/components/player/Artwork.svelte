@@ -25,8 +25,10 @@
   // Still being looked up: neither the gradient nor an image yet.
   const loading = $derived(art === undefined && details === undefined);
   let failed = $state<string | null>(null);
-  // The image on screen: the previous one stays until the next has decoded.
+  // The last decoded art id. Its image stays only while `id` is still the same
+  // (no flicker on one cover); another album shows the placeholder until it decodes.
   let shown = $state<string | null>(null);
+  const visible = $derived(!loading && !!id && shown === id && failed !== id);
   const src = (a: string) => library.artUrl(a, size ?? 256);
   $effect(() => {
     if (loading) return;
@@ -52,15 +54,15 @@
   class="art"
   style:width={size ? `${size}px` : undefined}
   style:height={size ? `${size}px` : undefined}
-  style:background={track && !loading && !shown && (!id || failed === id) ? placeholderArt(track) : undefined}
+  style:background={track && !loading && !visible ? placeholderArt(track) : undefined}
 >
-  {#if shown && failed !== shown}
+  {#if visible}
     <img
-      src={src(shown)}
+      src={src(id!)}
       alt={title ? `Cover of ${title}` : ''}
       loading="lazy"
       decoding="async"
-      onerror={() => (failed = shown)}
+      onerror={() => (failed = id)}
     />
   {:else if !track}
     <Icon name="music" size={size ? Math.round(size * 0.4) : 48} />
