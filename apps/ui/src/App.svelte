@@ -80,13 +80,20 @@
     root.style.setProperty('--accent-contrast', contrastFor(accent));
   });
 
-  // The playing track's art: 16px of pixels read from a 64px thumbnail once
-  // per track (and cached per art id), never while idle.
+  // The playing track's art: 16px of pixels sampled from the art once
+  // per track (and cached per art id), never while idle. It asks for the
+  // 256px size the album grid already loaded, so it is usually a cache hit.
   let artPixels = $state<Uint8ClampedArray | null>(null);
   const pixelCache = new Map<string, Uint8ClampedArray | null>();
-  const artId = $derived(settings.current.artColours !== 'off' ? library.details(engine.current?.track)?.art : null);
+  // `undefined` while the track's details are looked up: keep the last colours rather than flashing the theme's.
+  const artId = $derived.by(() => {
+    if (settings.current.artColours === 'off' || !engine.current) return null;
+    const details = library.details(engine.current.track);
+    return details === undefined ? undefined : (details?.art ?? null);
+  });
   $effect(() => {
     const id = artId;
+    if (id === undefined) return;
     if (!id) {
       artPixels = null;
       return;
@@ -112,7 +119,7 @@
       if (!stale) artPixels = pixels;
     };
     img.onerror = () => !stale && (artPixels = null);
-    img.src = library.artUrl(id, 64);
+    img.src = library.artUrl(id, 256);
     return () => (stale = true);
   });
   // What the cover changes: accent only, or also the theme's backgrounds and text.

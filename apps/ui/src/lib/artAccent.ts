@@ -31,26 +31,31 @@ function lightnessOf(color: string): number {
   return rgbToHsl(r, g, b)[2];
 }
 
+const BUCKETS = 12;
+
 /**
- * The cover's main colour, weighted to the colourful pixels (a mostly dark
- * cover with a red logo gives red), and its mean brightness. `hsl` is null
- * for a greyscale or empty image.
+ * The cover's main colour and its mean brightness. The hue is the heaviest
+ * of twelve hue buckets (weighted to the colourful pixels), averaged within
+ * that bucket only: averaging across hues turns blue and yellow into green.
+ * `hsl` is null for a greyscale or empty image.
  */
 export function dominant(pixels: ArrayLike<number>): { hsl: [number, number, number] | null; brightness: number } {
-  let r = 0, g = 0, b = 0, total = 0, luma = 0, n = 0;
+  const sums = Array.from({ length: BUCKETS }, () => [0, 0, 0, 0]);
+  let luma = 0, n = 0;
   for (let i = 0; i + 3 < pixels.length; i += 4) {
-    const [pr, pg, pb] = [pixels[i], pixels[i + 1], pixels[i + 2]];
+    const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
     if (pixels[i + 3] < 128) continue;
-    luma += (0.2126 * pr + 0.7152 * pg + 0.0722 * pb) / 255;
+    luma += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
     n++;
-    const sat = Math.max(pr, pg, pb) - Math.min(pr, pg, pb);
+    const sat = Math.max(r, g, b) - Math.min(r, g, b);
     if (sat < 24) continue;
     const w = sat * sat;
-    r += pr * w; g += pg * w; b += pb * w; total += w;
+    const bucket = sums[Math.floor(((rgbToHsl(r, g, b)[0] + 360 / BUCKETS / 2) % 360) / (360 / BUCKETS))];
+    bucket[0] += r * w; bucket[1] += g * w; bucket[2] += b * w; bucket[3] += w;
   }
   const brightness = n ? luma / n : 0.5;
-  if (!total) return { hsl: null, brightness };
-  return { hsl: rgbToHsl(r / total, g / total, b / total), brightness };
+  const [r, g, b, w] = sums.reduce((best, s) => (s[3] > best[3] ? s : best));
+  return { hsl: w ? rgbToHsl(r / w, g / w, b / w) : null, brightness };
 }
 
 /** Moves `l` toward lighter or darker until the colour reaches `min` contrast on every one of `bgs`. */
@@ -83,8 +88,8 @@ type Tokens = Theme['tokens'];
 const SURFACES = ['bg', 'surface', 'surface-2', 'border', 'divider'] as const;
 // Lightness of each surface token in a full theme, dark and light.
 const FULL_L = {
-  dark: { bg: 0.08, surface: 0.11, 'surface-2': 0.15, border: 0.2, divider: 0.32 },
-  light: { bg: 0.95, surface: 0.98, 'surface-2': 0.9, border: 0.84, divider: 0.7 },
+  dark: { bg: 0.2, surface: 0.24, 'surface-2': 0.29, border: 0.33, divider: 0.45 },
+  light: { bg: 0.86, surface: 0.91, 'surface-2': 0.81, border: 0.75, divider: 0.62 },
 };
 
 /** What the interface takes from a cover: tokens to lay over the theme's, and an accent (null: keep the theme's). */
@@ -105,7 +110,8 @@ export function artPalette(pixels: ArrayLike<number>, theme: Pick<Theme, 'scheme
   const { hsl, brightness } = dominant(pixels);
   if (!hsl && mode === 'tint') return null;
   const h = hsl?.[0] ?? 0;
-  const sat = hsl ? Math.min(0.4, Math.max(0.12, hsl[1] * 0.5)) : 0;
+  // A full theme shows a bold cover's colour in the background itself.
+  const sat = !hsl ? 0 : mode === 'full' ? Math.min(0.7, Math.max(0.15, hsl[1])) : Math.min(0.4, Math.max(0.12, hsl[1] * 0.5));
   const scheme = mode === 'tint' ? theme.scheme : brightness > 0.5 ? 'light' : 'dark';
   const lighter = scheme === 'dark';
   const tokens: Partial<Tokens> = {};
@@ -116,8 +122,8 @@ export function artPalette(pixels: ArrayLike<number>, theme: Pick<Theme, 'scheme
   if (mode === 'full') {
     tokens.hover = lighter ? 'rgb(255 255 255 / 0.05)' : 'rgb(0 0 0 / 0.06)';
     tokens.shadow = lighter ? '0 8px 32px rgb(0 0 0 / 0.5)' : '0 6px 24px rgb(0 0 0 / 0.18)';
-    tokens.text = readable(h, sat, lighter ? 0.92 : 0.14, bgs, 4.5, lighter);
-    tokens['text-muted'] = readable(h, sat, lighter ? 0.62 : 0.4, bgs, 3, lighter);
+    tokens.text = readable(h, Math.min(sat, 0.3), lighter ? 0.94 : 0.1, bgs, 4.5, lighter);
+    tokens['text-muted'] = readable(h, Math.min(sat, 0.3), lighter ? 0.75 : 0.28, bgs, 3, lighter);
   } else {
     // A new hue shifts luminance a little, so re-check the theme's own text.
     for (const [key, min] of [['text', 4.5], ['text-muted', 3]] as const) {

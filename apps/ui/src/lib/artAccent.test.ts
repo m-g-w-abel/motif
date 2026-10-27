@@ -65,3 +65,33 @@ describe('artPalette', () => {
     expect(p.accent).toBeNull();
   });
 });
+
+describe('hue choice', () => {
+  const mix = (parts: [number[], number][]) => Uint8ClampedArray.from(parts.flatMap(([rgb, n]) => Array.from({ length: n }, () => [...rgb, 255]).flat()));
+  const hue = (c: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+    const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+    return (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60;
+  };
+
+  it('a blue, grey and black cover (Contemporary Movement) is blue, not green', () => {
+    const px = mix([[[40, 80, 170], 70], [[110, 112, 118], 80], [[10, 10, 12], 100], [[60, 90, 120], 6]]);
+    expect(hue(accentFromPixels(px, '#121214')!)).toBeGreaterThan(200);
+    expect(hue(accentFromPixels(px, '#121214')!)).toBeLessThan(240);
+  });
+
+  it('a yellow and black cover (Little Dark Age) is yellow, not green', () => {
+    const px = mix([[[240, 205, 30], 60], [[120, 100, 15], 20], [[170, 130, 20], 14], [[8, 8, 8], 150]]);
+    for (const bg of ['#121214', '#f5f1e8']) {
+      expect(hue(accentFromPixels(px, bg)!)).toBeGreaterThan(35);
+      expect(hue(accentFromPixels(px, bg)!)).toBeLessThan(65);
+    }
+  });
+
+  it('a full theme from a bold cover is clearly coloured, not near black or white', () => {
+    const p = artPalette(mix([[[200, 20, 30], 200]]), THEMES[0], 'full')!;
+    const bg = p.tokens.bg!;
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(bg.slice(i, i + 2), 16));
+    expect(r - Math.max(g, b)).toBeGreaterThan(40);
+  });
+});
