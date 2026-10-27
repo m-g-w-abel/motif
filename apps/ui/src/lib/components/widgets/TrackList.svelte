@@ -629,7 +629,8 @@
     border-right-color: var(--accent);
   }
 
-  .tracklist:not(.breaks) tbody tr.alt {
+  /* :where keeps the stripe below hover and selected */
+  :where(.tracklist:not(.breaks)) tbody tr.alt {
     background: color-mix(in srgb, var(--surface) 45%, transparent);
   }
 
