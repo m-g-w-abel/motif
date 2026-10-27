@@ -3,6 +3,7 @@
   import { placeholderArt } from '../../format';
   import type { TrackRef } from '../../protocol/TrackRef';
   import Icon from '../Icon.svelte';
+  import { albumOf, keptArt, type ShownArt } from './artwork';
 
   let {
     track,
@@ -25,8 +26,11 @@
   // Still being looked up: neither the gradient nor an image yet.
   const loading = $derived(art === undefined && details === undefined);
   let failed = $state<string | null>(null);
-  // The image on screen: the previous one stays until the next has decoded.
-  let shown = $state<string | null>(null);
+  // The decoded image on screen. It stays while the track is from the same album, even while
+  // its own art id is unknown or decoding (no flicker); another album gets the placeholder.
+  let shown = $state<ShownArt | null>(null);
+  const kept = $derived(keptArt(shown, track));
+  const visible = $derived(kept !== null && failed !== kept);
   const src = (a: string) => library.artUrl(a, size ?? 256);
   $effect(() => {
     if (loading) return;
@@ -35,10 +39,11 @@
       return;
     }
     const next = id;
+    const album = albumOf(track) ?? '';
     const img = new Image();
     img.src = src(next);
     img.decode().then(
-      () => (shown = next),
+      () => (shown = { id: next, album }),
       () => {
         failed = next;
         shown = null;
@@ -52,15 +57,15 @@
   class="art"
   style:width={size ? `${size}px` : undefined}
   style:height={size ? `${size}px` : undefined}
-  style:background={track && !loading && !shown && (!id || failed === id) ? placeholderArt(track) : undefined}
+  style:background={track && !loading && !visible ? placeholderArt(track) : undefined}
 >
-  {#if shown && failed !== shown}
+  {#if visible}
     <img
-      src={src(shown)}
+      src={src(kept!)}
       alt={title ? `Cover of ${title}` : ''}
       loading="lazy"
       decoding="async"
-      onerror={() => (failed = shown)}
+      onerror={() => (failed = kept)}
     />
   {:else if !track}
     <Icon name="music" size={size ? Math.round(size * 0.4) : 48} />

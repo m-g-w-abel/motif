@@ -271,9 +271,9 @@
 
   <div class="body" bind:this={body}>
     <div class="now">
-      <div class="art"><ArtworkWidget expands={false} /></div>
+      <div class="art"><ArtworkWidget expands={false} playing /></div>
       <div class="details">
-        <TrackInfo style="hero" />
+        <TrackInfo style="hero" playing />
         <Controls />
       </div>
     </div>
