@@ -12,6 +12,8 @@
   import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
   import { navTarget, scrollInto } from '../../keynav';
+  import { menu } from '../../contextMenu.svelte';
+  import { trackMenu } from '../../menus';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, indexWidth, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
@@ -432,6 +434,7 @@
                 onclick={() => select(i)}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}
+                use:menu={() => trackMenu(engine, data, view, i)}
               >
                 {#each shown as column (column)}
                   <td class={column}>

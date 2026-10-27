@@ -95,6 +95,16 @@
     return () => window.removeEventListener('resize', onResize);
   });
 
+  // The sheet morphs out of (and back into) wherever this sits. A plain
+  // field, not state, so this doesn't re-run.
+  $effect(() => {
+    const node = el;
+    sheet.origin = node ?? null;
+    return () => {
+      if (sheet.origin === node) sheet.origin = null;
+    };
+  });
+
   function resetPosition() {
     pos = DEFAULT_POS;
     try {
@@ -113,6 +123,7 @@
   style:right={pos.h === 'right' ? 0 : undefined}
   style:top={pos.v === 'top' ? 0 : undefined}
   style:bottom={pos.v === 'bottom' ? 'var(--bottom-inset, 0px)' : undefined}
+  style:visibility={sheet.open ? 'hidden' : undefined}
   style:transform={`translate(${pos.h === 'left' ? pos.x : -pos.x}px, ${pos.v === 'top' ? pos.y : -pos.y}px)`}
   onpointerdown={startDrag}
   ondblclick={resetPosition}

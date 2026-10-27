@@ -17,6 +17,30 @@ fn engine_url(url: tauri::State<'_, EngineUrl>) -> String {
     url.0.clone()
 }
 
+/// Opens the file manager on the folder holding `path`, with the file selected where the OS can.
+#[tauri::command]
+fn show_in_folder(path: String) -> Result<(), String> {
+    use std::process::Command;
+    let path = std::path::Path::new(&path);
+    let mut command = if cfg!(target_os = "windows") {
+        let mut c = Command::new("explorer");
+        c.arg(format!("/select,{}", path.display()));
+        c
+    } else if cfg!(target_os = "macos") {
+        let mut c = Command::new("open");
+        c.arg("-R").arg(path);
+        c
+    } else {
+        let mut c = Command::new("xdg-open");
+        c.arg(path.parent().unwrap_or(path));
+        c
+    };
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Could not open the folder: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
@@ -41,7 +65,7 @@ pub fn run() {
             app.manage(EngineUrl(url));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_url])
+        .invoke_handler(tauri::generate_handler![engine_url, show_in_folder])
         .run(tauri::generate_context!())
         .expect("error while running the app");
 }

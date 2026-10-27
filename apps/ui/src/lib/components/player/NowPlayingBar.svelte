@@ -25,7 +25,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<section class="bar" aria-label="Player" onpointerdown={onPointerDown}>
+<section bind:this={sheet.origin} class="bar" aria-label="Player" onpointerdown={onPointerDown}>
   <!-- The seek bar runs along the whole top edge, like a progress line. -->
   <div class="strip"><SeekBar variant="strip" /></div>
 
