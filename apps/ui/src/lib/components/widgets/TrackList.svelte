@@ -14,7 +14,7 @@
   import { navTarget, scrollInto } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
   import { trackMenu } from '../../menus';
-  import { DEFAULT_WIDTHS, fitColumns, flexReserve, visibleRange } from '../../table';
+  import { DEFAULT_WIDTHS, fitColumns, flexReserve, indexWidth, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
 
@@ -96,7 +96,7 @@
   /** Widths actually applied: narrow panels shrink columns to fit. */
   let tableWidth = $state(0);
   const reserve = $derived(flexReserve(tableWidth));
-  const applied = $derived(fitColumns(widths, shown, flexColumn, tableWidth, reserve + (data.remove ? 28 : 0)));
+  const applied = $derived(fitColumns(widths, shown, flexColumn, tableWidth, reserve + (data.remove ? 28 : 0), indexWidth(data.count)));
 
   function saveWidths() {
     try {
@@ -128,8 +128,8 @@
     // The flexible column can give up space only down to its reserve.
     const flexCell = handle.closest('tr')?.querySelector<HTMLElement>(`th.${flexColumn}`);
     const flexRoom = Math.max(0, (flexCell?.offsetWidth ?? 0) - reserve);
-    const lo = left === flexColumn ? -flexRoom : min - startLeft;
-    const hi = right === flexColumn ? flexRoom : startRight - min;
+    const lo = left === flexColumn ? -flexRoom : (left === 'index' ? indexWidth(data.count) : min) - startLeft;
+    const hi = right === flexColumn ? flexRoom : startRight - (right === 'index' ? indexWidth(data.count) : min);
     handle.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
       const dx = Math.round(Math.min(hi, Math.max(lo, ev.clientX - startX)));
@@ -254,6 +254,7 @@
   $effect(() => {
     void visible;
     void settings.current.density;
+    void settings.current.scale;
     // After the frame, once the density's CSS has applied everywhere.
     const frame = requestAnimationFrame(() => {
       const track = tbody?.querySelector<HTMLElement>('tr.track');
