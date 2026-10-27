@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Column } from './layout/model';
-import { fitColumns, flexReserve, nearest, visibleRange } from './table';
+import { fitColumns, flexReserve, indexWidth, nearest, visibleRange } from './table';
 
 describe('fitColumns', () => {
   const shown: Column[] = ['index', 'title', 'artist', 'album', 'duration'];
@@ -17,6 +17,21 @@ describe('fitColumns', () => {
     expect(fitted.index).toBe(44);
     expect(fitted.duration).toBe(64);
     expect(400 - sum(fitted)).toBeGreaterThanOrEqual(flexReserve(400) - 1);
+  });
+});
+
+describe('index column', () => {
+  const shown: Column[] = ['index', 'title', 'duration'];
+
+  it('grows with the digit count, never below the default', () => {
+    expect(indexWidth(999)).toBe(44);
+    expect(indexWidth(10000)).toBeGreaterThan(indexWidth(1000));
+    expect(fitColumns({}, shown, 'title', 1400, 100, indexWidth(12000)).index).toBe(indexWidth(12000));
+  });
+
+  it('lifts a dragged width that is too narrow', () => {
+    expect(fitColumns({ index: 40 }, shown, 'title', 1400, 100, indexWidth(12000)).index).toBe(indexWidth(12000));
+    expect(fitColumns({ index: 90 }, shown, 'title', 1400, 100, indexWidth(12000)).index).toBe(90);
   });
 });
 

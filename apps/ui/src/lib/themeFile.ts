@@ -11,7 +11,7 @@ const FONTS = ['font-sans', 'font-mono'] as const;
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 const HEX_ALPHA = /^#(?:[0-9a-f]{4}|[0-9a-f]{8})$/i;
 // Letters, digits, spaces, commas, quotes and hyphens only, so a font can't smuggle CSS in.
-const FONT_LIST = /^[\w ,'"-]{1,200}$/;
+export const FONT_LIST = /^[\w ,'"-]{1,200}$/;
 // Offsets, blur and colours only; `/` and `.` are for alpha and fractions.
 const SHADOW = /^[\w #(),./ -]{1,120}$/;
 
