@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Bumped on any incompatible change to the types below.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// A message sent from a client: a command for the engine, or a query for
 /// the library. `id` is echoed back in the matching
@@ -69,6 +69,11 @@ pub enum Command {
         mode: RepeatMode,
     },
     Enqueue {
+        tracks: Vec<TrackRef>,
+    },
+    /// Inserts right after the current entry (at the front when nothing is
+    /// current), so the tracks play next.
+    EnqueueNext {
         tracks: Vec<TrackRef>,
     },
     /// Replaces the whole queue, e.g. when playing a track from a list.

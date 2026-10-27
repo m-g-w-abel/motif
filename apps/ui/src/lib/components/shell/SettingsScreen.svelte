@@ -9,6 +9,7 @@
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import ShortcutList from './ShortcutList.svelte';
   import Slider from '../Slider.svelte';
   import { FONT_LIST } from '../../themeFile';
 
@@ -19,6 +20,7 @@
     { id: 'interface', label: 'Interface' },
     { id: 'library', label: 'Library' },
     { id: 'playback', label: 'Playback' },
+    { id: 'keyboard', label: 'Keyboard' },
     { id: 'technical', label: 'Technical' },
     { id: 'about', label: 'About' },
   ];
@@ -324,6 +326,8 @@
         {:else if !engine.player}
           <p class="status">Not connected to the engine.</p>
         {/if}
+      {:else if group === 'keyboard'}
+        <ShortcutList />
       {:else if group === 'technical'}
         <div class="row">
           <span class="label">Engine connection</span>
