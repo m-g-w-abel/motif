@@ -64,7 +64,7 @@ function lazy<T>(make: () => T): () => T {
 }
 
 function queueData(engine: EngineClient): TrackListData {
-  const queue = engine.queue;
+  const queue = engine.playlist;
   const groups = lazy(() => groupConsecutive(queue.map((item) => item.track)));
   return {
     title: 'Queue',
@@ -79,8 +79,7 @@ function queueData(engine: EngineClient): TrackListData {
       return groups().reduce((n, g) => n + g.duration_ms, 0);
     },
     get currentKey() {
-      const current = engine.player?.current;
-      return current != null && queue[current] ? String(queue[current].id) : null;
+      return engine.current ? String(engine.current.id) : null;
     },
     play: (i) => engine.run({ type: 'play_item', item_id: queue[i].id }),
     playGroup: (g) => engine.run({ type: 'play_item', item_id: queue[g.start].id }),
@@ -108,9 +107,15 @@ function demoData(engine: EngineClient): TrackListData {
     get currentKey() {
       return engine.current?.track.id ?? null;
     },
-    play: (start) => engine.run({ type: 'set_queue', tracks: demoLibrary, start }),
+    play: (start) => engine.run({ type: 'set_context', tracks: demoLibrary, start, kind: 'list', label: 'Library' }),
     playGroup: (g) =>
-      engine.run({ type: 'set_queue', tracks: demoLibrary.slice(g.start, g.start + g.count), start: 0 }),
+      engine.run({
+        type: 'set_context',
+        tracks: demoLibrary.slice(g.start, g.start + g.count),
+        start: 0,
+        kind: 'album',
+        label: g.title,
+      }),
     empty: { message: 'No demo tracks.' },
   };
 }

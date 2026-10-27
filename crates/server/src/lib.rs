@@ -23,9 +23,7 @@ use axum::{
 use engine::Engine;
 use futures_util::{SinkExt, StreamExt};
 use library::Library;
-use protocol::{
-    ClientMessage, Command, Event, LibraryQuery, PROTOCOL_VERSION, QueryResult, ServerMessage,
-};
+use protocol::{ClientMessage, Event, LibraryQuery, PROTOCOL_VERSION, QueryResult, ServerMessage};
 use tokio::{net::TcpListener, sync::mpsc};
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -125,26 +123,17 @@ async fn art(
     }
 }
 
-/// Answers a library query. Play queries become a queue for the engine.
+/// Answers a library query. Play queries set the engine's context.
 async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, String> {
     let library = state.library.clone().ok_or("this engine has no library")?;
     if matches!(
         query,
         LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. }
     ) {
-        let (tracks, start) = tokio::task::spawn_blocking(move || library.selection(&query))
+        let command = tokio::task::spawn_blocking(move || library.selection(&query))
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-        if tracks.is_empty() {
-            return Err("nothing to play".into());
-        }
-        // shortcut: queues every matching track, so the queue event is ~3 MB for 8k tracks; page the queue
-        // like the library before phones and remote clients rely on it (phases 4-5).
-        let command = Command::SetQueue {
-            tracks,
-            start: Some(start),
-        };
         state
             .engine
             .send(command)
@@ -198,8 +187,10 @@ async fn session(socket: WebSocket, state: AppState) {
 
     let mut states = engine.subscribe();
     let mut queue = engine.subscribe_queue();
+    let mut context = engine.subscribe_context();
     states.mark_changed();
     queue.mark_changed();
+    context.mark_changed();
     // Without a library, a channel that never changes stands in.
     let (no_library, mut library) = tokio::sync::watch::channel(Default::default());
     if let Some(lib) = &state.library {
@@ -210,10 +201,14 @@ async fn session(socket: WebSocket, state: AppState) {
     let publisher = tokio::spawn(async move {
         let _no_library = no_library;
         loop {
-            // Biased towards the queue: the engine updates it before the
-            // state that indexes into it.
+            // Biased towards the entries: the engine updates them before the
+            // state that refers to them.
             let event = tokio::select! {
                 biased;
+                Ok(()) = context.changed() => {
+                    let window = context.borrow_and_update().clone();
+                    Event::Context { offset: window.offset, items: window.items }
+                }
                 Ok(()) = queue.changed() => Event::Queue { items: queue.borrow_and_update().clone() },
                 Ok(()) = states.changed() => Event::State { state: states.borrow_and_update().clone() },
                 Ok(()) = library.changed() => Event::Library { status: library.borrow_and_update().clone() },
@@ -308,6 +303,12 @@ mod tests {
         assert!(matches!(
             next_message(&mut ws).await,
             ServerMessage::Event {
+                event: Event::Context { .. }
+            }
+        ));
+        assert!(matches!(
+            next_message(&mut ws).await,
+            ServerMessage::Event {
                 event: Event::Queue { .. }
             }
         ));
@@ -341,7 +342,7 @@ mod tests {
                     event: Event::State { state },
                 } => playing = state.status == PlaybackStatus::Playing,
                 ServerMessage::Event {
-                    event: Event::Queue { .. },
+                    event: Event::Queue { .. } | Event::Context { .. },
                 } => {}
                 other => panic!("unexpected {other:?}"),
             }

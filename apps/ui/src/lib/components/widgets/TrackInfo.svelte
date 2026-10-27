@@ -12,8 +12,7 @@
   let scroller = $state<HTMLElement>();
   const track = $derived(playing ? engine.current?.track : (view.browse.selectedTrack ?? undefined));
   const none = $derived(playing ? 'Nothing playing' : 'Nothing selected');
-  const queue = $derived(engine.queue);
-  const position = $derived(engine.player?.current ?? null);
+  const context = $derived(engine.player?.context);
   /** Format details from the library, when the file is in it. */
   const details = $derived(library.details(track));
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
@@ -25,7 +24,7 @@
             ['Title', trackTitle(track)],
             ['Artist', track.artist ?? ''],
             ['Album', track.album ?? ''],
-            ['Queue', playing && position !== null ? `${position + 1}/${queue.length}` : ''],
+            ['Queue', playing && context && context.index !== null ? `${context.index + 1}/${context.len}` : ''],
             ['Duration', track.duration_ms ? formatTime(track.duration_ms) : ''],
             ['Year', details?.year ? String(details.year) : ''],
             ['Genre', details?.genre ?? ''],

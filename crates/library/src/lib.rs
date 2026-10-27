@@ -17,8 +17,8 @@ use std::{
 };
 
 use protocol::{
-    LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack, QueryResult, SortRule, TrackGroup,
-    TrackKeys, TrackRef,
+    Command, ContextKind, LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack, QueryResult,
+    SortRule, TrackGroup, TrackKeys, TrackRef,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
@@ -265,11 +265,11 @@ impl Library {
         Ok(())
     }
 
-    /// The tracks a `Play` or `PlayAlbum` query selects, in order, and the
-    /// index to start at.
-    pub fn selection(&self, query: &LibraryQuery) -> Result<(Vec<TrackRef>, u32)> {
+    /// The engine command that plays what a `Play` or `PlayAlbum` query
+    /// selects: the tracks in order as the context, labelled, from the start index.
+    pub fn selection(&self, query: &LibraryQuery) -> Result<Command> {
         let conn = self.db();
-        let (sql, arg, start) = match query {
+        let (sql, arg, start, kind) = match query {
             LibraryQuery::Play {
                 search,
                 sort,
@@ -282,6 +282,7 @@ impl Library {
                 ),
                 db::fts_query(search.as_deref()),
                 *start,
+                ContextKind::List,
             ),
             LibraryQuery::PlayAlbum { album, sort } => (
                 format!(
@@ -291,6 +292,7 @@ impl Library {
                 ),
                 Some(album.clone()),
                 0,
+                ContextKind::Album,
             ),
             _ => return Err(Error::Other("not a play query".into())),
         };
@@ -298,8 +300,24 @@ impl Library {
         let tracks = stmt
             .query_map([arg], library_track)?
             .map(|t| t.map(|t| t.track))
-            .collect::<rusqlite::Result<_>>()?;
-        Ok((tracks, start))
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if tracks.is_empty() {
+            return Err(Error::Other("nothing to play".into()));
+        }
+        let label = match query {
+            LibraryQuery::Play {
+                search: Some(search),
+                ..
+            } if !search.trim().is_empty() => Some(format!("Search: {}", search.trim())),
+            LibraryQuery::Play { .. } => Some("Library".into()),
+            _ => tracks[0].album.clone(),
+        };
+        Ok(Command::SetContext {
+            tracks,
+            start: Some(start),
+            kind,
+            label,
+        })
     }
 
     /// A file on this device holding `track`, matched by identity keys (audio

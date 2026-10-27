@@ -8,7 +8,7 @@ use std::{
 };
 
 use library::Library;
-use protocol::{LibraryQuery, QueryResult, SortKey, SortRule, TrackRef};
+use protocol::{Command, ContextKind, LibraryQuery, QueryResult, SortKey, SortRule, TrackRef};
 
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -165,13 +165,16 @@ fn scans_queries_matches_and_rescans() {
     assert!(found.ends_with("02 Ending.ogg"), "{found:?}");
     assert_eq!(library.find(&elsewhere(None, "Missing", "Nobody")), None);
 
-    let (refs, _) = library
+    let Command::SetContext { tracks: refs, .. } = library
         .selection(&LibraryQuery::Play {
             search: None,
             sort: vec![],
             start: 0,
         })
-        .unwrap();
+        .unwrap()
+    else {
+        panic!()
+    };
     let hashes: Vec<_> = refs
         .iter()
         .map(|r| r.keys.audio_hash.clone().unwrap())
@@ -222,15 +225,23 @@ fn scans_queries_matches_and_rescans() {
             .unwrap(),
         QueryResult::Position { index: Some(0) }
     );
-    let (refs, _) = library
+    let Command::SetContext { tracks: refs, .. } = library
         .selection(&LibraryQuery::Play {
             search: None,
             sort: by_title.clone(),
             start: 0,
         })
-        .unwrap();
+        .unwrap()
+    else {
+        panic!()
+    };
     assert_eq!(refs[0].title.as_deref(), Some("Beginning"));
-    let (refs, _) = library
+    let Command::SetContext {
+        tracks: refs,
+        kind,
+        label,
+        ..
+    } = library
         .selection(&LibraryQuery::PlayAlbum {
             album: albums[0].key.clone(),
             sort: vec![SortRule {
@@ -238,9 +249,14 @@ fn scans_queries_matches_and_rescans() {
                 descending: true,
             }],
         })
-        .unwrap();
+        .unwrap()
+    else {
+        panic!()
+    };
     let names: Vec<_> = refs.iter().map(|r| r.title.clone().unwrap()).collect();
     assert_eq!(names, ["Closing", "Opening"]);
+    assert_eq!(kind, ContextKind::Album);
+    assert_eq!(label, refs[0].album);
     let QueryResult::Albums { albums: desc, .. } = library
         .query(LibraryQuery::Albums {
             search: None,

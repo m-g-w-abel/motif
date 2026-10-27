@@ -163,7 +163,7 @@
     if (devPlay !== null) {
       $effect(() => {
         if (engine.status === 'open') {
-          engine.run({ type: 'set_queue', tracks: demoLibrary, start: Number(devPlay) });
+          engine.run({ type: 'set_context', tracks: demoLibrary, start: Number(devPlay), kind: 'list', label: 'Library' });
         }
       });
     }

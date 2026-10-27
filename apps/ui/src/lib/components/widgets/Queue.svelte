@@ -8,9 +8,11 @@
   let { collapsible = false }: { collapsible?: boolean } = $props();
 
   const { engine } = getApp();
-  const queue = $derived(engine.queue);
+  const queue = $derived(engine.playlist);
   const remainingMs = $derived(
-    queue.slice((engine.player?.current ?? -1) + 1).reduce((n, item) => n + (item.track.duration_ms ?? 0), 0),
+    queue
+      .slice(queue.findIndex((item) => item.id === engine.current?.id) + 1)
+      .reduce((n, item) => n + (item.track.duration_ms ?? 0), 0),
   );
 
   const KEY = 'queue.collapsed';
@@ -48,7 +50,7 @@
       <span class="title">Queue</span>
       <span class="meta">{queue.length} tracks · {formatTime(remainingMs)} left</span>
     {/if}
-    {#if queue.length}
+    {#if engine.queue.length}
       <button class="clear" onclick={() => engine.run({ type: 'clear_queue' })}>Clear</button>
     {/if}
   </header>

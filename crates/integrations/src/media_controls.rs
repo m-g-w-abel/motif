@@ -150,9 +150,7 @@ async fn follow(engine: Engine, library: Option<Library>, updates: mpsc::Sender<
     let mut shown: Option<u64> = None;
     loop {
         let state = states.borrow_and_update().clone();
-        let current = state
-            .current
-            .and_then(|i| engine.subscribe_queue().borrow().get(i as usize).cloned());
+        let current = state.current.clone();
         if current.as_ref().map(|item| item.id) != shown {
             shown = current.as_ref().map(|item| item.id);
             let track = current.map(|item| item.track).unwrap_or_default();

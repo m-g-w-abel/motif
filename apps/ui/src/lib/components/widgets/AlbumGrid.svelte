@@ -57,7 +57,13 @@
   function play(album: Card) {
     if (album.track) {
       const start = demoLibrary.indexOf(album.track);
-      engine.run({ type: 'set_queue', tracks: demoLibrary.slice(start, start + album.tracks), start: 0 });
+      engine.run({
+        type: 'set_context',
+        tracks: demoLibrary.slice(start, start + album.tracks),
+        start: 0,
+        kind: 'album',
+        label: album.title,
+      });
     } else {
       engine.query({ type: 'play_album', album: album.key, sort }).catch((e: Error) => (engine.error = e.message));
     }
