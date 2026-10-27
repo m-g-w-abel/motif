@@ -60,8 +60,12 @@
     const name = saveName?.trim();
     if (!name) return;
     const result = layout.saveAs(name);
-    if (result.ok) toasts.show(`Saved layout “${result.entry.layout.name}”`);
-    else toasts.show(`Couldn't save the layout: ${result.errors[0].message}`, 'error');
+    // On failure the form stays open so the name can be changed.
+    if (!result.ok) {
+      toasts.show(`Couldn't save the layout: ${result.errors[0].message}`, 'error');
+      return;
+    }
+    toasts.show(`Saved layout “${result.entry.layout.name}”`);
     menuOpen = false;
   }
 

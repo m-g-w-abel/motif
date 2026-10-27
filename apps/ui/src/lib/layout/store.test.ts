@@ -80,4 +80,14 @@ describe('LayoutStore.saveAs', () => {
       ['tracklist', { px: 500 }],
     ]);
   });
+
+  it('refuses a name an installed user layout already has', () => {
+    const store = new LayoutStore();
+    expect(store.saveAs('Twice').ok).toBe(true);
+    const before = store.user;
+    const again = store.saveAs('twice!');
+    expect(again.ok).toBe(false);
+    expect(!again.ok && again.errors[0].message).toBe('a layout named “Twice” already exists');
+    expect(store.user).toBe(before);
+  });
 });

@@ -210,6 +210,11 @@ export class LayoutStore {
 
   /** Installs the active layout, with this device's in-place edits applied, as a new user layout named `name`. */
   saveAs(name: string): InstallResult {
+    const existing = this.user.find((e) => e.id === `user:${fileNameFor(name)}`);
+    if (existing) {
+      const message = `a layout named “${existing.layout.name}” already exists`;
+      return { ok: false, errors: [{ message, line: null, column: null }] };
+    }
     const layout = this.layout;
     const shown = (variant: Variant) => {
       const root = rootOf(layout, variant);
