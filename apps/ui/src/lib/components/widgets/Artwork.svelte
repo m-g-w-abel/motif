@@ -1,5 +1,11 @@
 <script lang="ts">
   import { getApp, getViewState } from '../../context';
+  import { albumKey } from '../../albums';
+  import { menu } from '../../contextMenu.svelte';
+  import { demoLibrary, isDemo } from '../../demo';
+  import { albumMenu, playTracks, queueTracks } from '../../menus';
+  import type { TrackRef } from '../../protocol/TrackRef';
+  import { viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
 
   /** In the main window a click expands the player; inside it, it doesn't. `playing` shows the playing track, not the selected one. */
@@ -8,6 +14,23 @@
   const { engine, sheet } = getApp();
   const view = getViewState();
   const track = $derived(playing ? engine.current?.track : (view.browse.selectedTrack ?? undefined));
+
+  /** The shown track's album, in album order; the widget's menu is the album grid's. */
+  async function albumTracks(t: TrackRef): Promise<TrackRef[]> {
+    if (isDemo) return demoLibrary.filter((d) => albumKey(d) === albumKey(t));
+    const result = await engine.query({ type: 'album_tracks', albums: [albumKey(t)], sort: viewSort(view) });
+    return result.type === 'tracks' ? result.tracks.map((x) => x.track) : [];
+  }
+  const items = () => {
+    const t = track;
+    if (!t?.album) return [];
+    return albumMenu(
+      engine,
+      { title: t.album, artist: t.artist ?? '' },
+      () => albumTracks(t).then((tracks) => playTracks(engine, tracks)).catch((e: Error) => (engine.error = e.message)),
+      () => albumTracks(t),
+    );
+  };
 
   // The largest square that fits, measured rather than left to CSS so it
   // behaves the same in every webview.
@@ -20,11 +43,11 @@
 <section class="artwork" bind:clientWidth={width} bind:clientHeight={height}>
   {#if side > 0}
     {#if expands}
-      <button class="frame" title="Expand player" style:width="{side}px" onclick={() => sheet.expand()}>
+      <button class="frame" use:menu={items} title="Expand player" style:width="{side}px" onclick={() => sheet.expand()}>
         <Artwork {track} size={side} />
       </button>
     {:else}
-      <div class="frame" style:width="{side}px"><Artwork {track} size={side} /></div>
+      <div class="frame" use:menu={items} style:width="{side}px"><Artwork {track} size={side} /></div>
     {/if}
   {/if}
 </section>
