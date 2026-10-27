@@ -9,6 +9,8 @@
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import Slider from '../Slider.svelte';
+  import { FONT_LIST } from '../../themeFile';
 
   const { settings, themes, engine, library, settingsView } = getApp();
   let panel = $state<HTMLElement>();
@@ -62,6 +64,14 @@
     { key: 'density', label: 'Density', options: [['compact', 'Compact'], ['comfortable', 'Comfortable']] },
     { key: 'player', label: 'Player', options: [['bar', 'Bar'], ['floating', 'Floating']] },
   ] as [Choice<'density'>, Choice<'player'>];
+
+  const snapScale = (v: number) => 90 + Math.round(v / 5) * 5;
+  // The number follows the thumb; the layout is only redone on release.
+  let scaleDraft = $state<number>();
+  const scaleShown = $derived(scaleDraft ?? settings.current.scale);
+  const OTHER = '\0other';
+  const FONTS = [['', 'Theme default'], ['system-ui', 'System UI'], ['sans-serif', 'Sans-serif'], ['serif', 'Serif'], ['monospace', 'Monospace'], ['Inter', 'Inter']];
+  let fontOther = $state(!FONTS.some(([v]) => v === settings.current.font));
 
   let themeInput = $state<HTMLInputElement>();
   const activeUserTheme = $derived(themes.byId(settings.current.theme));
@@ -169,6 +179,49 @@
             </div>
           </div>
         {/each}
+
+        <div class="row">
+          <span class="label">Scale</span>
+          <div class="scale">
+            <Slider
+              label="Interface scale"
+              value={settings.current.scale - 90}
+              max={60}
+              valueText="{scaleShown}%"
+              oninput={(v) => (scaleDraft = snapScale(v))}
+              onchange={(v) => {
+                settings.set('scale', snapScale(v));
+                scaleDraft = undefined;
+              }}
+            />
+            <span class="status">{scaleShown}%</span>
+          </div>
+        </div>
+
+        <div class="row">
+          <span class="label">Font</span>
+          <select
+            class="select"
+            aria-label="Font family"
+            value={fontOther ? OTHER : settings.current.font}
+            onchange={(e) => {
+              fontOther = e.currentTarget.value === OTHER;
+              if (!fontOther) settings.set('font', e.currentTarget.value);
+            }}
+          >
+            {#each FONTS as [value, text] (value)}<option {value}>{text}</option>{/each}
+            <option value={OTHER}>Other…</option>
+          </select>
+          {#if fontOther}
+            <input
+              class="select"
+              placeholder="Installed font family"
+              aria-label="Other font family"
+              value={settings.current.font}
+              onchange={(e) => settings.set('font', FONT_LIST.test(e.currentTarget.value) ? e.currentTarget.value : '')}
+            />
+          {/if}
+        </div>
 
         <div class="row">
           <span class="label">Accent</span>
@@ -527,6 +580,17 @@
   .theme.active .name {
     color: var(--text);
     font-weight: 600;
+  }
+
+  .scale {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 220px;
+  }
+
+  .scale :global(.slider) {
+    flex: 1;
   }
 
   .swatches {
