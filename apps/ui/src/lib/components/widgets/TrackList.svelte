@@ -252,6 +252,7 @@
   $effect(() => {
     void visible;
     void settings.current.density;
+    void settings.current.scale;
     // After the frame, once the density's CSS has applied everywhere.
     const frame = requestAnimationFrame(() => {
       const track = tbody?.querySelector<HTMLElement>('tr.track');
