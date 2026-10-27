@@ -162,9 +162,10 @@
   // Selection lives in shared browse state so it survives layout switches.
   const selected = $derived(view.browse.selected);
   // A track picked after an album was focused makes the track the selection.
-  const select = (key: string) => {
+  const select = (index: number) => {
     view.browse.focusAlbum = null;
-    view.browse.selected = key;
+    view.browse.selected = data.key(index);
+    view.browse.selectedTrack = data.track(index) ?? null;
   };
   let scroller = $state<HTMLElement>();
 
@@ -324,7 +325,11 @@
     // Scroll this list only; scrollIntoView would also scroll every
     // scrollable ancestor, moving the whole window.
     scroller.scrollTop = rows.tops[albumBreaks ? at - 1 : at];
-    if (data.track(index)) view.browse.selected = data.key(index);
+    const track = data.track(index);
+    if (track) {
+      view.browse.selected = data.key(index);
+      view.browse.selectedTrack = track;
+    }
   }
 
   /** Index of the selected track; 'loading' while the pages before it are still arriving. */
@@ -489,9 +494,12 @@
                 class:selected={selected === key}
                 tabindex={i === tabStop ? 0 : -1}
                 data-index={i}
-                onfocus={() => (cursor = i)}
+                onfocus={() => {
+                  cursor = i;
+                  select(i);
+                }}
                 aria-selected={selected === key}
-                onclick={() => select(key)}
+                onclick={() => select(i)}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}
                 use:menu={() => trackMenu(engine, data, view, i)}

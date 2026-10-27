@@ -1,14 +1,17 @@
 <script lang="ts">
-  import { getApp } from '../../context';
+  import { getApp, getViewState } from '../../context';
   import { formatTime, trackFormat, trackTitle } from '../../format';
   import type { InfoStyle } from '../../layout/model';
   import Scrollbar from '../Scrollbar.svelte';
 
-  let { style }: { style: InfoStyle } = $props();
+  /** `playing` shows the playing track (now-playing screen); otherwise the track selected in a list. */
+  let { style, playing = false }: { style: InfoStyle; playing?: boolean } = $props();
 
   const { engine, library } = getApp();
+  const view = getViewState();
   let scroller = $state<HTMLElement>();
-  const track = $derived(engine.current?.track);
+  const track = $derived(playing ? engine.current?.track : (view.browse.selectedTrack ?? undefined));
+  const none = $derived(playing ? 'Nothing playing' : 'Nothing selected');
   const queue = $derived(engine.queue);
   const position = $derived(engine.player?.current ?? null);
   /** Format details from the library, when the file is in it. */
@@ -22,7 +25,7 @@
             ['Title', trackTitle(track)],
             ['Artist', track.artist ?? ''],
             ['Album', track.album ?? ''],
-            ['Queue', position !== null ? `${position + 1}/${queue.length}` : ''],
+            ['Queue', playing && position !== null ? `${position + 1}/${queue.length}` : ''],
             ['Duration', track.duration_ms ? formatTime(track.duration_ms) : ''],
             ['Year', details?.year ? String(details.year) : ''],
             ['Genre', details?.genre ?? ''],
@@ -39,7 +42,7 @@
 
 <section class="info selectable {style}" bind:this={scroller}>
   {#if style === 'hero'}
-    <h1>{track ? trackTitle(track) : 'Nothing playing'}</h1>
+    <h1>{track ? trackTitle(track) : none}</h1>
     {#if track}
       <p class="hero-artist">{track.artist ?? 'Unknown artist'}</p>
       <p class="hero-album">
@@ -50,7 +53,7 @@
       <p class="hero-album">Double-click a track in the library to start.</p>
     {/if}
   {:else if !track}
-    <p class="empty">Nothing playing</p>
+    <p class="empty">{none}{#if !playing}<br />Select a track in the list to see its details.{/if}</p>
   {:else if style === 'list'}
     <h2>{trackTitle(track)}</h2>
     <p class="artist">{track.artist ?? 'Unknown artist'}</p>
