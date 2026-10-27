@@ -1,3 +1,5 @@
+import type { ArtColours } from './artAccent';
+
 /**
  * Appearance and player preferences. Client-side and per device; layouts
  * don't touch these.
@@ -6,8 +8,8 @@ export interface Settings {
   /** A theme id from themes.ts, or `system` to follow the OS light/dark mode. */
   theme: string;
   accent: string;
-  /** Take the accent from the playing album's art instead. */
-  artAccent: boolean;
+  /** How much of the playing album's art colours the interface. */
+  artColours: ArtColours;
   density: 'compact' | 'comfortable';
   /** Interface scale in percent, 90 to 150. */
   scale: number;
@@ -24,7 +26,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'graphite',
   accent: '#e8a33d',
-  artAccent: false,
+  artColours: 'off',
   density: 'compact',
   scale: 100,
   font: '',
@@ -43,6 +45,9 @@ export class SettingsStore {
       const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}');
       // Earlier versions stored a plain light/dark mode.
       if (saved.theme === 'dark') saved.theme = 'graphite';
+      // The first version was an on/off switch for the accent alone.
+      if (saved.artAccent !== undefined) saved.artColours ??= saved.artAccent ? 'accent' : 'off';
+      delete saved.artAccent;
       this.current = { ...DEFAULT_SETTINGS, ...saved };
     } catch {
       // Defaults.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { accentFromPixels } from './artAccent';
+import { accentFromPixels, artPalette } from './artAccent';
+import { THEMES } from './themes';
 import { contrast } from './themeFile';
 
 const fill = (rgb: number[], n = 16) => Uint8ClampedArray.from(Array.from({ length: n }, () => [...rgb, 255]).flat());
@@ -26,5 +27,41 @@ describe('accentFromPixels', () => {
     const px = Uint8ClampedArray.from([...fill([90, 90, 90], 30), ...fill([30, 90, 220], 2)]);
     const c = accentFromPixels(px, '#121214')!;
     expect(parseInt(c.slice(5, 7), 16)).toBeGreaterThan(parseInt(c.slice(1, 3), 16));
+  });
+});
+
+describe('artPalette', () => {
+  const covers: [string, number[]][] = [['red', [200, 30, 30]], ['navy', [10, 15, 60]], ['cream', [250, 240, 200]], ['grey dark', [30, 30, 30]], ['grey light', [225, 225, 225]]];
+
+  it('keeps text readable on every background, for every theme and cover', () => {
+    for (const theme of THEMES) {
+      for (const mode of ['tint', 'full'] as const) {
+        for (const [name, rgb] of covers) {
+          const p = artPalette(fill(rgb), theme, mode);
+          if (!p) continue;
+          const t = { ...theme.tokens, ...p.tokens };
+          for (const bg of [t.bg, t.surface, t['surface-2']]) {
+            expect(contrast(t.text, bg), `${theme.id} ${mode} ${name} text`).toBeGreaterThanOrEqual(4.5);
+            expect(contrast(t['text-muted'], bg), `${theme.id} ${mode} ${name} muted`).toBeGreaterThanOrEqual(3);
+          }
+          if (p.accent) expect(contrast(p.accent, t.bg)).toBeGreaterThanOrEqual(3);
+        }
+      }
+    }
+  });
+
+  it('tint keeps the theme light or dark; full follows the cover', () => {
+    const graphite = THEMES.find((t) => t.id === 'graphite')!;
+    expect(artPalette(fill([250, 240, 200]), graphite, 'tint')!.scheme).toBe('dark');
+    expect(artPalette(fill([250, 240, 200]), graphite, 'full')!.scheme).toBe('light');
+    expect(artPalette(fill([10, 15, 60]), THEMES.find((t) => t.scheme === 'light')!, 'full')!.scheme).toBe('dark');
+  });
+
+  it('tint of a greyscale cover changes nothing; full still follows its brightness', () => {
+    const graphite = THEMES[0];
+    expect(artPalette(fill([120, 120, 120]), graphite, 'tint')).toBeNull();
+    const p = artPalette(fill([225, 225, 225]), graphite, 'full')!;
+    expect(p.scheme).toBe('light');
+    expect(p.accent).toBeNull();
   });
 });

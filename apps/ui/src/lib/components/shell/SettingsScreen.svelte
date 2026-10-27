@@ -227,10 +227,10 @@
         </div>
 
         <div class="row">
-          <span class="label">Accent from artwork</span>
-          <div class="segmented" role="radiogroup" aria-label="Accent from artwork">
-            {#each [[false, 'Off'], [true, 'On']] as [value, text] (text)}
-              <button role="radio" aria-checked={settings.current.artAccent === value} class:active={settings.current.artAccent === value} onclick={() => settings.set('artAccent', value as boolean)}>{text}</button>
+          <span class="label">Colours from artwork</span>
+          <div class="segmented" role="radiogroup" aria-label="Colours from artwork">
+            {#each [['off', 'Off'], ['accent', 'Accent'], ['tint', 'Tinted theme'], ['full', 'Full theme']] as const as [value, text] (value)}
+              <button role="radio" aria-checked={settings.current.artColours === value} class:active={settings.current.artColours === value} onclick={() => settings.set('artColours', value)}>{text}</button>
             {/each}
           </div>
         </div>
