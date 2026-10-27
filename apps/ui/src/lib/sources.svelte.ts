@@ -7,13 +7,13 @@ import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
 import type { TrackRef } from './protocol/TrackRef';
 
-/** A list of tracks the widgets can show: the browsed library, or the play queue. */
-export type ListSource = 'library' | 'queue';
+/** A list of tracks the widgets can show: the browsed library (saved playlists join it later). */
+export type ListSource = 'library';
 
 /**
- * A list of tracks from one source, with what playing or removing means for
- * it. Rows are asked for one at a time because a library list is paged: a
- * row can be `undefined` while it loads.
+ * A list of tracks from one source, with what playing means for it. Rows
+ * are asked for one at a time because a library list is paged: a row can be
+ * `undefined` while it loads.
  */
 export interface TrackListData {
   title: string;
@@ -54,7 +54,6 @@ export function trackListData(
   sort: SortRule[] = [],
   shown: Shown<LibraryTracks> = {},
 ): TrackListData {
-  if (kind === 'queue') return queueData(engine);
   if (isDemo) return demoData(engine);
   return libraryData(engine, library, search, sort, shown);
 }
@@ -63,32 +62,6 @@ export function trackListData(
 function lazy<T>(make: () => T): () => T {
   let value: { v: T } | undefined;
   return () => (value ??= { v: make() }).v;
-}
-
-function queueData(engine: EngineClient): TrackListData {
-  const queue = engine.playlist;
-  const groups = lazy(() => groupConsecutive(queue.map((item) => item.track)));
-  return {
-    title: 'Queue',
-    kind: 'queue',
-    count: queue.length,
-    track: (i) => queue[i]?.track,
-    key: (i) => String(queue[i]?.id ?? `#${i}`),
-    get groups() {
-      return groups();
-    },
-    get totalMs() {
-      return groups().reduce((n, g) => n + g.duration_ms, 0);
-    },
-    get currentKey() {
-      return engine.current ? String(engine.current.id) : null;
-    },
-    play: (i) => engine.run({ type: 'play_item', item_id: queue[i].id }),
-    playGroup: (g) => engine.run({ type: 'play_item', item_id: queue[g.start].id }),
-    remove: (i) => engine.run({ type: 'remove_item', item_id: queue[i].id }),
-    error: (i) => queue[i]?.error ?? null,
-    empty: { message: 'The queue is empty.', hint: 'Double-click a track in the library to play it.' },
-  };
 }
 
 /** Development only: the generated demo library, played as a simulation. */

@@ -14,7 +14,7 @@
   import { navTarget, scrollInto } from '../../keynav';
   import { scrollMemory } from '../../scrollMemory';
   import { menu } from '../../contextMenu.svelte';
-  import { playTracks, queueTracks, removeRows, trackMenu } from '../../menus';
+  import { playTracks, queueTracks, trackMenu } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, indexWidth, visibleRange } from '../../table';
@@ -464,10 +464,10 @@
       moveTo(to);
     }
     if (e.key === 'Enter') {
-      if (inSelection(picked, data.key(index)) && !data.remove) playTracks(engine, ordered(picked));
+      if (inSelection(picked, data.key(index))) playTracks(engine, ordered(picked));
       else data.play(index);
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && data.remove) removeRows(data, view, index);
+    if ((e.key === 'Delete' || e.key === 'Backspace') && data.remove) data.remove(index);
     if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       selectAll();
@@ -579,7 +579,7 @@
                 onpointerdown={(e) => press(e, i)}
                 onclick={(e) => release(e, i)}
                 onauxclick={(e) => {
-                  if (e.button !== 1 || data.remove) return;
+                  if (e.button !== 1) return;
                   if (!inSelection(picked, key)) select(i);
                   queueTracks(engine, tracksAt(i));
                 }}
@@ -727,7 +727,8 @@
     border-right-color: var(--accent);
   }
 
-  .tracklist:not(.breaks) tbody tr.alt {
+  /* :where keeps the stripe below hover and selected */
+  :where(.tracklist:not(.breaks)) tbody tr.alt {
     background: color-mix(in srgb, var(--surface) 45%, transparent);
   }
 

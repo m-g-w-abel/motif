@@ -3,6 +3,7 @@ import { trackTitle } from './format';
 import type { ViewState } from './context';
 import type { MenuItem } from './contextMenu.svelte';
 import type { EngineClient } from './engine.svelte';
+import type { QueueItem } from './protocol/QueueItem';
 import type { TrackRef } from './protocol/TrackRef';
 import { inSelection, ordered } from './selection';
 import type { TrackListData } from './sources.svelte';
@@ -61,43 +62,36 @@ export async function queueTracks(
   }
 }
 
-/** Indices of the picked rows of a list, for removing them from the queue. */
-function pickedRows(data: TrackListData, view: ViewState): number[] {
-  const rows = [];
-  for (let i = 0; i < data.count; i++) if (view.browse.picked.has(data.key(i))) rows.push(i);
-  return rows;
+function queueItems(engine: EngineClient, tracks: TrackRef[]): MenuItem[] {
+  return [
+    { label: 'Queue next', run: () => queueTracks(engine, tracks, true) },
+    { label: 'Add to queue', run: () => queueTracks(engine, tracks) },
+  ];
 }
 
-/** Removes the picked rows from the queue, or row `i` alone if it isn't part of a selection. */
-export function removeRows(data: TrackListData, view: ViewState, i: number) {
-  if (!data.remove) return;
-  // Indices refer to the list as it is now, so the order of removal doesn't matter.
-  for (const row of inSelection(view.browse.picked, data.key(i)) ? pickedRows(data, view) : [i]) data.remove(row);
-}
-
-/** The menu of row `i` in a track list or the queue; of the whole selection when the row is part of one. */
+/** The menu of row `i` in a track list; of the whole selection when the row is part of one. */
 export function trackMenu(engine: EngineClient, data: TrackListData, view: ViewState, i: number): MenuItem[] {
   const track = data.track(i);
   if (!track) return [];
   if (inSelection(view.browse.picked, data.key(i))) {
-    if (data.remove) return [{ label: 'Remove from queue', run: () => removeRows(data, view, i) }];
     const tracks = ordered(view.browse.picked);
-    return [
-      { label: 'Play', run: () => playTracks(engine, tracks) },
-      { label: 'Queue next', run: () => queueTracks(engine, tracks, true) },
-      { label: 'Add to queue', run: () => queueTracks(engine, tracks) },
-    ];
+    return [{ label: 'Play', run: () => playTracks(engine, tracks) }, ...queueItems(engine, tracks)];
   }
-  const items: MenuItem[] = [{ label: 'Play', run: () => data.play(i) }];
-  if (data.kind !== 'queue') {
-    items.push({ label: 'Queue next', run: () => queueTracks(engine, [track], true) });
-    items.push({ label: 'Add to queue', run: () => queueTracks(engine, [track]) });
-  }
+  const items: MenuItem[] = [{ label: 'Play', run: () => data.play(i) }, ...queueItems(engine, [track])];
   if (track.album) {
     const artist = data.details?.(i)?.album_artist ?? track.artist ?? '';
     items.push({ label: 'Go to album', run: () => (view.browse.focusAlbum = albumKey({ ...track, artist })) });
   }
-  if (data.remove) items.push({ label: 'Remove from queue', run: () => removeRows(data, view, i) });
+  if (track.source === 'local' && inDesktop()) items.push({ label: 'Show in folder', run: () => showInFolder(track.id) });
+  return [...items, ...copyItems(track)];
+}
+
+/** The menu of an entry under Up next: one in the queue (`queued`) or coming from the context. */
+export function queueMenu(engine: EngineClient, item: QueueItem, queued: boolean): MenuItem[] {
+  const { track } = item;
+  const items: MenuItem[] = [{ label: 'Play', run: () => engine.run({ type: 'play_item', item_id: item.id }) }];
+  if (queued) items.push({ label: 'Remove from queue', run: () => engine.run({ type: 'remove_item', item_id: item.id }) });
+  else items.push(...queueItems(engine, [track]));
   if (track.source === 'local' && inDesktop()) items.push({ label: 'Show in folder', run: () => showInFolder(track.id) });
   return [...items, ...copyItems(track)];
 }

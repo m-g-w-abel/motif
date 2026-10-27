@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import type { ClientMessage } from './protocol/ClientMessage';
 import type { Command } from './protocol/Command';
 import type { LibraryQuery } from './protocol/LibraryQuery';
@@ -6,6 +7,7 @@ import type { QueryResult } from './protocol/QueryResult';
 import type { PlayerState } from './protocol/PlayerState';
 import type { QueueItem } from './protocol/QueueItem';
 import type { ServerMessage } from './protocol/ServerMessage';
+import { toasts } from './toast.svelte';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
@@ -42,8 +44,6 @@ export class EngineClient {
 
   /** The entry that is playing or paused, if any. */
   current: QueueItem | null = $derived(this.player?.current ?? null);
-  // shortcut: the queue then the context as one flat list for the Queue widget; #56 shows them apart.
-  playlist: QueueItem[] = $derived([...this.queue, ...this.context.items]);
 
   #socket: WebSocket | null = null;
   #nextId = 1;
@@ -62,6 +62,7 @@ export class EngineClient {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('not connected to the engine'));
     }
+    this.#noteClear(command.type);
     const id = this.#nextId++;
     const message: ClientMessage = { id, command };
     socket.send(JSON.stringify(message));
@@ -74,6 +75,7 @@ export class EngineClient {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('not connected to the engine'));
     }
+    this.#noteClear(query.type);
     const id = this.#nextId++;
     const message: ClientMessage = { id, query };
     socket.send(JSON.stringify(message));
@@ -83,6 +85,15 @@ export class EngineClient {
   /** Like {@link send}, but shows failures in the UI instead of throwing. */
   run(command: Command): void {
     this.send(command).catch((e: Error) => (this.error = e.message));
+  }
+
+  /** Playing from a list sets a new context, which clears the queue: say so when that drops tracks. */
+  #noteClear(type: string) {
+    // Untracked: an effect that sends commands mustn't rerun when the queue changes.
+    const n = untrack(() => this.queue.length);
+    if (n && (type === 'set_context' || type === 'play' || type === 'play_album')) {
+      toasts.show(`Queue cleared (${n} ${n === 1 ? 'track' : 'tracks'})`);
+    }
   }
 
   close() {
