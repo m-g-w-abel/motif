@@ -328,6 +328,14 @@
           <p class="status">Not connected to the engine.</p>
         {/if}
       {:else if group === 'keyboard'}
+        <label class="decoder">
+          <input
+            type="checkbox"
+            checked={settings.current.vimKeys}
+            onchange={(e) => settings.set('vimKeys', e.currentTarget.checked)}
+          />
+          Vim keys in lists and grids (navigation only)
+        </label>
         <ShortcutList />
       {:else if group === 'technical'}
         <div class="row">

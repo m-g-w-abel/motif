@@ -1,12 +1,15 @@
 <script lang="ts">
+  import { getApp } from '../../context';
   import { SHORTCUT_GROUPS, SHORTCUTS } from '../../shortcuts';
+
+  const { settings } = getApp();
 </script>
 
 {#each SHORTCUT_GROUPS as group (group.id)}
   <section>
     <h3>{group.label}</h3>
     <dl>
-      {#each SHORTCUTS.filter((s) => s.group === group.id) as shortcut (shortcut.id)}
+      {#each SHORTCUTS.filter((s) => s.group === group.id && (!s.vim || settings.current.vimKeys)) as shortcut (shortcut.id)}
         <dt>{shortcut.label}</dt>
         <dd>
           {#each shortcut.keys as key, i (key)}

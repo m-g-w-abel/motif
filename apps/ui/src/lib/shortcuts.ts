@@ -23,6 +23,8 @@ export interface Shortcut {
   keys: string[];
   /** Keys the app-wide handler runs. Absent when a component handles its own keys; the entry then only documents them. */
   bindings?: Binding[];
+  /** Only documented (and active) while the Vim keys setting is on. */
+  vim?: boolean;
 }
 
 /** The one table behind the `?` cheat sheet, Settings → Keyboard and the app-wide handler. */
@@ -50,6 +52,12 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'list_remove', group: 'lists', label: 'Remove from the queue', keys: ['Delete', 'Backspace'] },
   { id: 'list_reorder', group: 'lists', label: 'Move an item up / down in a reorderable list', keys: ['Alt+↑', 'Alt+↓'] },
   { id: 'context_menu', group: 'lists', label: 'Open the context menu', keys: ['Menu', 'Shift+F10'] },
+
+  { id: 'vim_move', group: 'lists', vim: true, label: 'Vim: move by row / by card', keys: ['j', 'k', 'h', 'l'] },
+  { id: 'vim_half', group: 'lists', vim: true, label: 'Vim: half a page down / up', keys: ['Ctrl+D', 'Ctrl+U'] },
+  { id: 'vim_ends', group: 'lists', vim: true, label: 'Vim: first / last row', keys: ['gg', 'G'] },
+  { id: 'vim_count', group: 'lists', vim: true, label: 'Vim: repeat a motion (5j) or go to a row (5G)', keys: ['1–9 then a motion'] },
+  { id: 'vim_search', group: 'search', vim: true, label: 'Vim: leave the search box for the results', keys: ['Enter'] },
 
   { id: 'search', group: 'search', label: 'Search the library', keys: ['/', 'Ctrl+F'], bindings: [{ key: '/' }, { key: 'f', ctrl: true }] },
 ];
