@@ -736,8 +736,8 @@
     background: var(--hover);
   }
 
-  /* Specific enough to beat the striped rows. */
-  .tracklist tbody tr.track.selected {
+  tbody tr.selected,
+  tbody tr.selected:hover {
     background: var(--selected);
   }
 
