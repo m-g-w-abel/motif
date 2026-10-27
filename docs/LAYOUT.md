@@ -176,8 +176,11 @@ on the now-playing screen.
 
 ### `queue`
 
-The play queue (its main home is under the now-playing screen). Handy beside a
-library list.
+What plays next (its main home is under the now-playing screen), in two
+parts: **Next in queue**, the tracks added with Queue next or Add to queue
+(drag or Alt+↑/↓ to reorder, × or Delete to remove), then **Next from …**, the
+rest of the album or list that is playing (an album in full, other lists ten
+tracks at a time). Handy beside a library list.
 
 | Property | Values |
 |---|---|
