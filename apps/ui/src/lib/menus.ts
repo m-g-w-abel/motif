@@ -1,4 +1,5 @@
 import { albumKey } from './albums';
+import { trackTitle } from './format';
 import type { ViewState } from './context';
 import type { MenuItem } from './contextMenu.svelte';
 import type { EngineClient } from './engine.svelte';
@@ -38,11 +39,23 @@ export function playTracks(engine: EngineClient, tracks: TrackRef[]) {
   if (tracks.length) engine.run({ type: 'set_context', tracks, start: 0, kind: 'list', label: null });
 }
 
-/** Queues tracks next or at the end; `tracks` may have to be fetched first. */
-export async function queueTracks(engine: EngineClient, tracks: TrackRef[] | Promise<TrackRef[]>, next = false) {
+/**
+ * Queues tracks next or at the end and says so; `tracks` may have to be
+ * fetched first. `label` names them in the toast (an album), else the
+ * track's title or the count.
+ */
+export async function queueTracks(
+  engine: EngineClient,
+  tracks: TrackRef[] | Promise<TrackRef[]>,
+  next = false,
+  label?: string,
+) {
   try {
     const list = await tracks;
-    if (list.length) engine.run({ type: next ? 'enqueue_next' : 'enqueue', tracks: list });
+    if (!list.length) return;
+    engine.run({ type: next ? 'enqueue_next' : 'enqueue', tracks: list });
+    const what = label ?? (list.length === 1 ? trackTitle(list[0]) : `${list.length} tracks`);
+    toasts.show(`${next ? 'Queued next' : 'Added to queue'}: ${what}`);
   } catch (e) {
     engine.error = (e as Error).message;
   }
@@ -77,8 +90,8 @@ export function trackMenu(engine: EngineClient, data: TrackListData, view: ViewS
   }
   const items: MenuItem[] = [{ label: 'Play', run: () => data.play(i) }];
   if (data.kind !== 'queue') {
-    items.push({ label: 'Queue next', run: () => engine.run({ type: 'enqueue_next', tracks: [track] }) });
-    items.push({ label: 'Add to queue', run: () => engine.run({ type: 'enqueue', tracks: [track] }) });
+    items.push({ label: 'Queue next', run: () => queueTracks(engine, [track], true) });
+    items.push({ label: 'Add to queue', run: () => queueTracks(engine, [track]) });
   }
   if (track.album) {
     const artist = data.details?.(i)?.album_artist ?? track.artist ?? '';
@@ -100,10 +113,11 @@ export function albumMenu(
   tracks: () => Promise<TrackRef[]>,
   count = 1,
 ): MenuItem[] {
+  const label = count > 1 ? `${count} albums` : album.title || 'Unknown album';
   const items: MenuItem[] = [
     { label: 'Play', run: play },
-    { label: 'Queue next', run: () => queueTracks(engine, tracks(), true) },
-    { label: 'Add to queue', run: () => queueTracks(engine, tracks()) },
+    { label: 'Queue next', run: () => queueTracks(engine, tracks(), true, label) },
+    { label: 'Add to queue', run: () => queueTracks(engine, tracks(), false, label) },
   ];
   if (count > 1) return items;
   if (album.title) items.push({ label: 'Copy album title', run: () => copy(album.title) });

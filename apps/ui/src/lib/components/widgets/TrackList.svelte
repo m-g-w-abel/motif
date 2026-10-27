@@ -579,7 +579,9 @@
                 onpointerdown={(e) => press(e, i)}
                 onclick={(e) => release(e, i)}
                 onauxclick={(e) => {
-                  if (e.button === 1 && !data.remove) queueTracks(engine, tracksAt(i));
+                  if (e.button !== 1 || data.remove) return;
+                  if (!inSelection(picked, key)) select(i);
+                  queueTracks(engine, tracksAt(i));
                 }}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}

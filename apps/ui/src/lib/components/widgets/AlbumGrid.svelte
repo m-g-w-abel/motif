@@ -379,7 +379,10 @@
               onpointerdown={(e) => press(e, i, album)}
               onclick={(e) => release(e, i)}
               onauxclick={(e) => {
-                if (e.button === 1) queueTracks(engine, albumTracks(keysFor(album)));
+                if (e.button !== 1) return;
+                if (!inSelection(picked, album.key)) select(i);
+                const keys = keysFor(album);
+                queueTracks(engine, albumTracks(keys), false, keys.length > 1 ? `${keys.length} albums` : album.title || 'Unknown album');
               }}
               ondblclick={() => play(album)}
             >
