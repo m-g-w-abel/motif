@@ -12,6 +12,7 @@
   import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
   import { navTarget, scrollInto } from '../../keynav';
+  import { scrollMemory } from '../../scrollMemory';
   import { menu } from '../../contextMenu.svelte';
   import { trackMenu } from '../../menus';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, indexWidth, visibleRange } from '../../table';
@@ -24,6 +25,7 @@
     headers = true,
     columns,
     maxWidth,
+    at,
   }: {
     /** Defaults to whatever the music area is showing. */
     source?: ListSource;
@@ -32,10 +34,13 @@
     columns: Column[];
     /** Centres the list at this width on wide screens. */
     maxWidth?: number;
+    /** Where the list sits in its layout; its scroll position is remembered per layout. */
+    at?: string;
   } = $props();
 
   const { engine, library, settings } = getApp();
   const view = getViewState();
+  const memoryKey = $derived(at === undefined ? undefined : `${view.source}/${view.layoutId}/${at}`);
 
   const kind = $derived(source ?? view.source);
   const browsing = $derived(kind === 'library');
@@ -156,7 +161,9 @@
 
   // Selection lives in shared browse state so it survives layout switches.
   const selected = $derived(view.browse.selected);
+  // A track picked after an album was focused makes the track the selection.
   const select = (index: number) => {
+    view.browse.focusAlbum = null;
     view.browse.selected = data.key(index);
     view.browse.selectedTrack = data.track(index) ?? null;
   };
@@ -268,24 +275,82 @@
     return () => cancelAnimationFrame(frame);
   });
 
-  // An album picked in an album grid scrolls this list to it. Only the focus
-  // triggers this; list updates (e.g. a track change) must not move the user.
+  // Scrolls the list to the focused album (an album picked in a grid). Only the
+  // focus sets this; list updates (e.g. a track change) must not move the user.
+  let pendingAlbum = $state<string | null>(null);
   $effect(() => {
-    const key = view.browse.focusAlbum;
-    if (!key || !scroller) return;
-    untrack(() => {
-      const index = data.groups.find((g) => g.key === key)?.start ?? -1;
-      if (index < 0 || !scroller) return;
-      // Grouped lists scroll to the album header just above its first track.
-      const at = rows.list.findIndex((row) => 'index' in row && row.index === index);
-      const target = albumBreaks ? at - 1 : at;
-      // Scroll this list only; scrollIntoView would also scroll every
-      // scrollable ancestor, moving the whole window.
-      const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-      scroller.scrollTo({ top: rows.tops[target], behavior: reduceMotion ? 'auto' : 'smooth' });
-      select(index);
-    });
+    pendingAlbum = view.browse.focusAlbum;
   });
+  // The first run (the layout appearing) also brings the selected track into
+  // view, or the list's last position when nothing is selected.
+  let arrived = false;
+  $effect(() => {
+    const key = pendingAlbum;
+    const index = data.groups.find((g) => g.key === key)?.start ?? -1;
+    // The library can load after mount, so wait until it has the rows.
+    if (!scroller || !data.count || !data.groups.length) return;
+    if (index >= 0) {
+      untrack(() => void measured().then(() => scrollToAlbum(index)));
+      arrived = true;
+      return;
+    }
+    if (arrived) return;
+    const row = selectedRow();
+    if (row === 'loading') return;
+    arrived = true;
+    untrack(() =>
+      void measured().then(() => {
+        if (!scroller) return;
+        const saved = memoryKey ? scrollMemory.get(memoryKey) : undefined;
+        if (row !== undefined) scrollToRow(row);
+        else if (saved !== undefined) scroller.scrollTop = saved;
+      }),
+    );
+  });
+
+  /** Reads the row heights off the drawn rows and lays them out again, so positions use the real heights. */
+  async function measured() {
+    const track = tbody?.querySelector<HTMLElement>('tr.track');
+    const group = tbody?.querySelector<HTMLElement>('tr.group');
+    if (track) rowHeight = track.offsetHeight;
+    if (group) groupHeight = group.offsetHeight;
+    await tick();
+  }
+
+  function scrollToAlbum(index: number) {
+    if (!scroller) return;
+    pendingAlbum = null;
+    // Grouped lists scroll to the album header just above its first track.
+    const at = rows.list.findIndex((row) => 'index' in row && row.index === index);
+    // Scroll this list only; scrollIntoView would also scroll every
+    // scrollable ancestor, moving the whole window.
+    scroller.scrollTop = rows.tops[albumBreaks ? at - 1 : at];
+    const track = data.track(index);
+    if (track) {
+      view.browse.selected = data.key(index);
+      view.browse.selectedTrack = track;
+    }
+  }
+
+  /** Index of the selected track; 'loading' while the pages before it are still arriving. */
+  function selectedRow(): number | 'loading' | undefined {
+    const key = view.browse.selected;
+    if (!key) return undefined;
+    // shortcut: pages up to the selected track load one by one; a server lookup of a track's position would fetch just one.
+    for (let i = 0; i < data.count; i++) {
+      if (!data.track(i)) return 'loading';
+      if (data.key(i) === key) return i;
+    }
+    return undefined;
+  }
+
+  /** Puts a track's row in the middle of the body, below the column header. */
+  function scrollToRow(index: number) {
+    if (!scroller) return;
+    const at = rows.list.findIndex((row) => 'index' in row && row.index === index);
+    const head = scroller.querySelector('thead')?.offsetHeight ?? 0;
+    scroller.scrollTop = Math.max(0, rows.tops[at] - (scroller.clientHeight - head - rowHeight) / 2);
+  }
 
   function cell(column: Column, index: number): string {
     const t = data.track(index);
@@ -361,7 +426,10 @@
       bind:this={scroller}
       bind:clientWidth={tableWidth}
       bind:clientHeight={viewHeight}
-      onscroll={() => (scrollTop = scroller?.scrollTop ?? 0)}
+      onscroll={() => {
+        scrollTop = scroller?.scrollTop ?? 0;
+        if (memoryKey && arrived) scrollMemory.set(memoryKey, scrollTop);
+      }}
     >
       <table aria-label={data.title} style:max-width="var(--max-width, none)">
         <colgroup>

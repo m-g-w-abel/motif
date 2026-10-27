@@ -3,6 +3,7 @@
   import { placeholderArt } from '../../format';
   import type { TrackRef } from '../../protocol/TrackRef';
   import Icon from '../Icon.svelte';
+  import { albumOf, keptArt, type ShownArt } from './artwork';
 
   let {
     track,
@@ -25,10 +26,11 @@
   // Still being looked up: neither the gradient nor an image yet.
   const loading = $derived(art === undefined && details === undefined);
   let failed = $state<string | null>(null);
-  // The last decoded art id. Its image stays only while `id` is still the same
-  // (no flicker on one cover); another album shows the placeholder until it decodes.
-  let shown = $state<string | null>(null);
-  const visible = $derived(!loading && !!id && shown === id && failed !== id);
+  // The decoded image on screen. It stays while the track is from the same album, even while
+  // its own art id is unknown or decoding (no flicker); another album gets the placeholder.
+  let shown = $state<ShownArt | null>(null);
+  const kept = $derived(keptArt(shown, track));
+  const visible = $derived(kept !== null && failed !== kept);
   const src = (a: string) => library.artUrl(a, size ?? 256);
   $effect(() => {
     if (loading) return;
@@ -37,10 +39,11 @@
       return;
     }
     const next = id;
+    const album = albumOf(track) ?? '';
     const img = new Image();
     img.src = src(next);
     img.decode().then(
-      () => (shown = next),
+      () => (shown = { id: next, album }),
       () => {
         failed = next;
         shown = null;
@@ -58,11 +61,11 @@
 >
   {#if visible}
     <img
-      src={src(id!)}
+      src={src(kept!)}
       alt={title ? `Cover of ${title}` : ''}
       loading="lazy"
       decoding="async"
-      onerror={() => (failed = id)}
+      onerror={() => (failed = kept)}
     />
   {:else if !track}
     <Icon name="music" size={size ? Math.round(size * 0.4) : 48} />
