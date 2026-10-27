@@ -13,11 +13,22 @@
   import { sortLabel, viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import { scrollMemory } from '../../scrollMemory';
 
-  let { cardSize, columns: layoutColumns }: { cardSize: number; columns?: number } = $props();
+  let {
+    cardSize,
+    columns: layoutColumns,
+    at,
+  }: {
+    cardSize: number;
+    columns?: number;
+    /** Where the grid sits in its layout; its scroll position is remembered per layout. */
+    at?: string;
+  } = $props();
 
   const { engine, library } = getApp();
   const view = getViewState();
+  const memoryKey = $derived(at === undefined ? undefined : `${view.source}/${view.layoutId}/${at}`);
 
   interface Card {
     key: string;
@@ -161,6 +172,52 @@
   // Cards inserted above the first visible row (a scan) must not push it away.
   let scroller = $state<HTMLElement>();
   let anchorOffset = 0;
+  // On arrival (the layout appearing) the focused album's card comes into view,
+  // else the grid's last position. Waits while the cards before it load.
+  let arrived = false;
+  $effect(() => {
+    if (arrived || !scroller || !count) return;
+    const focus = view.browse.focusAlbum;
+    const found = focus ? indexOfAlbum(focus) : undefined;
+    if (found === 'loading') return;
+    arrived = true;
+    untrack(() =>
+      void measured().then(() => {
+        if (!scroller) return;
+        const saved = memoryKey ? scrollMemory.get(memoryKey) : undefined;
+        if (found !== undefined) {
+          cursor = found;
+          scrollToCard(found);
+        } else if (saved !== undefined) scroller.scrollTop = saved;
+      }),
+    );
+  });
+
+  /** Index of an album; 'loading' while the cards before it are still arriving. */
+  function indexOfAlbum(key: string): number | 'loading' | undefined {
+    for (let i = 0; i < count; i++) {
+      const album = card(i);
+      if (!album) return 'loading';
+      if (album.key === key) return i;
+    }
+    return undefined;
+  }
+
+  /** Reads the width and card size off the drawn grid and lays it out again: columns and rows depend on them. */
+  async function measured() {
+    if (list) width = list.clientWidth;
+    if (scroller) viewHeight = scroller.clientHeight;
+    cardHeight = list?.querySelector('li')?.offsetHeight ?? cardHeight;
+    await tick();
+  }
+
+  /** Puts a card's row in the middle of the grid. */
+  function scrollToCard(index: number) {
+    if (!scroller) return;
+    // Cards are measured once drawn; until then the estimate stands.
+    const row = (list?.querySelector('li')?.offsetHeight || cardHeight || cardSize + 48) + GAP;
+    scroller.scrollTop = Math.max(0, Math.floor(index / columns) * row - (scroller.clientHeight - row) / 2);
+  }
   $effect(() => {
     const top = scrollTop;
     untrack(() => {
@@ -196,7 +253,10 @@
     class="scroll"
     bind:this={scroller}
     bind:clientHeight={viewHeight}
-    onscroll={(e) => (scrollTop = (e.currentTarget as HTMLElement).scrollTop)}
+    onscroll={(e) => {
+      scrollTop = (e.currentTarget as HTMLElement).scrollTop;
+      if (memoryKey && arrived) scrollMemory.set(memoryKey, scrollTop);
+    }}
   >
     <ul
       bind:this={list}
