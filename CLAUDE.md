@@ -48,7 +48,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Run all of these before saying work is done; CI runs the same on Linux,
+`node scripts/soak.mjs [mode] [seconds]` soak-tests engine memory (see the
+script). Run all of these before saying work is done; CI runs the same on Linux,
 Windows and macOS. If no Rust changed (no `*.rs` or `Cargo.*` files),
 skip `cargo clippy` and `cargo test` locally and leave them to CI.
 
