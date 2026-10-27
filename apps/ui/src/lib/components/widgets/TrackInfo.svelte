@@ -9,8 +9,7 @@
   const { engine, library } = getApp();
   let scroller = $state<HTMLElement>();
   const track = $derived(engine.current?.track);
-  const queue = $derived(engine.queue);
-  const position = $derived(engine.player?.current ?? null);
+  const context = $derived(engine.player?.context);
   /** Format details from the library, when the file is in it. */
   const details = $derived(library.details(track));
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
@@ -22,7 +21,7 @@
             ['Title', trackTitle(track)],
             ['Artist', track.artist ?? ''],
             ['Album', track.album ?? ''],
-            ['Queue', position !== null ? `${position + 1}/${queue.length}` : ''],
+            ['Queue', context && context.index !== null ? `${context.index + 1}/${context.len}` : ''],
             ['Duration', track.duration_ms ? formatTime(track.duration_ms) : ''],
             ['Year', details?.year ? String(details.year) : ''],
             ['Genre', details?.genre ?? ''],

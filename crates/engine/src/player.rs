@@ -1,21 +1,58 @@
 use std::time::{Duration, Instant};
 
 use protocol::{
-    Command, OutputDevice, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackRef,
+    Command, ContextKind, OutputDevice, PlayContext, PlaybackStatus, PlayerState, QueueItem,
+    RepeatMode, TrackRef,
 };
 
 use crate::{EngineError, Playable, Resolver, audio::decoder};
 
 /// "Previous" restarts the current track instead when past this point.
 const RESTART_THRESHOLD: Duration = Duration::from_secs(3);
+/// Entries remembered for "Previous".
+const HISTORY: usize = 500;
+/// Context entries published at once (see [`Player::context_window`]): small
+/// contexts such as albums whole, big ones as a window that moves in steps.
+const WINDOW: usize = 200;
+const WINDOW_STEP: usize = 100;
+const WINDOW_BEHIND: usize = 20;
 
-/// Queue and transport state. Time is passed in and track resolution goes
-/// through a [`Resolver`], so behaviour is deterministic under test.
+/// Where the current entry came from.
+#[derive(Debug)]
+enum Current {
+    /// An index into the context.
+    Context(usize),
+    /// Taken off the queue (or out of history), so owned here.
+    Item(Box<QueueItem>),
+}
+
+/// What plays after the current entry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Step {
+    /// The current entry again (repeat-one).
+    Same,
+    /// The front of the queue.
+    Queue,
+    Context(usize),
+}
+
+/// Context, queue and transport state. Time is passed in and track resolution
+/// goes through a [`Resolver`], so behaviour is deterministic under test.
+///
+/// The context is the list played from; the queue holds tracks added to play
+/// before the context resumes, each removed once it starts.
 #[derive(Debug)]
 pub struct Player {
+    context: Vec<QueueItem>,
+    /// Kind and label, once something was played from a list.
+    context_meta: Option<(ContextKind, Option<String>)>,
+    /// Index of the context entry that plays once the queue is empty.
+    context_next: usize,
     queue: Vec<QueueItem>,
+    current: Option<Current>,
+    /// What played before the current entry, oldest first.
+    history: Vec<QueueItem>,
     next_id: u64,
-    current: Option<usize>,
     status: PlaybackStatus,
     volume: f32,
     repeat: RepeatMode,
@@ -36,9 +73,13 @@ pub struct Player {
 impl Default for Player {
     fn default() -> Self {
         Self {
+            context: Vec::new(),
+            context_meta: None,
+            context_next: 0,
             queue: Vec::new(),
-            next_id: 1,
             current: None,
+            history: Vec::new(),
+            next_id: 1,
             status: PlaybackStatus::Stopped,
             volume: 1.0,
             repeat: RepeatMode::Off,
@@ -64,13 +105,7 @@ impl Player {
             },
             Command::Stop => self.stop(),
             Command::Next => self.advance(now, false),
-            Command::Previous => {
-                if self.position(now) > RESTART_THRESHOLD || self.current == Some(0) {
-                    self.seek(Duration::ZERO, now);
-                } else if let Some(i) = self.current {
-                    self.jump(i - 1, now);
-                }
-            }
+            Command::Previous => self.previous(now),
             Command::Seek { position_ms } => self.seek(Duration::from_millis(position_ms), now),
             Command::SetVolume { volume } => {
                 if !(0.0..=1.0).contains(&volume) {
@@ -79,36 +114,54 @@ impl Player {
                 self.volume = volume;
             }
             Command::SetRepeat { mode } => self.repeat = mode,
-            Command::Enqueue { tracks } => self.insert(self.queue.len(), tracks),
-            Command::EnqueueNext { tracks } => {
-                self.insert(self.current.map_or(0, |i| i + 1), tracks)
+            Command::Enqueue { tracks } => {
+                let items = self.entries(tracks);
+                self.queue.extend(items);
             }
-            Command::SetQueue { tracks, start } => {
+            Command::EnqueueNext { tracks } => {
+                let items = self.entries(tracks);
+                self.queue.splice(0..0, items);
+            }
+            Command::SetContext {
+                tracks,
+                start,
+                kind,
+                label,
+            } => {
                 if let Some(start) = start
                     && start as usize >= tracks.len()
                 {
                     return Err(EngineError::IndexOutOfRange(start));
                 }
+                if let Some(old) = self.current.take() {
+                    self.remember(old);
+                }
+                self.context = self.entries(tracks);
+                self.context_meta = Some((kind, label));
+                self.context_next = 0;
                 self.queue.clear();
-                self.current = None;
-                self.stop();
-                self.insert(self.queue.len(), tracks);
-                if let Some(start) = start {
-                    self.jump(start as usize, now);
-                    self.play(now);
+                match start {
+                    Some(start) => {
+                        self.go(Step::Context(start as usize), now);
+                        self.play(now);
+                    }
+                    None => self.stop(),
                 }
             }
             Command::PlayItem { item_id } => {
-                let index = self.index_of(item_id)?;
-                self.jump(index, now);
+                self.jump_to(item_id, now)?;
                 self.play(now);
             }
-            Command::RemoveItem { item_id } => self.remove(self.index_of(item_id)?, now),
-            Command::ClearQueue => {
-                self.queue.clear();
-                self.current = None;
-                self.stop();
+            Command::RemoveItem { item_id } => self.remove(item_id, now)?,
+            Command::MoveItem { item_id, to } => {
+                let from = position(&self.queue, item_id)?;
+                if to as usize >= self.queue.len() {
+                    return Err(EngineError::IndexOutOfRange(to));
+                }
+                let item = self.queue.remove(from);
+                self.queue.insert(to as usize, item);
             }
+            Command::ClearQueue => self.queue.clear(),
             Command::SetDecoders { order } => {
                 let known: Vec<_> = decoder::all().iter().map(|p| p.name).collect();
                 for (i, name) in order.iter().enumerate() {
@@ -149,7 +202,17 @@ impl Player {
             repeat: self.repeat,
             position_ms: self.position(now).as_millis() as u64,
             sampled_at_ms: wall_ms,
-            current: self.current.map(|i| i as u32),
+            current: self.current_item().cloned(),
+            context: self.context_meta.as_ref().map(|(kind, label)| PlayContext {
+                kind: *kind,
+                label: label.clone(),
+                len: self.context.len() as u32,
+                index: match self.current {
+                    Some(Current::Context(i)) => Some(i as u32),
+                    _ => None,
+                },
+                next: self.context_step().map(|i| i as u32),
+            }),
             decoders: self.decoders.clone(),
             available_decoders: decoder::all().iter().map(|p| p.name.to_string()).collect(),
             output: self.output.clone(),
@@ -157,8 +220,24 @@ impl Player {
         }
     }
 
+    /// The queue: what plays before the context resumes.
     pub fn queue(&self) -> &[QueueItem] {
         &self.queue
+    }
+
+    /// The part of the context clients are sent, and its offset: the whole
+    /// context up to [`WINDOW`] entries, else a window around the position
+    /// that only moves every [`WINDOW_STEP`] entries, so a big context isn't
+    /// resent on every track change.
+    pub fn context_window(&self) -> (usize, &[QueueItem]) {
+        let cursor = match self.current {
+            Some(Current::Context(i)) => i,
+            _ => self.context_next,
+        };
+        let offset = (cursor.saturating_sub(WINDOW_BEHIND) / WINDOW_STEP * WINDOW_STEP)
+            .min(self.context.len().saturating_sub(WINDOW));
+        let end = (offset + WINDOW).min(self.context.len());
+        (offset, &self.context[offset..end])
     }
 
     pub fn status(&self) -> PlaybackStatus {
@@ -188,22 +267,21 @@ impl Player {
     }
 
     pub fn current_item(&self) -> Option<&QueueItem> {
-        self.queue.get(self.current?)
+        match self.current.as_ref()? {
+            Current::Context(i) => self.context.get(*i),
+            Current::Item(item) => Some(&**item),
+        }
     }
 
-    /// The entry that plays when the current one ends naturally.
+    /// The entry that plays when the current one ends naturally: the queue
+    /// first, then the context, following repeat.
     pub fn upcoming(&self) -> Option<&QueueItem> {
-        let i = self.current?;
-        let next = if self.repeat == RepeatMode::One {
-            i
-        } else if i + 1 < self.queue.len() {
-            i + 1
-        } else if self.repeat == RepeatMode::All {
-            0
-        } else {
-            return None;
-        };
-        self.queue.get(next)
+        self.current.as_ref()?;
+        match self.step(true)? {
+            Step::Same => self.current_item(),
+            Step::Queue => self.queue.first(),
+            Step::Context(i) => self.context.get(i),
+        }
     }
 
     /// Corrects the position to what the listener actually hears.
@@ -220,12 +298,13 @@ impl Player {
     }
 
     /// The audio output moved on to `item` by itself (gapless). Returns false
-    /// if the entry has since left the queue.
+    /// if the entry has since left the queue and context.
     pub fn moved_to(&mut self, item: u64, playable: Playable, now: Instant) -> bool {
-        let Ok(index) = self.index_of(item) else {
+        if self.upcoming().is_some_and(|next| next.id == item) {
+            self.advance(now, true);
+        } else if self.jump_to(item, now).is_err() {
             return false;
-        };
-        self.jump(index, now);
+        }
         self.resolved = Some((item, playable));
         true
     }
@@ -233,15 +312,14 @@ impl Player {
     /// `item` resolved but couldn't be played (unreadable, unsupported, no
     /// output device). It is marked and, if current, skipped.
     pub fn fail(&mut self, item: u64, reason: String, now: Instant) {
-        let Ok(index) = self.index_of(item) else {
+        let Some(entry) = self.entries_mut().find(|i| i.id == item) else {
             return;
         };
-        self.queue[index].error = Some(reason);
-        if self.current != Some(index) {
+        entry.error = Some(reason);
+        if self.current_item().map(|i| i.id) != Some(item) {
             return;
         }
-        let last = index + 1 == self.queue.len() && self.repeat == RepeatMode::Off;
-        if last || self.queue.iter().all(|i| i.error.is_some()) {
+        if self.step(false).is_none() || self.entries_mut().all(|i| i.error.is_some()) {
             self.stop();
         } else {
             self.advance(now, false);
@@ -251,32 +329,38 @@ impl Player {
     /// What the current entry resolved to, once [`Self::resolve_current`] has run.
     pub fn playable(&self) -> Option<&Playable> {
         let (id, playable) = self.resolved.as_ref()?;
-        (self.queue.get(self.current?)?.id == *id).then_some(playable)
+        (self.current_item()?.id == *id).then_some(playable)
     }
 
     /// Resolves the current entry if it changed since the last call. Entries
-    /// nothing can play get their reason recorded and are skipped; if none in
-    /// the queue can play, playback stops. Returns whether state changed.
+    /// nothing can play get their reason recorded and are skipped; if none
+    /// can play, playback stops. Returns whether state changed.
     pub fn resolve_current(&mut self, resolver: &dyn Resolver, now: Instant) -> bool {
         let mut changed = false;
-        // Each entry is tried at most once per call, so a queue of unplayable
-        // entries can't loop forever under repeat.
-        for _ in 0..self.queue.len() {
-            let Some(index) = self.current else { break };
-            let item = &mut self.queue[index];
-            if self.resolved.as_ref().is_some_and(|(id, _)| *id == item.id) {
+        // Each entry is tried at most once per call, so entries nothing can
+        // play can't loop forever under repeat.
+        for _ in 0..=self.queue.len() + self.context.len() {
+            let Some(item) = self.current_item() else {
+                break;
+            };
+            let id = item.id;
+            if self.resolved.as_ref().is_some_and(|(r, _)| *r == id) {
                 return changed;
             }
-            match resolver.resolve(&item.track) {
+            let result = resolver.resolve(&item.track);
+            let Some(item) = self.current_item_mut() else {
+                break;
+            };
+            match result {
                 Ok(playable) => {
                     changed |= item.error.take().is_some();
-                    self.resolved = Some((item.id, playable));
+                    self.resolved = Some((id, playable));
                     return changed;
                 }
                 Err(reason) => {
                     item.error = Some(reason);
                     changed = true;
-                    if index + 1 == self.queue.len() && self.repeat == RepeatMode::Off {
+                    if self.step(false).is_none() {
                         break;
                     }
                     self.advance(now, false);
@@ -302,35 +386,185 @@ impl Player {
     }
 
     fn current_duration(&self) -> Option<Duration> {
-        let item = self.queue.get(self.current?)?;
+        let item = self.current_item()?;
         item.track.duration_ms.map(Duration::from_millis)
     }
 
-    fn insert(&mut self, at: usize, tracks: Vec<TrackRef>) {
-        for (offset, track) in tracks.into_iter().enumerate() {
-            let id = self.next_id;
-            self.next_id += 1;
-            self.queue.insert(
-                at + offset,
-                QueueItem {
-                    id,
-                    track,
-                    error: None,
-                },
-            );
+    fn current_item_mut(&mut self) -> Option<&mut QueueItem> {
+        match self.current.as_mut()? {
+            Current::Context(i) => self.context.get_mut(*i),
+            Current::Item(item) => Some(&mut **item),
         }
     }
 
-    fn index_of(&self, item_id: u64) -> Result<usize, EngineError> {
-        self.queue
-            .iter()
-            .position(|item| item.id == item_id)
-            .ok_or(EngineError::UnknownItem(item_id))
+    /// Every entry that can still play: the current one, the queue and the context.
+    fn entries_mut(&mut self) -> impl Iterator<Item = &mut QueueItem> {
+        let current = match &mut self.current {
+            Some(Current::Item(item)) => Some(&mut **item),
+            _ => None,
+        };
+        current
+            .into_iter()
+            .chain(&mut self.queue)
+            .chain(&mut self.context)
+    }
+
+    /// Gives tracks entry ids.
+    fn entries(&mut self, tracks: Vec<TrackRef>) -> Vec<QueueItem> {
+        tracks
+            .into_iter()
+            .map(|track| {
+                self.next_id += 1;
+                QueueItem {
+                    id: self.next_id - 1,
+                    track,
+                    error: None,
+                }
+            })
+            .collect()
+    }
+
+    /// The context entry that plays once the queue is empty.
+    fn context_step(&self) -> Option<usize> {
+        if self.context_next < self.context.len() {
+            Some(self.context_next)
+        } else if self.repeat != RepeatMode::Off && !self.context.is_empty() {
+            Some(0)
+        } else {
+            None
+        }
+    }
+
+    /// What follows the current entry. `natural` is true when it ended on its
+    /// own, the only case where repeat-one applies; repeat only applies to the
+    /// context.
+    fn step(&self, natural: bool) -> Option<Step> {
+        if natural
+            && self.repeat == RepeatMode::One
+            && matches!(self.current, Some(Current::Context(_)))
+        {
+            Some(Step::Same)
+        } else if !self.queue.is_empty() {
+            Some(Step::Queue)
+        } else {
+            self.context_step().map(Step::Context)
+        }
+    }
+
+    /// Moves to `step`, keeping the play/pause status. The entry left behind
+    /// goes into history.
+    fn go(&mut self, step: Step, now: Instant) {
+        let next = match step {
+            Step::Same => None,
+            Step::Queue => Some(Current::Item(Box::new(self.queue.remove(0)))),
+            Step::Context(i) => {
+                self.context_next = i + 1;
+                Some(Current::Context(i))
+            }
+        };
+        if let Some(next) = next
+            && let Some(old) = self.current.replace(next)
+        {
+            self.remember(old);
+        }
+        self.restart(now);
+    }
+
+    fn remember(&mut self, entry: Current) {
+        let item = match entry {
+            Current::Context(i) => self.context.get(i).cloned(),
+            Current::Item(item) => Some(*item),
+        };
+        self.history.extend(item);
+        if self.history.len() > HISTORY {
+            self.history.remove(0);
+        }
+    }
+
+    /// Moves to the next entry, or stops if there is none.
+    fn advance(&mut self, now: Instant, natural: bool) {
+        match self.step(natural) {
+            Some(step) => self.go(step, now),
+            None => self.stop(),
+        }
+    }
+
+    /// Steps back through history. The entry left goes back where it came
+    /// from (the front of the queue, or the context position), so Next
+    /// returns to it.
+    fn previous(&mut self, now: Instant) {
+        if self.position(now) > RESTART_THRESHOLD || self.history.is_empty() {
+            self.seek(Duration::ZERO, now);
+            return;
+        }
+        let item = self.history.pop().expect("checked above");
+        match self.current.take() {
+            Some(Current::Context(i)) => self.context_next = i,
+            Some(Current::Item(left)) => self.queue.insert(0, *left),
+            None => {}
+        }
+        // Back into the context if it is still there, else on its own.
+        self.current = Some(match position(&self.context, item.id) {
+            Ok(i) => {
+                self.context_next = i + 1;
+                Current::Context(i)
+            }
+            Err(_) => Current::Item(Box::new(item)),
+        });
+        self.restart(now);
+    }
+
+    /// Makes entry `id` current: from the queue (the rest of the queue
+    /// stays) or the context (which moves there).
+    fn jump_to(&mut self, id: u64, now: Instant) -> Result<(), EngineError> {
+        if self.current_item().is_some_and(|i| i.id == id) {
+            self.restart(now);
+        } else if let Ok(i) = position(&self.queue, id) {
+            let item = self.queue.remove(i);
+            self.queue.insert(0, item);
+            self.go(Step::Queue, now);
+        } else {
+            let i = position(&self.context, id)?;
+            self.go(Step::Context(i), now);
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, id: u64, now: Instant) -> Result<(), EngineError> {
+        if let Ok(i) = position(&self.queue, id) {
+            self.queue.remove(i);
+            return Ok(());
+        }
+        let current = self.current_item().is_some_and(|i| i.id == id);
+        if let Ok(i) = position(&self.context, id) {
+            self.context.remove(i);
+            if self.context_next > i {
+                self.context_next -= 1;
+            }
+            if let Some(Current::Context(c)) = &mut self.current
+                && *c > i
+            {
+                *c -= 1;
+            }
+        } else if !current {
+            return Err(EngineError::UnknownItem(id));
+        }
+        if current {
+            // Like Next, without remembering the removed entry.
+            self.current = None;
+            match self.step(false) {
+                Some(step) => self.go(step, now),
+                None => self.stop(),
+            }
+        }
+        Ok(())
     }
 
     fn play(&mut self, now: Instant) {
-        if self.current.is_none() && !self.queue.is_empty() {
-            self.current = Some(0);
+        if self.current.is_none()
+            && let Some(step) = self.step(false)
+        {
+            self.go(step, now);
         }
         if self.current.is_some() && self.status != PlaybackStatus::Playing {
             self.status = PlaybackStatus::Playing;
@@ -361,45 +595,20 @@ impl Player {
         self.base = self.position(now);
     }
 
-    /// Moves to another queue entry, keeping the play/pause status.
-    fn jump(&mut self, index: usize, now: Instant) {
-        self.current = Some(index);
+    /// Back to the start of the current entry, keeping the play/pause status.
+    fn restart(&mut self, now: Instant) {
         self.base = Duration::ZERO;
         if self.since.is_some() {
             self.since = Some(now);
         }
     }
+}
 
-    /// Moves to the next entry. `natural` is true when the current track ended
-    /// on its own, which is the only case where repeat-one applies.
-    fn advance(&mut self, now: Instant, natural: bool) {
-        let Some(i) = self.current else { return };
-        if natural && self.repeat == RepeatMode::One {
-            self.jump(i, now);
-        } else if i + 1 < self.queue.len() {
-            self.jump(i + 1, now);
-        } else if self.repeat != RepeatMode::Off {
-            self.jump(0, now);
-        } else {
-            self.stop();
-        }
-    }
-
-    fn remove(&mut self, index: usize, now: Instant) {
-        self.queue.remove(index);
-        let Some(current) = self.current else { return };
-        if index < current {
-            self.current = Some(current - 1);
-        } else if index == current {
-            if self.queue.is_empty() {
-                self.current = None;
-                self.stop();
-            } else {
-                // The following entry slides into place; at the end, step back.
-                self.jump(current.min(self.queue.len() - 1), now);
-            }
-        }
-    }
+fn position(items: &[QueueItem], id: u64) -> Result<usize, EngineError> {
+    items
+        .iter()
+        .position(|item| item.id == id)
+        .ok_or(EngineError::UnknownItem(id))
 }
 
 #[cfg(test)]
@@ -416,10 +625,29 @@ mod tests {
         }
     }
 
+    fn set_context(p: &mut Player, tracks: &[(&str, u64)], start: Option<u32>, now: Instant) {
+        let tracks = tracks.iter().map(|(n, d)| track(n, *d)).collect();
+        let command = Command::SetContext {
+            tracks,
+            start,
+            kind: ContextKind::List,
+            label: None,
+        };
+        p.apply(command, now).unwrap();
+    }
+
+    /// A stopped player with `tracks` as its context.
     fn player_with(tracks: &[(&str, u64)], t0: Instant) -> Player {
         let mut player = Player::default();
-        let tracks = tracks.iter().map(|(n, d)| track(n, *d)).collect();
-        player.apply(Command::Enqueue { tracks }, t0).unwrap();
+        set_context(&mut player, tracks, None, t0);
+        player
+    }
+
+    /// A player playing the first of `names` (1 s each) as its context.
+    fn playing(names: &[&str], t0: Instant) -> Player {
+        let mut player = Player::default();
+        let tracks: Vec<_> = names.iter().map(|n| (*n, 1000)).collect();
+        set_context(&mut player, &tracks, Some(0), t0);
         player
     }
 
@@ -427,11 +655,62 @@ mod tests {
         Duration::from_millis(n)
     }
 
+    fn name(item: Option<&QueueItem>) -> Option<&str> {
+        item?.track.title.as_deref()
+    }
+
+    fn now_playing(p: &Player) -> Option<&str> {
+        name(p.current_item())
+    }
+
+    fn queued(p: &Player) -> Vec<&str> {
+        p.queue.iter().map(|i| name(Some(i)).unwrap()).collect()
+    }
+
+    fn id(p: &Player, title: &str) -> u64 {
+        p.queue
+            .iter()
+            .chain(&p.context)
+            .find(|i| name(Some(i)) == Some(title))
+            .unwrap()
+            .id
+    }
+
+    fn enqueue(p: &mut Player, names: &[&str], now: Instant) {
+        let tracks = names.iter().map(|n| track(n, 1000)).collect();
+        p.apply(Command::Enqueue { tracks }, now).unwrap();
+    }
+
+    fn enqueue_next(p: &mut Player, names: &[&str], now: Instant) {
+        let tracks = names.iter().map(|n| track(n, 1000)).collect();
+        p.apply(Command::EnqueueNext { tracks }, now).unwrap();
+    }
+
+    fn repeat(p: &mut Player, mode: RepeatMode) {
+        p.apply(Command::SetRepeat { mode }, Instant::now())
+            .unwrap();
+    }
+
+    /// Presses Next `n` times, collecting what plays (and what was upcoming
+    /// before each press, which must agree).
+    fn nexts(p: &mut Player, n: usize, now: Instant) -> Vec<String> {
+        (0..n)
+            .map(|_| {
+                let upcoming = name(p.upcoming()).map(str::to_string);
+                p.apply(Command::Next, now).unwrap();
+                let current = now_playing(p).unwrap().to_string();
+                assert_eq!(upcoming.as_deref(), Some(current.as_str()), "upcoming");
+                current
+            })
+            .collect()
+    }
+
     #[test]
     fn position_advances_only_while_playing() {
         let t0 = Instant::now();
         let mut p = player_with(&[("a", 10_000)], t0);
         p.apply(Command::Play, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("a"));
         assert_eq!(p.position(t0 + ms(1500)), ms(1500));
 
         p.apply(Command::Pause, t0 + ms(2000)).unwrap();
@@ -468,98 +747,91 @@ mod tests {
         p.apply(Command::Play, t0).unwrap();
 
         assert!(p.tick(t0 + ms(1000)));
-        assert_eq!(p.current, Some(1));
+        assert_eq!(now_playing(&p), Some("b"));
         assert_eq!(p.position(t0 + ms(1200)), ms(200));
 
         assert!(p.tick(t0 + ms(2000)));
         assert_eq!(p.status, PlaybackStatus::Stopped);
+        assert_eq!(now_playing(&p), Some("b"), "the last entry stays current");
         assert!(!p.tick(t0 + ms(5000)));
     }
 
-    fn titles(p: &Player) -> Vec<&str> {
-        p.queue
-            .iter()
-            .map(|i| i.track.title.as_deref().unwrap())
-            .collect()
-    }
-
-    fn enqueue_next(p: &mut Player, name: &str, now: Instant) {
-        let tracks = vec![track(name, 1000)];
-        p.apply(Command::EnqueueNext { tracks }, now).unwrap();
-    }
-
     #[test]
-    fn enqueue_next_goes_after_the_current_entry() {
+    fn with_an_empty_queue_next_follows_the_context() {
         let t0 = Instant::now();
-        let mut p = player_with(&[("a", 1000), ("b", 1000), ("c", 1000)], t0);
-        enqueue_next(&mut p, "x", t0);
-        assert_eq!(
-            titles(&p),
-            ["x", "a", "b", "c"],
-            "nothing current: the front"
-        );
-
-        p.apply(Command::Play, t0).unwrap();
+        let mut p = playing(&["a", "b", "c"], t0);
+        assert!(p.queue.is_empty());
+        assert_eq!(nexts(&mut p, 2, t0), ["b", "c"]);
+        assert_eq!(p.upcoming(), None);
         p.apply(Command::Next, t0).unwrap();
-        enqueue_next(&mut p, "y", t0);
-        assert_eq!(titles(&p), ["x", "a", "y", "b", "c"]);
-        assert_eq!(p.current, Some(1), "the current entry doesn't move");
-        assert_eq!(p.upcoming().unwrap().track.title.as_deref(), Some("y"));
+        assert_eq!(p.status, PlaybackStatus::Stopped);
     }
 
     #[test]
-    fn enqueue_next_on_the_last_entry_and_with_repeat() {
+    fn the_queue_plays_first_and_is_removed_once_played() {
         let t0 = Instant::now();
-        let mut p = player_with(&[("a", 1000)], t0);
-        p.apply(Command::Play, t0).unwrap();
-        enqueue_next(&mut p, "x", t0);
-        assert_eq!(titles(&p), ["a", "x"]);
-
-        let mode = |mode| Command::SetRepeat { mode };
-        p.apply(mode(RepeatMode::All), t0).unwrap();
-        p.apply(Command::Next, t0).unwrap();
-        enqueue_next(&mut p, "y", t0);
-        assert_eq!(
-            p.upcoming().unwrap().track.title.as_deref(),
-            Some("y"),
-            "before the wrap"
-        );
-
-        p.apply(mode(RepeatMode::One), t0).unwrap();
-        assert_eq!(
-            p.upcoming().unwrap().track.title.as_deref(),
-            Some("x"),
-            "repeat-one stays"
-        );
+        let mut p = playing(&["a", "b", "c"], t0);
+        enqueue(&mut p, &["x", "y"], t0);
+        assert_eq!(nexts(&mut p, 1, t0), ["x"]);
+        assert_eq!(queued(&p), ["y"], "x left the queue when it started");
+        assert_eq!(nexts(&mut p, 3, t0), ["y", "b", "c"]);
+        assert!(p.queue.is_empty());
     }
 
     #[test]
-    fn repeat_modes() {
+    fn enqueue_adds_to_the_end_and_enqueue_next_to_the_front() {
         let t0 = Instant::now();
-        let mut p = player_with(&[("a", 1000), ("b", 1000)], t0);
-        p.apply(
-            Command::SetRepeat {
-                mode: RepeatMode::One,
-            },
-            t0,
-        )
-        .unwrap();
+        let mut p = playing(&["a", "b"], t0);
+        enqueue(&mut p, &["x"], t0);
+        enqueue(&mut p, &["y"], t0);
+        enqueue_next(&mut p, &["n1", "n2"], t0);
+        assert_eq!(queued(&p), ["n1", "n2", "x", "y"]);
+        assert_eq!(name(p.upcoming()), Some("n1"));
+        assert_eq!(now_playing(&p), Some("a"), "the current entry doesn't move");
+    }
+
+    #[test]
+    fn enqueueing_with_nothing_playing_plays_the_queue() {
+        let t0 = Instant::now();
+        let mut p = Player::default();
+        enqueue(&mut p, &["x", "y"], t0);
         p.apply(Command::Play, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("x"));
+        assert_eq!(nexts(&mut p, 1, t0), ["y"]);
+        assert_eq!(p.upcoming(), None);
+    }
+
+    #[test]
+    fn the_queue_emptying_mid_context_resumes_the_context() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b", "c"], t0);
+        enqueue(&mut p, &["x"], t0);
         p.tick(t0 + ms(1000));
-        assert_eq!(p.current, Some(0), "repeat-one replays on natural end");
-        p.apply(Command::Next, t0 + ms(1100)).unwrap();
-        assert_eq!(p.current, Some(1), "but Next still skips");
+        assert_eq!(now_playing(&p), Some("x"));
+        assert!(p.queue.is_empty());
+        assert_eq!(name(p.upcoming()), Some("b"));
+        p.tick(t0 + ms(2000));
+        assert_eq!(now_playing(&p), Some("b"));
+        p.tick(t0 + ms(3000));
+        assert_eq!(now_playing(&p), Some("c"));
+    }
 
-        p.apply(
-            Command::SetRepeat {
-                mode: RepeatMode::All,
-            },
-            t0,
-        )
-        .unwrap();
-        p.apply(Command::Next, t0 + ms(1200)).unwrap();
-        assert_eq!(p.current, Some(0), "repeat-all wraps");
-        assert_eq!(p.status, PlaybackStatus::Playing);
+    #[test]
+    fn previous_walks_back_through_history_including_the_queue() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b", "c"], t0);
+        enqueue(&mut p, &["x"], t0);
+        assert_eq!(nexts(&mut p, 2, t0), ["x", "b"]);
+
+        p.apply(Command::Previous, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("x"));
+        p.apply(Command::Previous, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("a"));
+        assert_eq!(queued(&p), ["x"], "x is back in the queue");
+        p.apply(Command::Previous, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("a"), "no history: restarts");
+
+        assert_eq!(nexts(&mut p, 3, t0), ["x", "b", "c"], "the same way again");
     }
 
     #[test]
@@ -570,66 +842,214 @@ mod tests {
         p.apply(Command::Next, t0).unwrap();
 
         p.apply(Command::Previous, t0 + ms(5000)).unwrap();
-        assert_eq!(p.current, Some(1));
+        assert_eq!(now_playing(&p), Some("b"));
         assert_eq!(p.position(t0 + ms(5000)), Duration::ZERO);
 
         p.apply(Command::Previous, t0 + ms(6000)).unwrap();
-        assert_eq!(p.current, Some(0));
+        assert_eq!(now_playing(&p), Some("a"));
     }
 
     #[test]
-    fn removing_items_keeps_current_track() {
+    fn jumping_within_the_context_keeps_the_queue() {
         let t0 = Instant::now();
-        let mut p = player_with(&[("a", 1000), ("b", 1000), ("c", 1000)], t0);
-        let ids: Vec<u64> = p.queue.iter().map(|i| i.id).collect();
-        p.apply(Command::PlayItem { item_id: ids[1] }, t0).unwrap();
-
-        p.apply(Command::RemoveItem { item_id: ids[0] }, t0)
-            .unwrap();
-        assert_eq!(p.current, Some(0));
-        assert_eq!(p.queue[0].id, ids[1]);
-
-        p.apply(Command::RemoveItem { item_id: ids[1] }, t0)
-            .unwrap();
-        assert_eq!(p.queue[p.current.unwrap()].id, ids[2], "next slides in");
-
-        p.apply(Command::RemoveItem { item_id: ids[2] }, t0)
-            .unwrap();
-        assert_eq!(p.current, None);
-        assert_eq!(p.status, PlaybackStatus::Stopped);
+        let mut p = playing(&["a", "b", "c", "d", "e"], t0);
+        enqueue(&mut p, &["x"], t0);
+        let d = id(&p, "d");
+        p.apply(Command::PlayItem { item_id: d }, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("d"));
+        assert_eq!(queued(&p), ["x"]);
+        assert_eq!(nexts(&mut p, 2, t0), ["x", "e"]);
+        p.apply(Command::Previous, t0).unwrap();
+        p.apply(Command::Previous, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("d"));
     }
 
     #[test]
-    fn set_queue_replaces_and_starts_playback() {
+    fn playing_a_queued_entry_keeps_the_rest_of_the_queue() {
         let t0 = Instant::now();
-        let mut p = player_with(&[("a", 1000)], t0);
-        p.apply(Command::Play, t0).unwrap();
+        let mut p = playing(&["a", "b"], t0);
+        enqueue(&mut p, &["x", "y", "z"], t0);
+        let y = id(&p, "y");
+        p.apply(Command::PlayItem { item_id: y }, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("y"));
+        assert_eq!(queued(&p), ["x", "z"]);
+        assert_eq!(nexts(&mut p, 3, t0), ["x", "z", "b"]);
+    }
 
-        let tracks = vec![track("x", 1000), track("y", 1000), track("z", 1000)];
-        p.apply(
-            Command::SetQueue {
-                tracks: tracks.clone(),
-                start: Some(1),
-            },
-            t0 + ms(500),
-        )
-        .unwrap();
-        assert_eq!(p.queue.len(), 3);
-        assert_eq!(p.current, Some(1));
-        assert_eq!(p.status, PlaybackStatus::Playing);
-        assert_eq!(p.position(t0 + ms(700)), ms(200));
-
+    #[test]
+    fn queue_entries_move_and_are_removed() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a"], t0);
+        enqueue(&mut p, &["x", "y", "z"], t0);
+        let z = id(&p, "z");
+        p.apply(Command::MoveItem { item_id: z, to: 0 }, t0)
+            .unwrap();
+        assert_eq!(queued(&p), ["z", "x", "y"]);
+        p.apply(Command::MoveItem { item_id: z, to: 2 }, t0)
+            .unwrap();
+        assert_eq!(queued(&p), ["x", "y", "z"]);
         assert_eq!(
-            p.apply(
-                Command::SetQueue {
-                    tracks,
-                    start: Some(3)
-                },
-                t0
-            ),
+            p.apply(Command::MoveItem { item_id: z, to: 3 }, t0),
             Err(EngineError::IndexOutOfRange(3))
         );
-        assert_eq!(p.queue.len(), 3, "rejected command leaves the queue alone");
+        let a = id(&p, "a");
+        assert_eq!(
+            p.apply(Command::MoveItem { item_id: a, to: 0 }, t0),
+            Err(EngineError::UnknownItem(a)),
+            "only queue entries move"
+        );
+
+        let x = id(&p, "x");
+        p.apply(Command::RemoveItem { item_id: x }, t0).unwrap();
+        assert_eq!(queued(&p), ["y", "z"]);
+        p.apply(Command::ClearQueue, t0).unwrap();
+        assert!(p.queue.is_empty());
+        assert_eq!(now_playing(&p), Some("a"), "clearing keeps the context");
+        assert_eq!(p.context.len(), 1);
+    }
+
+    #[test]
+    fn removing_context_entries_keeps_the_current_track() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b", "c", "d"], t0);
+        p.apply(Command::Next, t0).unwrap();
+
+        let a = id(&p, "a");
+        p.apply(Command::RemoveItem { item_id: a }, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("b"));
+        assert_eq!(name(p.upcoming()), Some("c"));
+
+        let b = id(&p, "b");
+        p.apply(Command::RemoveItem { item_id: b }, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("c"), "removing the current moves on");
+        assert_eq!(p.status, PlaybackStatus::Playing);
+
+        let (c, d) = (id(&p, "c"), id(&p, "d"));
+        p.apply(Command::RemoveItem { item_id: d }, t0).unwrap();
+        p.apply(Command::RemoveItem { item_id: c }, t0).unwrap();
+        assert_eq!(p.current_item(), None);
+        assert_eq!(p.status, PlaybackStatus::Stopped);
+        assert_eq!(
+            p.apply(Command::RemoveItem { item_id: c }, t0),
+            Err(EngineError::UnknownItem(c))
+        );
+    }
+
+    #[test]
+    fn repeat_one_replays_the_context_track_only() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        repeat(&mut p, RepeatMode::One);
+        assert_eq!(name(p.upcoming()), Some("a"));
+        p.tick(t0 + ms(1000));
+        assert_eq!(now_playing(&p), Some("a"), "replays on natural end");
+        p.apply(Command::Next, t0 + ms(1100)).unwrap();
+        assert_eq!(now_playing(&p), Some("b"), "but Next still skips");
+
+        enqueue(&mut p, &["x"], t0);
+        p.apply(Command::Next, t0 + ms(1100)).unwrap();
+        assert_eq!(now_playing(&p), Some("x"));
+        assert_eq!(name(p.upcoming()), Some("a"), "queued tracks play once");
+        p.tick(t0 + ms(2100));
+        assert_eq!(now_playing(&p), Some("a"));
+    }
+
+    #[test]
+    fn repeat_all_wraps_the_context_after_the_queue() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        repeat(&mut p, RepeatMode::All);
+        enqueue(&mut p, &["x"], t0);
+        assert_eq!(nexts(&mut p, 5, t0), ["x", "b", "a", "b", "a"]);
+        assert_eq!(p.status, PlaybackStatus::Playing);
+    }
+
+    #[test]
+    fn a_new_context_replaces_the_old_and_clears_the_queue() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        enqueue(&mut p, &["x"], t0);
+        set_context(
+            &mut p,
+            &[("p", 1000), ("q", 1000), ("r", 1000)],
+            Some(1),
+            t0,
+        );
+        assert!(p.queue.is_empty());
+        assert_eq!(now_playing(&p), Some("q"));
+        assert_eq!(p.status, PlaybackStatus::Playing);
+        assert_eq!(nexts(&mut p, 1, t0), ["r"]);
+
+        p.apply(Command::Previous, t0).unwrap();
+        p.apply(Command::Previous, t0).unwrap();
+        assert_eq!(now_playing(&p), Some("a"), "history outlives the context");
+        assert_eq!(nexts(&mut p, 1, t0), ["q"]);
+
+        let tracks = vec![track("s", 1000)];
+        let command = |start| Command::SetContext {
+            tracks: tracks.clone(),
+            start: Some(start),
+            kind: ContextKind::Album,
+            label: None,
+        };
+        assert_eq!(
+            p.apply(command(1), t0),
+            Err(EngineError::IndexOutOfRange(1))
+        );
+        assert_eq!(
+            p.context.len(),
+            3,
+            "rejected command leaves the context alone"
+        );
+    }
+
+    #[test]
+    fn the_snapshot_describes_the_context() {
+        let t0 = Instant::now();
+        let mut p = Player::default();
+        assert_eq!(p.snapshot(t0, 0).context, None);
+        let command = Command::SetContext {
+            tracks: vec![track("a", 1000), track("b", 1000)],
+            start: Some(0),
+            kind: ContextKind::Album,
+            label: Some("Blue".into()),
+        };
+        p.apply(command, t0).unwrap();
+        enqueue(&mut p, &["x"], t0);
+        let context = PlayContext {
+            kind: ContextKind::Album,
+            label: Some("Blue".into()),
+            len: 2,
+            index: Some(0),
+            next: Some(1),
+        };
+        assert_eq!(p.snapshot(t0, 0).context.as_ref(), Some(&context));
+
+        p.apply(Command::Next, t0).unwrap();
+        let state = p.snapshot(t0, 0);
+        assert_eq!(name(state.current.as_ref()), Some("x"));
+        assert_eq!(state.context.unwrap().index, None, "x isn't in the context");
+    }
+
+    #[test]
+    fn big_contexts_are_published_as_a_window() {
+        let t0 = Instant::now();
+        let names: Vec<String> = (0..1000).map(|i| i.to_string()).collect();
+        let tracks: Vec<_> = names.iter().map(|n| (n.as_str(), 1000)).collect();
+        let mut p = player_with(&tracks[..150], t0);
+        assert_eq!(p.context_window().1.len(), 150, "small: all of it");
+
+        p = player_with(&tracks, t0);
+        let window = |p: &Player| {
+            let (offset, items) = p.context_window();
+            (offset, items.len())
+        };
+        assert_eq!(window(&p), (0, 200));
+        for (at, offset) in [(119, 0), (120, 100), (219, 100), (999, 800)] {
+            let item_id = id(&p, &at.to_string());
+            p.apply(Command::PlayItem { item_id }, t0).unwrap();
+            assert_eq!(window(&p), (offset, 200), "at {at}");
+        }
     }
 
     #[test]
@@ -657,11 +1077,15 @@ mod tests {
     fn unplayable_entries_are_marked_and_skipped() {
         let t0 = Instant::now();
         let mut p = player_with(&[("a", 1000), ("missing", 1000), ("c", 1000)], t0);
-        let id = p.queue[1].id;
-        p.apply(Command::PlayItem { item_id: id }, t0).unwrap();
+        let missing = id(&p, "missing");
+        p.apply(Command::PlayItem { item_id: missing }, t0).unwrap();
         assert!(p.resolve_current(&FakeResolver, t0));
-        assert_eq!(p.current, Some(2), "skips to the next playable entry");
-        assert_eq!(p.queue[1].error.as_deref(), Some("not on this device"));
+        assert_eq!(
+            now_playing(&p),
+            Some("c"),
+            "skips to the next playable entry"
+        );
+        assert_eq!(p.context[1].error.as_deref(), Some("not on this device"));
         assert_eq!(p.playable(), Some(&Playable::Simulated));
         assert!(
             !p.resolve_current(&FakeResolver, t0),
@@ -670,21 +1094,28 @@ mod tests {
     }
 
     #[test]
-    fn a_queue_nothing_can_play_stops() {
+    fn a_context_nothing_can_play_stops() {
         let t0 = Instant::now();
         let mut p = player_with(&[("missing-1", 1000), ("missing-2", 1000)], t0);
-        p.apply(
-            Command::SetRepeat {
-                mode: RepeatMode::All,
-            },
-            t0,
-        )
-        .unwrap();
+        repeat(&mut p, RepeatMode::All);
         p.apply(Command::Play, t0).unwrap();
         p.resolve_current(&FakeResolver, t0);
-        assert!(p.queue.iter().all(|i| i.error.is_some()));
+        assert!(p.context.iter().all(|i| i.error.is_some()));
         assert_eq!(p.playable(), None);
         assert_ne!(p.status, PlaybackStatus::Playing);
+    }
+
+    #[test]
+    fn gapless_moves_follow_the_queue() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        enqueue(&mut p, &["x"], t0);
+        let x = p.upcoming().unwrap().id;
+        assert!(p.moved_to(x, Playable::Simulated, t0));
+        assert_eq!(now_playing(&p), Some("x"));
+        assert!(p.queue.is_empty());
+        assert_eq!(p.playable(), Some(&Playable::Simulated));
+        assert!(!p.moved_to(9999, Playable::Simulated, t0), "gone");
     }
 
     #[test]

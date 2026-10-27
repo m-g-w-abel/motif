@@ -3,9 +3,10 @@
 //! [`Engine::spawn`] starts an actor task that owns all player state. Clients
 //! talk to it through a cloneable [`Engine`] handle: commands go in over a
 //! channel, and state snapshots come out through `watch` channels: one for
-//! the transport and one for the queue, which changes rarely but can be big.
+//! the transport, one for the queue and one for the context (the list played
+//! from), which change rarely but can be big.
 //!
-//! [`Player`] is the queue and transport state machine; [`output`] keeps the
+//! [`Player`] is the context, queue and transport state machine; [`output`] keeps the
 //! audio device in step with it.
 
 pub mod audio;
@@ -48,6 +49,14 @@ pub struct Engine {
     requests: mpsc::Sender<Request>,
     state: watch::Receiver<PlayerState>,
     queue: watch::Receiver<Vec<QueueItem>>,
+    context: watch::Receiver<ContextWindow>,
+}
+
+/// The part of the context published to clients (see [`Player::context_window`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ContextWindow {
+    pub offset: u32,
+    pub items: Vec<QueueItem>,
 }
 
 /// How often the engine follows the audio output (track changes, drift).
@@ -62,6 +71,7 @@ impl Engine {
         let mut player = Player::default();
         let (state_tx, state) = watch::channel(snapshot(&player));
         let (queue_tx, queue) = watch::channel(Vec::new());
+        let (context_tx, context) = watch::channel(ContextWindow::default());
 
         let (audio_tx, mut audio_events) = mpsc::unbounded_channel();
         let mut output = Output::new(audio_tx);
@@ -97,8 +107,20 @@ impl Engine {
                             break;
                         }
                     }
-                    // Queue first, so a state never points into a queue
-                    // subscribers haven't seen.
+                    // Entries first, so a state never points into a queue
+                    // or context subscribers haven't seen.
+                    context_tx.send_if_modified(|window| {
+                        let (offset, items) = player.context_window();
+                        let modified =
+                            window.offset as usize != offset || window.items.as_slice() != items;
+                        if modified {
+                            *window = ContextWindow {
+                                offset: offset as u32,
+                                items: items.to_vec(),
+                            };
+                        }
+                        modified
+                    });
                     queue_tx.send_if_modified(|queue| {
                         let modified = queue.as_slice() != player.queue();
                         if modified {
@@ -116,6 +138,7 @@ impl Engine {
             requests,
             state,
             queue,
+            context,
         }
     }
 
@@ -142,6 +165,11 @@ impl Engine {
     /// A receiver that is notified when the queue changes.
     pub fn subscribe_queue(&self) -> watch::Receiver<Vec<QueueItem>> {
         self.queue.clone()
+    }
+
+    /// A receiver that is notified when the published part of the context changes.
+    pub fn subscribe_context(&self) -> watch::Receiver<ContextWindow> {
+        self.context.clone()
     }
 }
 
@@ -181,8 +209,11 @@ mod tests {
         updates.changed().await.unwrap();
         let state = engine.state();
         assert_eq!(state.status, PlaybackStatus::Playing);
-        assert_eq!(state.current, Some(0));
-        assert_eq!(engine.subscribe_queue().borrow().len(), 1);
+        assert_eq!(state.current.unwrap().track.id, "/a.flac");
+        assert!(
+            engine.subscribe_queue().borrow().is_empty(),
+            "it left the queue to play"
+        );
     }
 
     #[tokio::test]

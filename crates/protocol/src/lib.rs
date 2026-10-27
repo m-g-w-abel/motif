@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Bumped on any incompatible change to the types below.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// A message sent from a client: a command for the engine, or a query for
 /// the library. `id` is echoed back in the matching
@@ -22,6 +22,8 @@ pub enum ClientMessage {
 }
 
 /// A message sent from the engine to a client.
+// Built only to be serialised, so variant sizes don't matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
@@ -68,30 +70,43 @@ pub enum Command {
     SetRepeat {
         mode: RepeatMode,
     },
+    /// Adds tracks to the end of the queue.
     Enqueue {
         tracks: Vec<TrackRef>,
     },
-    /// Inserts right after the current entry (at the front when nothing is
-    /// current), so the tracks play next.
+    /// Adds tracks to the front of the queue, so they play next.
     EnqueueNext {
         tracks: Vec<TrackRef>,
     },
-    /// Replaces the whole queue, e.g. when playing a track from a list.
-    /// Playback starts at index `start` if given; otherwise the queue is
-    /// left stopped.
-    SetQueue {
+    /// Replaces the context with the list played from, and clears the queue.
+    /// Playback starts at index `start` if given; otherwise it is left
+    /// stopped. Library `Play`/`PlayAlbum` queries send this.
+    SetContext {
         tracks: Vec<TrackRef>,
         start: Option<u32>,
+        kind: ContextKind,
+        /// E.g. the album or list name.
+        label: Option<String>,
     },
-    /// Jump to a queue entry by its [`QueueItem::id`].
+    /// Plays a queue or context entry by its [`QueueItem::id`]. A queued
+    /// entry leaves the queue; a context entry moves the context there. The
+    /// rest of the queue is kept either way.
     PlayItem {
         #[ts(type = "number")]
         item_id: u64,
     },
+    /// Removes a queue or context entry.
     RemoveItem {
         #[ts(type = "number")]
         item_id: u64,
     },
+    /// Moves a queue entry to index `to` of the queue.
+    MoveItem {
+        #[ts(type = "number")]
+        item_id: u64,
+        to: u32,
+    },
+    /// Empties the queue. The context is kept.
     ClearQueue,
     /// Decoder plugins to try for each file, in order; plugins left out are
     /// not used. Names come from [`PlayerState::decoders`].
@@ -115,6 +130,7 @@ pub struct OutputDevice {
     pub name: String,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
@@ -122,9 +138,16 @@ pub enum Event {
     State {
         state: PlayerState,
     },
-    /// The whole queue, sent only when it changes (it can hold thousands of
-    /// tracks) and always before the [`Event::State`] that refers to it.
+    /// The queue (tracks added to play before the context resumes), sent
+    /// when it changes.
     Queue {
+        items: Vec<QueueItem>,
+    },
+    /// The context's entries from `offset`: all of them for up to 200, else a
+    /// window around the position that moves every 100 tracks. Sent when it
+    /// changes, and always before the [`Event::State`] that refers to it.
+    Context {
+        offset: u32,
         items: Vec<QueueItem>,
     },
     /// The library changed: scanning progress, or new contents (`revision`).
@@ -153,7 +176,34 @@ pub enum RepeatMode {
     One,
 }
 
-/// Snapshot of the transport. The queue comes separately in [`Event::Queue`].
+/// What kind of list the context is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ContextKind {
+    Album,
+    /// Any other list: the library, search results, later playlists.
+    #[default]
+    List,
+}
+
+/// The list playback came from. Its entries come in [`Event::Context`].
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PlayContext {
+    pub kind: ContextKind,
+    pub label: Option<String>,
+    /// Number of entries.
+    pub len: u32,
+    /// Index of the current track, if it comes from the context.
+    pub index: Option<u32>,
+    /// Index of the entry that plays once the queue is empty, if any
+    /// (following repeat).
+    pub next: Option<u32>,
+}
+
+/// Snapshot of the transport. The queue and context entries come separately
+/// in [`Event::Queue`] and [`Event::Context`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PlayerState {
@@ -167,8 +217,10 @@ pub struct PlayerState {
     /// can extrapolate the position without polling.
     #[ts(type = "number")]
     pub sampled_at_ms: u64,
-    /// Index into the queue of the current track.
-    pub current: Option<u32>,
+    /// The playing, paused or last played entry.
+    pub current: Option<QueueItem>,
+    /// `None` until something is played from a list.
+    pub context: Option<PlayContext>,
     /// Enabled decoder plugins in the order they are tried.
     pub decoders: Vec<String>,
     /// Every decoder plugin this engine has.
@@ -188,6 +240,7 @@ impl Default for PlayerState {
             position_ms: 0,
             sampled_at_ms: 0,
             current: None,
+            context: None,
             decoders: Vec::new(),
             available_decoders: Vec::new(),
             output: None,
@@ -308,7 +361,7 @@ pub enum LibraryQuery {
     Lookup {
         paths: Vec<String>,
     },
-    /// Replaces the queue with the matching tracks and plays from `start`.
+    /// Makes the matching tracks the context and plays from `start`.
     Play {
         search: Option<String>,
         #[serde(default)]

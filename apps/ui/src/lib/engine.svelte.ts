@@ -9,7 +9,7 @@ import type { ServerMessage } from './protocol/ServerMessage';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
-const PROTOCOL_VERSION = 6;
+const PROTOCOL_VERSION = 7;
 const MAX_BACKOFF_MS = 5000;
 
 /** Where the engine lives: the embedded one under Tauri, else the page's host. */
@@ -28,8 +28,10 @@ async function engineUrl(): Promise<string> {
 export class EngineClient {
   status = $state<ConnectionStatus>('connecting');
   player = $state<PlayerState | null>(null);
-  /** Raw (not deeply reactive): it can hold thousands of tracks and is only ever replaced. */
+  /** Tracks added to play before the context resumes. Raw (not deeply reactive): only ever replaced. */
   queue = $state.raw<QueueItem[]>([]);
+  /** The context's entries from `offset` (all of a small one, a window of a big one). */
+  context = $state.raw<{ offset: number; items: QueueItem[] }>({ offset: 0, items: [] });
   /** `null` until the engine reports it; engines without a library never do. */
   library = $state<LibraryStatus | null>(null);
   /** Where the engine serves HTTP (artwork), e.g. `http://127.0.0.1:7700`. */
@@ -38,10 +40,10 @@ export class EngineClient {
   clockOffset = $state(0);
   error = $state<string | null>(null);
 
-  /** The queue entry that is playing or paused, if any. */
-  current: QueueItem | null = $derived(
-    this.player && this.player.current !== null ? (this.queue[this.player.current] ?? null) : null,
-  );
+  /** The entry that is playing or paused, if any. */
+  current: QueueItem | null = $derived(this.player?.current ?? null);
+  // shortcut: the queue then the context as one flat list for the Queue widget; #56 shows them apart.
+  playlist: QueueItem[] = $derived([...this.queue, ...this.context.items]);
 
   #socket: WebSocket | null = null;
   #nextId = 1;
@@ -154,6 +156,8 @@ export class EngineClient {
           this.player = message.event.state;
         } else if (message.event.type === 'queue') {
           this.queue = message.event.items;
+        } else if (message.event.type === 'context') {
+          this.context = { offset: message.event.offset, items: message.event.items };
         } else {
           this.library = message.event.status;
         }
