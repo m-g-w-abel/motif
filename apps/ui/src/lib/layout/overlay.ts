@@ -58,3 +58,10 @@ export function prune(root: LayoutNode, overlay: Overlay): Overlay {
     ...(Object.keys(order).length ? { order } : {}),
   };
 }
+
+/** `node` as shown: the overlay's order and sizes written into the tree. */
+export function applyOverlay(node: LayoutNode, overlay: Overlay, path = rootPath(node)): LayoutNode {
+  if (node.kind !== 'split') return node;
+  const children = slots(node, path, overlay).map((s) => ({ ...applyOverlay(s.node, overlay, s.path), size: s.size }));
+  return { ...node, children };
+}

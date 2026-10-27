@@ -63,3 +63,21 @@ describe('LayoutStore edits', () => {
     expect(store.edits).toEqual({ sizes: { 'split-row/0.tracklist': { px: 400 } } });
   });
 });
+
+describe('LayoutStore.saveAs', () => {
+  it('writes the in-place edits into a new user layout and switches to it', () => {
+    const store = new LayoutStore();
+    store.select('builtin:tracks-art.kdl');
+    store.move('split-row', 2, 0, 1);
+    store.resize('split-row/0.tracklist', { px: 500 });
+    expect(store.saveAs('My art').ok).toBe(true);
+    expect(store.activeId).toBe('user:my-art.kdl');
+    expect(store.edited).toBe(false);
+    const root = store.layout.root;
+    const shown = root.kind === 'split' && root.children.map((c) => [c.kind === 'split' ? 'split' : c.panel, c.size]);
+    expect(shown).toEqual([
+      ['split', { px: 300 }],
+      ['tracklist', { px: 500 }],
+    ]);
+  });
+});
