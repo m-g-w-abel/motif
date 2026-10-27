@@ -15,48 +15,63 @@
   setViewState({ source: 'library', layoutId: 'now-playing', browse: layout.browseState('now-playing') });
 
   /**
-   * Bar/floating element → its counterpart here. `box` stretches to fit,
-   * `even` scales evenly (buttons), `text` matches the first letter's size and
-   * place. Unless the `fade` is `none`, a copy of the bar's element (a ghost)
-   * travels along and hands over to the sheet's, so differing fonts, sizes and
-   * ellipses don't jump: `cross` crossfades, `swap` switches halfway (the two
-   * are drawn in the same box, so only one is ever visible), `late` fades the
-   * ghost out early and the sheet's in late, so there are never two at once.
+   * The morph runs in stages so no two moving things cross: the bar's own
+   * controls fade out where they are (OUT), the artwork, title and artist
+   * travel together (MOVE), then the sheet's controls fade in where they
+   * belong (IN). Bar element → its counterpart here, the box to match (`box`
+   * stretches, `even` scales evenly, `text` matches the first letter), and
+   * what it does:
+   * - `move`: the sheet's own element travels; nothing to hand over.
+   * - `cross`: a copy of the bar's (a ghost) travels with the sheet's and they
+   *   crossfade once both have arrived, drawn at the same place and size.
+   * - `handover`: like `cross`, but the contents differ (the bar's line has
+   *   the album too), so the ghost is gone before the sheet's appears.
+   * - `stage`: the bar's fades out in OUT, the sheet's fades in in IN.
+   * - `edge`: the bar's strip rides the top edge of the growing background
+   *   and fades; the sheet's seek bar fades in in IN.
    */
-  const MORPH: [string, string, Mode, Fade][] = [
-    ['.art', '.frame', 'box', 'none'],
+  const MORPH: [string, string, Mode, Kind][] = [
+    ['.art', '.frame', 'box', 'move'],
     ['.label .title', '.info h1', 'text', 'cross'],
-    ['.label .sub', '.info .hero-artist', 'text', 'cross'],
-    ['.transport', '.controls .transport', 'even', 'cross'],
-    ['.seek .slider', '.controls .seek .slider', 'box', 'swap'],
-    ['.time', '.controls .seek .time:first-child', 'text', 'late'],
-    ['.total', '.controls .seek .time:last-child', 'text', 'late'],
-    ['[aria-label^="Repeat"]', '.controls [aria-label^="Repeat"]', 'even', 'cross'],
-    ['.volume', '.controls .volume', 'even', 'cross'],
-    ['.end > [aria-label="Expand player"]', 'header .icon-button', 'even', 'cross'],
+    ['.label .sub', '.info .hero-artist', 'text', 'handover'],
+    ['.seek .slider', '.controls .seek .slider', 'box', 'edge'],
+    ['.transport', '.controls .transport', 'box', 'stage'],
+    ['.time', '.controls .seek .time:first-child', 'box', 'stage'],
+    ['.total', '.controls .seek .time:last-child', 'box', 'stage'],
+    ['[aria-label^="Repeat"]', '.controls [aria-label^="Repeat"]', 'box', 'stage'],
+    ['.volume', '.controls .volume', 'box', 'stage'],
+    ['.end > [aria-label="Expand player"]', 'header .icon-button', 'box', 'stage'],
   ];
-  /** The handle (and anything the bar doesn't show) fades in once the background has mostly grown. */
-  const FADE = 'header .handle';
-  const EASE = '260ms cubic-bezier(0.2, 0.8, 0.2, 1)';
-  /** Opacity transitions when settling, given where the element ends (1 shown, 0 not). */
-  const OPACITY: Record<Fade, (r: number) => string> = {
-    none: () => 'opacity 0s',
-    cross: () => `opacity ${EASE}`,
-    swap: () => 'opacity 0s linear 130ms',
-    // Leaving goes first; arriving waits until the other has gone.
-    late: (r) => (r ? 'opacity 90ms linear 170ms' : 'opacity 90ms linear'),
-  };
+  /** No counterpart in the bar: fade in in IN. */
+  const FADE = 'header .handle, .hero-album';
 
   type Mode = 'box' | 'even' | 'text';
-  type Fade = 'none' | 'cross' | 'swap' | 'late';
+  type Kind = 'move' | 'cross' | 'handover' | 'stage' | 'edge';
+  /** A stretch of progress. */
+  type Span = [number, number];
+  /** The background grows until the movers arrive, so they never poke out of it. */
+  const GROW: Span = [0, 0.85];
+  const OUT: Span = [0, 0.1];
+  const MOVE: Span = [0.1, 0.85];
+  const IN: Span = [0.85, 1];
+  /** Text under the artwork (phones) waits until the growing artwork has risen past it. */
+  const MOVE_UNDER: Span = [0.4, 0.85];
+  const DURATION = 260;
+  const CURVE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+
   /**
-   * `el` is moved by `t` of (dx, dy, sx, sy): the sheet's own parts are at the
-   * bar when `t` = 1 - progress, ghosts reach the sheet when `t` = progress.
+   * `el` is moved over `move` by (dx, dy, sx, sy): the sheet's own parts start
+   * at the bar and arrive at rest, ghosts start at rest (over the bar) and
+   * arrive at the sheet. It fades in over `show` or out over `hide`.
    */
-  type Part = { el: HTMLElement; dx: number; dy: number; sx: number; sy: number; ghost: boolean; fade: Fade };
+  type Part = { el: HTMLElement; ghost: boolean; dx: number; dy: number; sx: number; sy: number; move?: Span; show?: Span; hide?: Span };
+  const STILL = { dx: 0, dy: 0, sx: 1, sy: 1 };
   // Plain, not state: measured once per gesture, read by the effect below.
   let parts: Part[] = [];
-  let fades: HTMLElement[] = [];
+  /** The progress last drawn, where a settle's transitions start from. */
+  let drawn = 0;
+  /** MOVE, or MOVE_UNDER for text, set per measure. */
+  let textMove = MOVE;
   let ghosts = $state<HTMLElement>();
 
   function shown(root: Element, selector: string) {
@@ -88,12 +103,12 @@
     return { dx, dy, sx, sy };
   }
 
-  /** A copy of the bar's `a`, laid over it here so it can travel to `b`. */
-  function ghost(a: HTMLElement, b: HTMLElement, mode: Mode, fade: Fade, at: DOMRect): Part {
+  /** A copy of the bar's `a`, laid over it here. */
+  function copy(a: HTMLElement, selector: string, at: DOMRect) {
     const r = a.getBoundingClientRect();
     const el = a.cloneNode(true) as HTMLElement;
-    // Nested parts (the total inside the bar's time) travel as their own ghosts.
-    for (const [from] of MORPH) for (const n of el.querySelectorAll(from)) n.remove();
+    // Nested parts (the total inside the bar's time) are copied on their own.
+    for (const [from] of MORPH) if (from !== selector) for (const n of el.querySelectorAll(from)) n.remove();
     Object.assign(el.style, {
       position: 'absolute',
       left: `${r.left - at.left}px`,
@@ -104,8 +119,34 @@
       transformOrigin: '0 0',
     });
     ghosts?.append(el);
-    const inner = mode === 'text' ? [glyph(a), glyph(b)] : [r, b.getBoundingClientRect()];
-    return { el, ...fit(r, inner[0], inner[1], mode), ghost: true, fade };
+    return el;
+  }
+
+  /** The parts that carry bar element `a` to sheet element `b`. */
+  function pair(a: HTMLElement, from: string, b: HTMLElement, mode: Mode, kind: Kind, at: DOMRect, o: DOMRect): Part[] {
+    const ra = a.getBoundingClientRect();
+    const rb = b.getBoundingClientRect();
+    const [ga, gb] = mode === 'text' ? [glyph(a), glyph(b)] : [ra, rb];
+    b.style.transformOrigin = '0 0';
+    const move = mode === 'text' ? textMove : MOVE;
+    const there = { el: b, ghost: false, ...fit(rb, gb, ga, mode), move };
+    if (kind === 'move') return [there];
+    if (kind === 'stage') return [{ el: b, ghost: false, ...STILL, show: IN }, { el: copy(a, from, at), ghost: true, ...STILL, hide: OUT }];
+    if (kind === 'edge') {
+      // Keeps its place relative to the background (stretching only across).
+      const sx = at.width / o.width;
+      const dx = at.left + (ra.left - o.left) * sx - ra.left;
+      const dy = at.top + (ra.top - o.top) * (at.height / o.height) - ra.top;
+      return [
+        { el: b, ghost: false, ...STILL, show: IN },
+        { el: copy(a, from, at), ghost: true, dx, dy, sx, sy: 1, move: GROW, hide: [0.3, 0.5] },
+      ];
+    }
+    const ghost = { el: copy(a, from, at), ghost: true, ...fit(ra, ga, gb, mode), move };
+    return [
+      { ...there, show: IN },
+      { ...ghost, hide: kind === 'cross' ? IN : [0.75, 0.85] },
+    ];
   }
 
   /**
@@ -116,48 +157,32 @@
    */
   function measure() {
     if (!section || !backdrop || !ghosts) return;
-    for (const el of [...parts.map((p) => p.el), ...fades]) {
+    for (const { el } of parts) {
       el.style.transition = 'none';
       el.style.transform = '';
       el.style.opacity = '';
     }
     ghosts.replaceChildren();
     parts = [];
-    fades = [...section.querySelectorAll<HTMLElement>(FADE)];
     const origin = sheet.origin;
     if (origin && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       const at = section.getBoundingClientRect();
       const o = origin.getBoundingClientRect();
       const bd = backdrop.getBoundingClientRect();
-      const found: Part[] = [{ el: backdrop, ...fit(bd, bd, o, 'box'), ghost: false, fade: 'none' }];
-      for (const [from, to, mode, fade] of MORPH) {
+      const art = section.querySelector('.frame')?.getBoundingClientRect();
+      const info = section.querySelector('.info')?.getBoundingClientRect();
+      textMove = art && info && info.top >= art.bottom ? MOVE_UNDER : MOVE;
+      const found: Part[] = [{ el: backdrop, ghost: false, ...fit(bd, bd, o, 'box'), move: GROW }];
+      for (const [from, to, mode, kind] of MORPH) {
         const b = shown(section, to);
         if (!b) continue;
         const a = shown(origin, from);
-        if (!a) {
-          fades.push(b);
-          continue;
-        }
-        const e = b.getBoundingClientRect();
-        const inner = mode === 'text' ? [glyph(b), glyph(a)] : [e, a.getBoundingClientRect()];
-        b.style.transformOrigin = '0 0';
-        found.push({ el: b, ...fit(e, inner[0], inner[1], mode), ghost: false, fade });
-        if (fade !== 'none') found.push(ghost(a, b, mode, fade, at));
+        found.push(...(a ? pair(a, from, b, mode, kind, at, o) : [{ el: b, ghost: false, ...STILL, show: IN }]));
       }
-      // The album line has no counterpart in the bar; it rides along with the artist.
-      const artist = found.find((p) => !p.ghost && p.el.matches('.hero-artist'));
-      const album = section.querySelector<HTMLElement>('.hero-album');
-      if (artist && album) {
-        const e = artist.el.getBoundingClientRect();
-        const r = album.getBoundingClientRect();
-        album.style.transformOrigin = '0 0';
-        const dx = artist.dx + (r.left - e.left) * (artist.sx - 1);
-        const dy = artist.dy + (r.top - e.top) * (artist.sy - 1);
-        found.push({ ...artist, el: album, dx, dy });
-      } else if (album) fades.push(album);
-      // The queue rises from below the page, as the whole sheet used to.
+      for (const el of section.querySelectorAll<HTMLElement>(FADE)) found.push({ el, ghost: false, ...STILL, show: IN });
+      // The queue rises from below the page once the artwork and seek strip are clear of it.
       const queue = section.querySelector<HTMLElement>('.queue-slot');
-      if (queue) found.push({ el: queue, dx: 0, dy: at.bottom - queue.getBoundingClientRect().top, sx: 1, sy: 1, ghost: false, fade: 'none' });
+      if (queue) found.push({ el: queue, ghost: false, ...STILL, dy: at.bottom - queue.getBoundingClientRect().top, move: [0.5, 1] });
       parts = found;
     }
     apply(sheet.progress, true);
@@ -165,29 +190,47 @@
     void getComputedStyle(backdrop).transform;
   }
 
+  function ramp(p: number, [a, b]: Span) {
+    return Math.min(1, Math.max(0, (p - a) / (b - a)));
+  }
+
+  /**
+   * Duration and delay that put span `s` where it falls in a settle from
+   * `from` to `to`, as if progress moved evenly over the settle.
+   */
+  function timing([a, b]: Span, from: number, to: number) {
+    const lo = Math.max(a, Math.min(from, to));
+    const hi = Math.min(b, Math.max(from, to));
+    const span = Math.abs(to - from);
+    if (hi <= lo || !span) return '0s';
+    const ms = (v: number) => `${Math.round((v / span) * DURATION)}ms`;
+    return `${ms(hi - lo)} ${to > from ? ms(lo - from) : ms(from - hi)}`;
+  }
+
   function apply(p: number, instant: boolean) {
     if (!section || !tint) return;
-    const q = 1 - p;
-    for (const { el, dx, dy, sx, sy, ghost, fade } of parts) {
-      const t = ghost ? p : q;
-      // How far this one is from being shown: 1 at its own end, 0 at the other.
-      const r = 1 - t;
-      el.style.transition = instant ? 'none' : `transform ${EASE}, ${OPACITY[fade](r)}`;
-      el.style.transform = t ? `translate(${dx * t}px, ${dy * t}px) scale(${1 + (sx - 1) * t}, ${1 + (sy - 1) * t})` : '';
-      if (fade === 'cross') el.style.opacity = String(Math.min(1, 2 * r));
-      // At exactly halfway the sheet's is shown and the ghost isn't.
-      else if (fade === 'swap') el.style.opacity = (ghost ? r > 0.5 : r >= 0.5) ? '1' : '0';
-      else if (fade === 'late') el.style.opacity = String(Math.max(0, 3 * r - 2));
+    const from = drawn;
+    drawn = p;
+    for (const { el, ghost, dx, dy, sx, sy, move, show, hide } of parts) {
+      const fade = show ?? hide;
+      if (instant) el.style.transition = 'none';
+      else {
+        // Duration first, then the curve, then the delay.
+        const time = (s: Span, curve: string) => timing(s, from, p).replace(' ', ` ${curve} `);
+        el.style.transition = [move && `transform ${time(move, CURVE)}`, fade && `opacity ${time(fade, 'linear')}`]
+          .filter(Boolean)
+          .join(', ');
+      }
+      if (move) {
+        const t = ghost ? ramp(p, move) : 1 - ramp(p, move);
+        el.style.transform = t ? `translate(${dx * t}px, ${dy * t}px) scale(${1 + (sx - 1) * t}, ${1 + (sy - 1) * t})` : '';
+      }
+      if (show) el.style.opacity = String(ramp(p, show));
+      else if (hide) el.style.opacity = String(1 - ramp(p, hide));
     }
-    const morphing = parts.length > 0;
-    section.style.opacity = morphing ? '' : String(p);
-    for (const el of fades) {
-      // Opening, fade in late; closing, fade out first.
-      el.style.transition = instant ? 'none' : p ? 'opacity 120ms linear 140ms' : 'opacity 100ms linear';
-      el.style.opacity = morphing ? String(Math.max(0, p * 3 - 2)) : '';
-    }
-    tint.style.transition = instant ? 'none' : `opacity ${EASE}`;
-    tint.style.opacity = morphing ? String(q) : '0';
+    section.style.opacity = parts.length ? '' : String(p);
+    tint.style.transition = instant ? 'none' : `opacity ${timing(GROW, from, p)}`;
+    tint.style.opacity = parts.length ? String(1 - ramp(p, GROW)) : '0';
   }
 
   sheet.measure = measure;
