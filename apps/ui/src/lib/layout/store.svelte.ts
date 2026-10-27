@@ -5,6 +5,7 @@ import { orderOf, prune, type Overlay } from './overlay';
 import { parseLayout, type LayoutError } from './parse';
 import type { SortRule } from '../protocol/SortRule';
 import type { TrackRef } from '../protocol/TrackRef';
+import type { Selection } from '../selection';
 import { builtinLayouts, type LayoutSource } from './presets';
 
 // Layouts are a client-side concern: user layouts and the choice of layout
@@ -29,10 +30,16 @@ export const SOURCES: Source[] = ['library'];
  * album focus carry over whichever widgets are showing them.
  */
 export interface BrowseState {
+  /** The last clicked row. */
   selected: string | null;
-  /** The selected row's track, for widgets (the info pane) that show it. */
+  /** The last clicked row's track, for widgets (the info pane) that show it. */
   selectedTrack: TrackRef | null;
+  /** Rows picked in a track list; usually just `selected`, more with Ctrl/Shift-click. */
+  picked: Selection<TrackRef>;
+  /** The last clicked album card. */
   focusAlbum: string | null;
+  /** Album cards picked in a grid, by key. */
+  pickedAlbums: Selection<string>;
   /** What the library is filtered to; empty for everything. */
   search: string;
   /** A column header's sort, used instead of the saved rules until clicked away; never saved. */
@@ -140,7 +147,15 @@ export class LayoutStore {
   browseState(key: string): BrowseState {
     const existing = this.#browse.get(key);
     if (existing) return existing;
-    const created: BrowseState = $state({ selected: null, selectedTrack: null, focusAlbum: null, search: '', oneOff: null });
+    const created: BrowseState = $state({
+      selected: null,
+      selectedTrack: null,
+      picked: new Map(),
+      focusAlbum: null,
+      pickedAlbums: new Map(),
+      search: '',
+      oneOff: null,
+    });
     this.#browse.set(key, created);
     return created;
   }

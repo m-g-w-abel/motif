@@ -373,6 +373,13 @@ pub enum LibraryQuery {
         #[serde(default)]
         sort: Vec<SortRule>,
     },
+    /// The tracks of these albums, album after album in the order given,
+    /// e.g. to queue them.
+    AlbumTracks {
+        albums: Vec<String>,
+        #[serde(default)]
+        sort: Vec<SortRule>,
+    },
     AddRoot {
         path: String,
     },

@@ -40,6 +40,8 @@ export interface TrackListData {
   readonly empty: { message: string; hint?: string; addFolder?: boolean };
   /** Keeps paged data fresh; call from an `$effect`. */
   sync?(): void;
+  /** Loads rows `from` to `to` where they are fetched in pages, so `track` and `key` have them. */
+  load?(from: number, to: number): Promise<void>;
   /** Pins the first visible row; `onShift` hears if rows inserted above move it. */
   anchor?(index: number, onShift: (index: number) => void): void;
 }
@@ -173,6 +175,7 @@ function libraryData(
       return { message: 'No music found in your folders.', addFolder: true };
     },
     sync: () => list().sync(),
+    load: (from, to) => list().load(from, to),
     anchor: (index, onShift) => {
       list().onShift = onShift;
       list().setAnchor(index);

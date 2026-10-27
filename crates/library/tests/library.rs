@@ -257,6 +257,18 @@ fn scans_queries_matches_and_rescans() {
     assert_eq!(names, ["Closing", "Opening"]);
     assert_eq!(kind, ContextKind::Album);
     assert_eq!(label, refs[0].album);
+    // Album tracks come album by album, in the order asked for.
+    let QueryResult::Tracks { tracks, .. } = library
+        .query(LibraryQuery::AlbumTracks {
+            albums: vec![albums[1].key.clone(), albums[0].key.clone()],
+            sort: vec![],
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(tracks[0].track.album, albums[1].title.clone().into());
+    assert_eq!(tracks.last().unwrap().track.album, refs[0].album);
     let QueryResult::Albums { albums: desc, .. } = library
         .query(LibraryQuery::Albums {
             search: None,

@@ -209,6 +209,24 @@ impl Library {
                     tracks,
                 }
             }
+            LibraryQuery::AlbumTracks { albums, sort } => {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 {}",
+                    db::ALBUM_KEY,
+                    db::order(&sort)
+                ))?;
+                let mut tracks = Vec::new();
+                for album in &albums {
+                    for track in stmt.query_map([album], library_track)? {
+                        tracks.push(track?);
+                    }
+                }
+                QueryResult::Tracks {
+                    total: tracks.len() as u32,
+                    offset: 0,
+                    tracks,
+                }
+            }
             LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. } => {
                 return Err(Error::Other("play queries go through selection()".into()));
             }
