@@ -153,14 +153,14 @@ The choice is remembered per layout on each device.
 
 ### `artwork`
 
-The playing track's artwork, as large as the space allows. Click it to expand
+The artwork of the track selected in a track list (blank until something is
+selected), as large as the space allows. Click it to expand
 the player.
 
 ### `track-info`
 
 Details of the track selected in a track list (click or arrow to it); a hint
-shows until something is selected. The artwork widget keeps showing the
-playing track.
+shows until something is selected. The `artwork` widget follows the same selection.
 
 | Property | Values |
 |---|---|

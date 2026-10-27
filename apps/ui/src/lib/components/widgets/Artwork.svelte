@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { getApp } from '../../context';
+  import { getApp, getViewState } from '../../context';
   import Artwork from '../player/Artwork.svelte';
 
-  /** In the main window a click expands the player; inside it, it doesn't. */
-  let { expands = true }: { expands?: boolean } = $props();
+  /** In the main window a click expands the player; inside it, it doesn't. `playing` shows the playing track, not the selected one. */
+  let { expands = true, playing = false }: { expands?: boolean; playing?: boolean } = $props();
 
   const { engine, sheet } = getApp();
+  const view = getViewState();
+  const track = $derived(playing ? engine.current?.track : (view.browse.selectedTrack ?? undefined));
 
   // The largest square that fits, measured rather than left to CSS so it
   // behaves the same in every webview.
@@ -19,10 +21,10 @@
   {#if side > 0}
     {#if expands}
       <button class="frame" title="Expand player" style:width="{side}px" onclick={() => sheet.expand()}>
-        <Artwork track={engine.current?.track} size={side} />
+        <Artwork {track} size={side} />
       </button>
     {:else}
-      <div class="frame" style:width="{side}px"><Artwork track={engine.current?.track} size={side} /></div>
+      <div class="frame" style:width="{side}px"><Artwork {track} size={side} /></div>
     {/if}
   {/if}
 </section>
