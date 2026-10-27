@@ -82,6 +82,11 @@ export function vimTarget(e: NavKey, pending: string, index: number, count: numb
       return clamp(index + times * cols);
     case 'k':
       return clamp(index - times * cols);
+    // The search box filters, so the next match is the next item.
+    case 'n':
+      return clamp(index + times);
+    case 'N':
+      return clamp(index - times);
     case 'l':
       return cols === 1 ? none : clamp(index + times);
     case 'h':

@@ -61,6 +61,10 @@ describe('vimTarget', () => {
     expect(v('l', '', 5, 20, 4).to).toBe(6);
     expect(v('h', '', 5, 20, 4).to).toBe(4);
   });
+  it('n and N step to the next and previous item', () => {
+    expect(v('n').to).toBe(6);
+    expect(v('N', '2', 5, 20, 4).to).toBe(3);
+  });
   it('takes counts', () => {
     const a = v('1');
     expect(a).toEqual({ pending: '1', handled: true, to: null });

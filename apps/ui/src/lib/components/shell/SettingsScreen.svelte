@@ -328,14 +328,21 @@
           <p class="status">Not connected to the engine.</p>
         {/if}
       {:else if group === 'keyboard'}
-        <label class="decoder">
-          <input
-            type="checkbox"
-            checked={settings.current.vimKeys}
-            onchange={(e) => settings.set('vimKeys', e.currentTarget.checked)}
-          />
-          Vim keys in lists and grids (navigation only)
-        </label>
+        <div class="row">
+          <span class="label">Vim keys (navigation only)</span>
+          <div class="segmented" role="radiogroup" aria-label="Vim keys">
+            {#each [[false, 'Off'], [true, 'On']] as [value, text] (text)}
+              <button
+                role="radio"
+                aria-checked={settings.current.vimKeys === value}
+                class:active={settings.current.vimKeys === value}
+                onclick={() => settings.set('vimKeys', value as boolean)}
+              >
+                {text}
+              </button>
+            {/each}
+          </div>
+        </div>
         <ShortcutList />
       {:else if group === 'technical'}
         <div class="row">

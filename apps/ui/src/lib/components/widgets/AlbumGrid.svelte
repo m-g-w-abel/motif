@@ -237,15 +237,21 @@
     }
     const page = Math.max(1, Math.floor((scroller?.clientHeight ?? viewHeight) / rowHeight));
     let to: number | null = null;
+    let vimMove = false;
     if (settings.current.vimKeys) {
       const vim = vimTarget(e, vimPending, i, count, columns, page);
       vimPending = vim.pending;
-      if (vim.handled) to = vim.to ?? i; // a count or `g` waiting: stay put
+      if (vim.handled) {
+        e.preventDefault();
+        if (vim.to === null) return; // a count or `g` waiting
+        to = vim.to;
+        vimMove = true;
+      }
     }
     to ??= navTarget(e, i, count, columns, page);
     if (to === null || !scroller) return;
     e.preventDefault();
-    if (e.shiftKey) extend(to);
+    if (e.shiftKey && !vimMove) extend(to);
     else anchor = to;
     cursor = to;
     viewHeight = scroller.clientHeight; // the bound value can lag a layout change

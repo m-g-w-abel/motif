@@ -58,6 +58,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'vim_ends', group: 'lists', vim: true, label: 'Vim: first / last row', keys: ['gg', 'G'] },
   { id: 'vim_count', group: 'lists', vim: true, label: 'Vim: repeat a motion (5j) or go to a row (5G)', keys: ['1–9 then a motion'] },
   { id: 'vim_search', group: 'search', vim: true, label: 'Vim: leave the search box for the results', keys: ['Enter'] },
+  { id: 'vim_match', group: 'search', vim: true, label: 'Vim: next / previous match (the list shows only matches)', keys: ['n', 'N'] },
 
   { id: 'search', group: 'search', label: 'Search the library', keys: ['/', 'Ctrl+F'], bindings: [{ key: '/' }, { key: 'f', ctrl: true }] },
 ];
