@@ -264,13 +264,19 @@
   });
 
   // An album picked in an album grid scrolls this list to it. Only the focus
-  // triggers this; list updates (e.g. a track change) must not move the user.
+  // sets this; list updates (e.g. a track change) must not move the user.
+  let pendingAlbum = $state<string | null>(null);
   $effect(() => {
-    const key = view.browse.focusAlbum;
-    if (!key || !scroller) return;
+    pendingAlbum = view.browse.focusAlbum;
+  });
+  // The library can load after mount, so wait until the album is listed.
+  $effect(() => {
+    const key = pendingAlbum;
+    const index = data.groups.find((g) => g.key === key)?.start ?? -1;
+    if (!key || index < 0 || !scroller) return;
     untrack(() => {
-      const index = data.groups.find((g) => g.key === key)?.start ?? -1;
-      if (index < 0 || !scroller) return;
+      if (!scroller) return;
+      pendingAlbum = null;
       // Grouped lists scroll to the album header just above its first track.
       const at = rows.list.findIndex((row) => 'index' in row && row.index === index);
       const target = albumBreaks ? at - 1 : at;
