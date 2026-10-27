@@ -4,6 +4,7 @@
   import { isDemo } from '../../demo';
   import { formatTime } from '../../format';
   import { installLayoutFiles } from '../../layout/install';
+  import { toasts } from '../../toast.svelte';
   import type { SortKey } from '../../protocol/SortKey';
   import type { SortRule } from '../../protocol/SortRule';
   import { moveItem } from '../../reorder';
@@ -48,9 +49,27 @@
   });
 
   let menuOpen = $state(false);
+  /** The name being typed for Save as…; null while the menu shows its buttons. */
+  let saveName = $state<string | null>(null);
   let menu = $state<HTMLElement>();
   let fileInput = $state<HTMLInputElement>();
   let area = $state<HTMLElement>();
+
+  function saveAs(e: SubmitEvent) {
+    e.preventDefault();
+    const name = saveName?.trim();
+    if (!name) return;
+    const result = layout.saveAs(name);
+    // On failure the form stays open so the name can be changed.
+    if (!result.ok) {
+      toasts.show(`Couldn't save the layout: ${result.errors[0].message}`, 'error');
+      return;
+    }
+    toasts.show(`Saved layout “${result.entry.layout.name}”`);
+    menuOpen = false;
+  }
+
+  const focus = (node: HTMLInputElement) => node.select();
 
   function onWindowPointer(e: PointerEvent) {
     if (menuOpen && menu && !menu.contains(e.target as Node)) menuOpen = false;
@@ -106,7 +125,13 @@
 
     <div class="search">
       <Icon name="search" size={14} />
-      <input type="search" placeholder="Search" aria-label="Search the library" bind:value={search} />
+      <input type="search" placeholder="Search" aria-label="Search the library"
+        bind:value={search}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' && settings.current.vimKeys)
+            document.querySelector<HTMLElement>('main tr.track[tabindex="0"], main button.card[tabindex="0"]')?.focus();
+        }}
+      />
     </div>
 
     <div class="menu" bind:this={sortMenu}>
@@ -195,7 +220,10 @@
           aria-expanded={menuOpen}
           aria-label="More layout options"
           title="More layout options"
-          onclick={() => (menuOpen = !menuOpen)}
+          onclick={() => {
+            menuOpen = !menuOpen;
+            saveName = null;
+          }}
         >
           <Icon name="more" size={16} />
         </button>
@@ -221,6 +249,14 @@
               >
                 Reset layout
               </button>
+            {/if}
+            {#if saveName === null}
+              <button role="menuitem" onclick={() => (saveName = `${layout.layout.name} (custom)`)}>Save as…</button>
+            {:else}
+              <form class="save-as" onsubmit={saveAs}>
+                <input aria-label="New layout name" bind:value={saveName} use:focus />
+                <button type="submit" disabled={!saveName.trim()}>Save</button>
+              </form>
             {/if}
             <button role="menuitem" onclick={() => fileInput?.click()}>Add layout file…</button>
             <button
@@ -469,6 +505,30 @@
     width: auto;
     padding: 0;
     color: var(--accent);
+  }
+
+  .save-as {
+    display: flex;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-3);
+  }
+
+  .save-as input {
+    flex: 1;
+    min-width: 0;
+    height: 24px;
+    padding: 0 var(--space-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .popover .save-as button {
+    width: auto;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-sm);
   }
 
   .popover .danger {

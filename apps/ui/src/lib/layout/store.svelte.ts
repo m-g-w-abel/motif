@@ -1,7 +1,8 @@
 import { format, parse } from '@bgotink/kdl';
 import { MediaQuery } from 'svelte/reactivity';
 import type { Layout, LayoutNode, Size } from './model';
-import { orderOf, prune, type Overlay } from './overlay';
+import { applyOverlay, orderOf, prune, type Overlay } from './overlay';
+import { serializeLayout } from './serialize';
 import { parseLayout, type LayoutError } from './parse';
 import type { SortRule } from '../protocol/SortRule';
 import type { TrackRef } from '../protocol/TrackRef';
@@ -205,6 +206,23 @@ export class LayoutStore {
     const renamed =
       result.layout.name === this.active.layout.name ? withName(text, `${result.layout.name} (custom)`) : text;
     return this.install(renamed, this.active.fileName);
+  }
+
+  /** Installs the active layout, with this device's in-place edits applied, as a new user layout named `name`. */
+  saveAs(name: string): InstallResult {
+    const existing = this.user.find((e) => e.id === `user:${fileNameFor(name)}`);
+    if (existing) {
+      const message = `a layout named “${existing.layout.name}” already exists`;
+      return { ok: false, errors: [{ message, line: null, column: null }] };
+    }
+    const layout = this.layout;
+    const shown = (variant: Variant) => {
+      const root = rootOf(layout, variant);
+      const key = editsKey(this.active.id, variant);
+      return root && applyOverlay(root, this.#edits[key] ?? loadEdits(key));
+    };
+    const text = serializeLayout({ ...layout, name, root: shown('desktop')!, phone: shown('phone') });
+    return this.install(text, fileNameFor(name));
   }
 
   remove(id: string) {

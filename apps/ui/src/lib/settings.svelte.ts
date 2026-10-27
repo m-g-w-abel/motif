@@ -17,6 +17,8 @@ export interface Settings {
   player: 'bar' | 'floating';
   /** Desktop: the left panel folded away. */
   navCollapsed: boolean;
+  /** Vim-style list navigation (j/k, gg/G, Ctrl-d/u, counts). */
+  vimKeys: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   font: '',
   player: 'bar',
   navCollapsed: false,
+  vimKeys: false,
 };
 
 const KEY = 'settings';
