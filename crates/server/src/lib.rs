@@ -44,13 +44,13 @@ struct AppState {
     engine: Engine,
     library: Option<Library>,
     /// Limits artwork requests in flight. Each can hold a whole image or a
-    /// decoded one (tens of MB); a grid asks for hundreds at once, and glibc
-    /// keeps the peak's memory long after it is freed.
+    /// decoded one (tens of MB), and a grid asks for hundreds at once.
     art_slots: Arc<Semaphore>,
 }
 
-/// Artwork requests served at once.
-const ART_SLOTS: usize = 2;
+/// Artwork requests served at once: enough to fill a screen of covers
+/// without waiting, while capping the memory peak of a large grid.
+const ART_SLOTS: usize = 50;
 
 /// Binds the listener and returns its address plus a future that serves it.
 /// Binding first lets callers use port 0 and learn the real port.
