@@ -11,6 +11,10 @@ use std::{net::SocketAddr, path::PathBuf};
 use engine::Engine;
 use tracing_subscriber::EnvFilter;
 
+// glibc's allocator keeps freed artwork buffers as fragmented heap (#53).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const DEFAULT_ADDR: &str = "127.0.0.1:7700";
 const DEFAULT_UI_DIR: &str = "apps/ui/dist";
 

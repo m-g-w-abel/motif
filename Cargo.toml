@@ -17,6 +17,7 @@ server = { path = "crates/server" }
 
 axum = { version = "0.8.9", features = ["ws"] }
 futures-util = "0.3.34"
+mimalloc = "=0.1.52"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tauri = "2.12.1"

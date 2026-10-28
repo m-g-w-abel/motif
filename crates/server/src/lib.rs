@@ -8,7 +8,7 @@
 mod resolver;
 pub mod settings;
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use axum::{
     Router,
@@ -24,7 +24,10 @@ use engine::Engine;
 use futures_util::{SinkExt, StreamExt};
 use library::Library;
 use protocol::{ClientMessage, Event, LibraryQuery, PROTOCOL_VERSION, QueryResult, ServerMessage};
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::{
+    net::TcpListener,
+    sync::{Semaphore, mpsc},
+};
 use tower_http::services::{ServeDir, ServeFile};
 
 pub use resolver::LibraryResolver;
@@ -40,7 +43,14 @@ pub struct Config {
 struct AppState {
     engine: Engine,
     library: Option<Library>,
+    /// Limits artwork requests in flight. Each can hold a whole image or a
+    /// decoded one (tens of MB), and a grid asks for hundreds at once.
+    art_slots: Arc<Semaphore>,
 }
+
+/// Artwork requests served at once: enough to fill a screen of covers
+/// without waiting, while capping the memory peak of a large grid.
+const ART_SLOTS: usize = 50;
 
 /// Binds the listener and returns its address plus a future that serves it.
 /// Binding first lets callers use port 0 and learn the real port.
@@ -58,7 +68,11 @@ pub fn router(engine: Engine, library: Option<Library>, ui_dir: Option<PathBuf>)
     let router = Router::new()
         .route("/ws", get(upgrade))
         .route("/art/{key}", get(art))
-        .with_state(AppState { engine, library });
+        .with_state(AppState {
+            engine,
+            library,
+            art_slots: Arc::new(Semaphore::new(ART_SLOTS)),
+        });
     match ui_dir {
         Some(dir) => {
             // Unknown paths fall back to index.html so client-side routes work.
@@ -100,6 +114,7 @@ async fn art(
     let Some(library) = state.library else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let _slot = state.art_slots.acquire().await;
     let file = tokio::task::spawn_blocking(move || {
         let path = library.art(&key, params.size)?;
         Ok::<_, library::Error>((std::fs::read(&path)?, path))
