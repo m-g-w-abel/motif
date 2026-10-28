@@ -49,9 +49,9 @@ cargo test --workspace
 ```
 
 `node scripts/soak.mjs [mode] [seconds]` soak-tests engine memory (see the
-script). Run all of these before saying work is done; CI runs the same on Linux,
-Windows and macOS. If no Rust changed (no `*.rs` or `Cargo.*` files),
-skip `cargo clippy` and `cargo test` locally and leave them to CI.
+script). Run all of these before saying work is done; GitHub CI is disabled
+for now, so these local runs are the only check. If no Rust changed (no
+`*.rs` or `Cargo.*` files), `cargo clippy` and `cargo test` can be skipped.
 
 ## Testing the UI
 

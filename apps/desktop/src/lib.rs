@@ -10,6 +10,10 @@ use engine::Engine;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
+// glibc's allocator keeps freed artwork buffers as fragmented heap (#53).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 struct EngineUrl(String);
 
 #[tauri::command]
