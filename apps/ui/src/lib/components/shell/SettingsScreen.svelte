@@ -227,6 +227,15 @@
         </div>
 
         <div class="row">
+          <span class="label">Colours from artwork</span>
+          <div class="segmented" role="radiogroup" aria-label="Colours from artwork">
+            {#each [['off', 'Off'], ['accent', 'Accent'], ['tint', 'Tinted theme'], ['full', 'Full theme']] as const as [value, text] (value)}
+              <button role="radio" aria-checked={settings.current.artColours === value} class:active={settings.current.artColours === value} onclick={() => settings.set('artColours', value)}>{text}</button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="row">
           <span class="label">Accent</span>
           <div class="swatches">
             {#each accents as color (color)}

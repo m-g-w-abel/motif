@@ -6,6 +6,7 @@
   import { SETTINGS_GROUPS, SettingsView, type SettingsGroup } from './lib/settingsView.svelte';
   import SettingsScreen from './lib/components/shell/SettingsScreen.svelte';
   import { EngineClient, PlaybackPosition } from './lib/engine.svelte';
+  import { accentFromPixels, artPalette } from './lib/artAccent';
   import { LibraryClient } from './lib/library.svelte';
   import { installLayoutFiles } from './lib/layout/install';
   import { LayoutStore } from './lib/layout/store.svelte';
@@ -58,10 +59,11 @@
   // A removed or broken user theme falls back to the first built-in.
   const theme = $derived(themes.byId(themeId) ?? themeById(themeId));
   $effect(() => {
-    const { accent, density, scale, font } = settings.current;
+    const { density, scale, font } = settings.current;
+    const accent = art?.accent ?? settings.current.accent;
     const root = document.documentElement;
-    for (const [token, value] of Object.entries(theme.tokens)) root.style.setProperty(`--${token}`, value);
-    root.style.colorScheme = theme.scheme;
+    for (const [token, value] of Object.entries({ ...theme.tokens, ...art?.tokens })) root.style.setProperty(`--${token}`, value);
+    root.style.colorScheme = art?.scheme ?? theme.scheme;
     // The user's own font beats the theme's, which beats the app's.
     for (const [prop, themed] of [['--font-sans', theme.fonts?.sans], ['--font-mono', theme.fonts?.mono]] as const) {
       const value = (prop === '--font-sans' && FONT_LIST.test(font) && font) || themed;
@@ -76,6 +78,56 @@
     root.dataset.density = density;
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--accent-contrast', contrastFor(accent));
+  });
+
+  // The playing track's art: 16px of pixels sampled from the art once
+  // per track (and cached per art id), never while idle. It asks for the
+  // 256px size the album grid already loaded, so it is usually a cache hit.
+  let artPixels = $state<Uint8ClampedArray | null>(null);
+  const pixelCache = new Map<string, Uint8ClampedArray | null>();
+  // `undefined` while the track's details are looked up: keep the last colours rather than flashing the theme's.
+  const artId = $derived.by(() => {
+    if (settings.current.artColours === 'off' || !engine.current) return null;
+    const details = library.details(engine.current.track);
+    return details === undefined ? undefined : (details?.art ?? null);
+  });
+  $effect(() => {
+    const id = artId;
+    if (id === undefined) return;
+    if (!id) {
+      artPixels = null;
+      return;
+    }
+    if (pixelCache.has(id)) {
+      artPixels = pixelCache.get(id)!;
+      return;
+    }
+    let stale = false;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
+      ctx.canvas.width = ctx.canvas.height = 16;
+      let pixels: Uint8ClampedArray | null = null;
+      try {
+        ctx.drawImage(img, 0, 0, 16, 16);
+        pixels = ctx.getImageData(0, 0, 16, 16).data;
+      } catch {
+        // Tainted canvas (art served from another origin): keep the theme's colours.
+      }
+      pixelCache.set(id, pixels);
+      if (!stale) artPixels = pixels;
+    };
+    img.onerror = () => !stale && (artPixels = null);
+    img.src = library.artUrl(id, 256);
+    return () => (stale = true);
+  });
+  // What the cover changes: accent only, or also the theme's backgrounds and text.
+  const art = $derived.by(() => {
+    const mode = settings.current.artColours;
+    if (!artPixels || mode === 'off') return null;
+    if (mode === 'accent') return { scheme: theme.scheme, tokens: {}, accent: accentFromPixels(artPixels, theme.tokens.bg) };
+    return artPalette(artPixels, theme, mode);
   });
 
   /** Black or white text, whichever reads better on the accent colour. */
@@ -153,6 +205,8 @@
     if (devLayout) layout.select(devLayout);
     const devTheme = params.get('dev-theme');
     if (devTheme) settings.current.theme = devTheme;
+    const devArt = params.get('dev-art');
+    if (devArt) settings.current.artColours = devArt as typeof settings.current.artColours;
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     if (params.has('dev-sheet')) sheet.expand();
     if (params.has('dev-drawer')) drawer.open = true;
