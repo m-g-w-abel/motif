@@ -45,6 +45,18 @@ export type PanelNode = {
 
 export type LayoutNode = SplitNode | PanelNode;
 
+export type Widget = PanelNode['panel'];
+
+/** Every widget, by its name in a layout file, with the name shown while arranging. */
+export const WIDGETS: Record<Widget, string> = {
+  tracklist: 'Track list',
+  'album-grid': 'Album grid',
+  artwork: 'Artwork',
+  'track-info': 'Track info',
+  controls: 'Controls',
+  queue: 'Queue',
+};
+
 export interface Layout {
   version: number;
   /** Shown on the layout's button. */

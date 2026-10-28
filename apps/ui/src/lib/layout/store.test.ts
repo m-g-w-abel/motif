@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { SplitNode } from './model';
+import { slots } from './overlay';
 import { LayoutStore, withName } from './store.svelte';
 
 describe('withName', () => {
@@ -47,7 +49,7 @@ describe('LayoutStore edits', () => {
     const store = new LayoutStore();
     store.install('layout version=1 name=Edits\nsplit row { tracklist; artwork size=200 }\n', 'edits.kdl');
     store.resize('split-row/1.artwork', { px: 320 });
-    store.move('split-row', 2, 1, 0);
+    store.move(store.root as SplitNode, 'split-row', 1, 0);
     expect(store.edits).toEqual({ sizes: { 'split-row/1.artwork': { px: 320 } }, order: { 'split-row': [1, 0] } });
     expect(store.edited).toBe(true);
     store.resetEdits();
@@ -64,11 +66,40 @@ describe('LayoutStore edits', () => {
   });
 });
 
+describe('LayoutStore add and remove', () => {
+  const names = (store: LayoutStore) =>
+    slots(store.root as SplitNode, 'split-row', store.edits).map((s) => (s.node.kind === 'split' ? 'split' : s.node.panel));
+
+  it('adds, removes, moves and resets widgets', () => {
+    const store = new LayoutStore();
+    store.install('layout version=1 name=Edits\nsplit row { tracklist; artwork }\n', 'edits.kdl');
+    store.move(store.root as SplitNode, 'split-row', 1, 0);
+    store.addWidget(store.root as SplitNode, 'split-row', 'queue');
+    store.removeWidget('split-row/1.artwork');
+    expect(names(store)).toEqual(['tracklist', 'queue']);
+    // Moving keeps the removed widget hidden.
+    store.move(store.root as SplitNode, 'split-row', 1, 0);
+    expect(names(store)).toEqual(['queue', 'tracklist']);
+    store.resetEdits();
+    expect(names(store)).toEqual(['tracklist', 'artwork']);
+  });
+
+  it('saves added and removed widgets with Save as…', () => {
+    const store = new LayoutStore();
+    store.select('builtin:tracks-art.kdl');
+    const column = (store.root as SplitNode).children[1] as SplitNode;
+    store.addWidget(column, 'split-row/1.split-column', 'queue');
+    store.removeWidget('split-row/1.split-column/0.artwork');
+    expect(store.saveAs('Added').ok).toBe(true);
+    expect(store.active.text).toMatch(/split column size=300 \{\s*track-info\s*queue\s*\}/);
+  });
+});
+
 describe('LayoutStore.saveAs', () => {
   it('writes the in-place edits into a new user layout and switches to it', () => {
     const store = new LayoutStore();
     store.select('builtin:tracks-art.kdl');
-    store.move('split-row', 2, 0, 1);
+    store.move(store.root as SplitNode, 'split-row', 0, 1);
     store.resize('split-row/0.tracklist', { px: 500 });
     expect(store.saveAs('My art').ok).toBe(true);
     expect(store.activeId).toBe('user:my-art.kdl');

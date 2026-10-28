@@ -1,7 +1,7 @@
 import { format, parse } from '@bgotink/kdl';
 import { MediaQuery } from 'svelte/reactivity';
-import type { Layout, LayoutNode, Size } from './model';
-import { applyOverlay, orderOf, prune, type Overlay } from './overlay';
+import type { Layout, LayoutNode, Size, SplitNode, Widget } from './model';
+import { applyOverlay, childrenOf, orderOf, prune, slots, type Overlay } from './overlay';
 import { serializeLayout } from './serialize';
 import { parseLayout, type LayoutError } from './parse';
 import type { SortRule } from '../protocol/SortRule';
@@ -245,11 +245,27 @@ export class LayoutStore {
     this.#setEdits({ ...this.edits, sizes });
   }
 
-  /** Moves a child of the split at `path`, which has `count` children, from one shown position to another. */
-  move(path: string, count: number, from: number, to: number) {
-    const order = [...orderOf(this.edits, path, count)];
-    order.splice(to, 0, ...order.splice(from, 1));
+  /** Moves a child of the split at `path` from one shown position to another. */
+  move(split: SplitNode, path: string, from: number, to: number) {
+    const shown = slots(split, path, this.edits).map((s) => s.index);
+    shown.splice(to, 0, ...shown.splice(from, 1));
+    // Removed children keep a place in the order, at the end, so it stays a full one.
+    const all = orderOf(this.edits, path, childrenOf(split, path, this.edits).length);
+    const order = [...shown, ...all.filter((i) => !shown.includes(i))];
     this.#setEdits({ ...this.edits, order: { ...this.edits.order, [path]: order } });
+  }
+
+  /** Adds a widget at the end of the split at `path`. */
+  addWidget(split: SplitNode, path: string, widget: Widget) {
+    const count = childrenOf(split, path, this.edits).length;
+    const order = this.edits.order?.[path] && { ...this.edits.order, [path]: [...orderOf(this.edits, path, count), count] };
+    const added = { ...this.edits.added, [path]: [...(this.edits.added?.[path] ?? []), widget] };
+    this.#setEdits({ ...this.edits, added, ...(order ? { order } : {}) });
+  }
+
+  /** Removes the node at `path` from the tree on screen. */
+  removeWidget(path: string) {
+    this.#setEdits({ ...this.edits, removed: [...(this.edits.removed ?? []), path] });
   }
 
   /** Drops the in-place edits to the tree on screen. */

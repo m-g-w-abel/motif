@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { contextMenu } from '../../contextMenu.svelte';
   import { getApp } from '../../context';
-  import type { LayoutNode, Size } from '../../layout/model';
+  import { WIDGETS, type LayoutNode, type Size, type SplitNode, type Widget } from '../../layout/model';
   import { slots as slotsOf, type Slot } from '../../layout/overlay';
   import Icon from '../Icon.svelte';
   // Every widget a layout can place. Layouts only choose and configure these.
@@ -13,7 +14,7 @@
   import TrackList from '../widgets/TrackList.svelte';
   import Self from './LayoutNode.svelte';
 
-  /** `path` keys this node's in-place edits; `depth` staggers the move handles of nested splits. */
+  /** `path` keys this node's in-place edits; `depth` staggers the handles of nested splits. */
   let { node, path, depth = 0 }: { node: LayoutNode; path: string; depth?: number } = $props();
 
   const { layout } = getApp();
@@ -21,6 +22,8 @@
   let split = $state<HTMLElement>();
   /** The slot a dragged widget would move to. */
   let dropAt = $state<number | null>(null);
+  /** The slot whose handle is being dragged. */
+  let moving = $state<number | null>(null);
 
   const MIN = 80;
 
@@ -61,26 +64,31 @@
     divider.addEventListener('pointercancel', () => stop.abort(), { signal: stop.signal });
   }
 
-  /** Drags a widget's handle onto another slot of this split to move it there. */
+  /**
+   * Drags a widget's handle to another slot of this split to move it there.
+   * Pointing anywhere picks the slot nearest along the split, so a drop target always shows.
+   */
   function startMove(e: PointerEvent, from: number) {
     if (!split) return;
     e.preventDefault();
     const grip = e.currentTarget as HTMLElement;
     const els = [...split.children].filter((c) => c.classList.contains('slot'));
+    // Phones stack row splits, so the axis comes from the layout on screen.
+    const row = getComputedStyle(split).flexDirection === 'row';
     const at = (ev: PointerEvent) => {
       const i = els.findIndex((el) => {
         const r = el.getBoundingClientRect();
-        return ev.clientX >= r.left && ev.clientX < r.right && ev.clientY >= r.top && ev.clientY < r.bottom;
+        return row ? ev.clientX < r.right : ev.clientY < r.bottom;
       });
-      return i < 0 ? null : i;
+      return i < 0 ? els.length - 1 : i;
     };
     const stop = new AbortController();
     const end = (ev: PointerEvent) => {
       stop.abort();
       if (ev.type === 'pointerup' && dropAt !== null && dropAt !== from) moveTo(grip, from, dropAt);
-      dropAt = null;
+      dropAt = moving = null;
     };
-    dropAt = from;
+    dropAt = moving = from;
     grip.setPointerCapture(e.pointerId);
     grip.addEventListener('pointermove', (ev) => (dropAt = at(ev)), { signal: stop.signal });
     grip.addEventListener('pointerup', end, { signal: stop.signal });
@@ -88,7 +96,8 @@
   }
 
   function moveTo(grip: HTMLElement, from: number, to: number) {
-    layout.move(path, slots.length, from, to);
+    if (node.kind !== 'split') return;
+    layout.move(node, path, from, to);
     // The widget's element moves, which can drop focus from its handle.
     tick().then(() => grip.focus());
   }
@@ -100,11 +109,43 @@
     moveTo(e.currentTarget as HTMLElement, i, i + step);
   }
 
-  const label = (node: LayoutNode) => (node.kind === 'split' ? 'split' : node.panel);
+  const nameOf = (node: LayoutNode) =>
+    node.kind === 'split' ? `${node.direction === 'row' ? 'Row' : 'Column'} split` : WIDGETS[node.panel];
+
+  function openAdd(e: MouseEvent, to: SplitNode, at: string) {
+    const button = e.currentTarget as HTMLElement;
+    const box = button.getBoundingClientRect();
+    const items = (Object.entries(WIDGETS) as [Widget, string][]).map(([widget, label]) => ({
+      label,
+      run: () => layout.addWidget(to, at, widget),
+    }));
+    contextMenu.show(items, box.left, box.bottom + 4, button);
+  }
+
+  /** Handles of a slot sit lower the deeper its split is, so nested ones don't cover each other. */
+  const top = (depth: number) => `${8 + depth * 36}px`;
 </script>
+
+{#snippet add(to: SplitNode, at: string)}
+  <button
+    class="tool"
+    aria-label="Add a widget to {nameOf(to)}"
+    title="Add a widget"
+    aria-haspopup="menu"
+    onclick={(e) => openAdd(e, to, at)}
+  >
+    <Icon name="plus" size={14} />
+  </button>
+{/snippet}
 
 {#if node.kind === 'split'}
   <div class="split {node.direction}" bind:this={split}>
+    {#if layout.arranging && depth === 0}
+      <div class="handle" style:top={top(0)}>
+        <span class="name">{nameOf(node)}</span>
+        {@render add(node, path)}
+      </div>
+    {/if}
     {#each slots as slot, i (slot.path)}
       {#if i > 0}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -115,19 +156,36 @@
           ondblclick={() => layout.resize(targetOf(i).path, undefined)}
         ></div>
       {/if}
-      <div class="slot" class:sized={slot.size} class:drop={dropAt === i} style:flex={flex(slot.size)}>
+      <div
+        class="slot"
+        class:sized={slot.size}
+        class:drop={dropAt === i && moving !== i}
+        class:hot={moving === i}
+        style:flex={flex(slot.size)}
+      >
         <Self node={slot.node} path={slot.path} depth={depth + 1} />
         {#if layout.arranging}
-          <button
-            class="grip"
-            style:left="{8 + depth * 32}px"
-            aria-label="Move {label(slot.node)}"
-            title="Drag to move, or use the arrow keys"
-            onpointerdown={(e) => startMove(e, i)}
-            onkeydown={(e) => onGripKey(e, i)}
-          >
-            <Icon name="grip" size={16} />
-          </button>
+          <div class="handle" style:top={top(depth + 1)}>
+            <button
+              class="grip"
+              aria-label="Move {nameOf(slot.node)}"
+              title="Drag to move, or use the arrow keys"
+              onpointerdown={(e) => startMove(e, i)}
+              onkeydown={(e) => onGripKey(e, i)}
+            >
+              <Icon name="grip" size={16} />
+              <span>{nameOf(slot.node)}</span>
+            </button>
+            {#if slot.node.kind === 'split'}{@render add(slot.node, slot.path)}{/if}
+            <button
+              class="tool"
+              aria-label="Remove {nameOf(slot.node)}"
+              title="Remove"
+              onclick={() => layout.removeWidget(slot.path)}
+            >
+              <Icon name="close" size={14} />
+            </button>
+          </div>
         {/if}
       </div>
     {/each}
@@ -148,6 +206,7 @@
 
 <style>
   .split {
+    position: relative;
     display: flex;
     width: 100%;
     height: 100%;
@@ -196,23 +255,59 @@
     }
   }
 
-  .slot.drop {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
+  /* Drawn over the widget, which would otherwise paint over an outline on the slot. */
+  .slot.drop::after,
+  .slot.hot::after,
+  .slot:has(> .handle :is(:hover, :focus-visible))::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border: 2px dashed var(--accent);
+    pointer-events: none;
   }
 
-  .grip {
+  .slot.drop::after {
+    border-style: solid;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .handle {
     position: absolute;
-    top: 8px;
-    z-index: 2;
-    display: grid;
-    place-items: center;
-    width: 28px;
+    left: 8px;
+    z-index: 4;
+    display: flex;
+    align-items: center;
     height: 28px;
     border: 1px solid var(--accent);
     border-radius: var(--radius-md);
     background: var(--bg);
     color: var(--accent);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .handle > * {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 100%;
+    padding: 0 6px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+  }
+
+  .handle > * + * {
+    border-left: 1px solid var(--accent);
+  }
+
+  .handle .name {
+    padding-left: 8px;
+  }
+
+  .grip {
     cursor: grab;
     touch-action: none;
   }
