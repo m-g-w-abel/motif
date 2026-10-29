@@ -271,12 +271,21 @@ export class LibraryClient {
       .catch(() => paths.forEach((path) => this.#details.get(path) === undefined && this.#details.set(path, null)));
   }
 
-  /** URL of artwork `art`, scaled to fit `size` pixels, or exactly `size` image pixels if `exact`. */
+  /** URL of artwork `art` sharp at `size` pixels on this screen, or exactly `size` image pixels if `exact`. */
   artUrl(art: string, size: number, exact = false): string {
-    // Whole steps keep the server's thumbnail cache small.
-    const step = size <= 64 ? 64 : size <= 128 ? 128 : size <= 256 ? 256 : 512;
-    const pixels = exact ? size : Math.round(step * (globalThis.devicePixelRatio ?? 1));
-    return `${this.engine.httpBase}/art/${art}?size=${pixels}`;
+    const wanted = size * (globalThis.devicePixelRatio ?? 1);
+    // Whole steps keep the server's thumbnail cache small; past them the original, except on phones.
+    const phone = globalThis.matchMedia?.('(max-width: 700px)').matches;
+    const step = ART_STEPS.find((s) => wanted <= s) ?? (phone ? 1024 : null);
+    const pixels = exact ? size : step;
+    return `${this.engine.httpBase}/art/${art}${pixels ? `?size=${pixels}` : ''}`;
+  }
+
+  /** Artwork ids for all images of the track at `path` (cover, back, booklet…), its own art first. */
+  async images(path: string): Promise<string[]> {
+    if (!this.engine.httpBase) return [];
+    const response = await fetch(`${this.engine.httpBase}/images?track=${encodeURIComponent(path)}`);
+    return response.ok ? response.json() : [];
   }
 }
 
@@ -285,6 +294,9 @@ export class LibraryClient {
  * scan (`library::BAR_ART_SIZE`), so the bar's cover shows at once. Sharp at 48px up to a ratio of about 2.7.
  */
 export const BAR_ART_SIZE = 128;
+
+/** Thumbnail sizes the engine is asked for, in image pixels. */
+const ART_STEPS = [64, 128, 256, 512, 1024];
 
 function cached<T>(map: Map<string, T>, search: string | null, sort: SortRule[], make: () => T): T {
   const key = JSON.stringify([search ?? '', sort]);

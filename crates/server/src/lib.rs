@@ -1,5 +1,6 @@
 //! Exposes an [`Engine`] and the [`Library`] over WebSocket at `/ws`, serves
-//! artwork at `/art/<id>` and the web UI.
+//! artwork at `/art/<id>` (a track's other images listed at `/images`) and
+//! the web UI.
 //!
 //! Phase 0 has no authentication, so callers must bind to loopback only, and
 //! browsers may only connect from pages served by this machine.
@@ -68,6 +69,7 @@ pub fn router(engine: Engine, library: Option<Library>, ui_dir: Option<PathBuf>)
     let router = Router::new()
         .route("/ws", get(upgrade))
         .route("/art/{key}", get(art))
+        .route("/images", get(images))
         .with_state(AppState {
             engine,
             library,
@@ -96,6 +98,41 @@ async fn upgrade(
         return StatusCode::FORBIDDEN.into_response();
     }
     ws.on_upgrade(move |socket| session(socket, state))
+}
+
+#[derive(serde::Deserialize)]
+struct ImagesParams {
+    /// The track's path in the library.
+    track: String,
+}
+
+/// Artwork keys for all of a track's images (cover, back, booklet…), its
+/// shown art first, for `/art/<key>`. Read by script from the UI's own
+/// origin, so it answers the same pages `/ws` does.
+async fn images(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<ImagesParams>,
+) -> Response {
+    let origin = headers.get(header::ORIGIN).cloned();
+    if !origin_allowed(origin.as_ref().map(|v| v.to_str().unwrap_or(""))) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(library) = state.library else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::task::spawn_blocking(move || library.images(&params.track)).await {
+        Ok(Ok(keys)) => {
+            let mut response = axum::Json(keys).into_response();
+            if let Some(origin) = origin {
+                response
+                    .headers_mut()
+                    .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+            }
+            response
+        }
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[derive(serde::Deserialize)]

@@ -93,15 +93,39 @@ pub fn read(path: &Path) -> Tags {
         .iter()
         .find(|p| p.pic_type() == PictureType::CoverFront)
         .or(pictures.first())
-        .map(|p| {
-            let ext = if p.data().starts_with(&[0x89, b'P', b'N', b'G']) {
-                "png"
-            } else {
-                "jpg"
-            };
-            (p.data().to_vec(), ext)
-        });
+        .map(|p| (p.data().to_vec(), image_ext(p.data())));
     tags
+}
+
+fn image_ext(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "png"
+    } else {
+        "jpg"
+    }
+}
+
+/// Every picture embedded in a file, in tag order, with a file extension.
+pub fn pictures(path: &Path) -> Vec<(Vec<u8>, &'static str)> {
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return Vec::new();
+    };
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+    tag.map(|t| t.pictures().iter())
+        .into_iter()
+        .flatten()
+        .map(|p| (p.data().to_vec(), image_ext(p.data())))
+        .collect()
+}
+
+/// Pixel area of an image, read from its header without decoding it.
+pub fn pixels(bytes: &[u8]) -> Option<u64> {
+    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()?;
+    Some(u64::from(w) * u64::from(h))
 }
 
 /// Symphonia's container readers, for files lofty can't parse (some MP4s).
@@ -189,16 +213,23 @@ fn codec_name(file_type: FileType, path: &Path) -> String {
 }
 
 /// Finds `cover.jpg`, `folder.png` and the like next to a file, with the
-/// image's artwork key, remembering the answer per folder.
+/// image's artwork key and pixel area, remembering the answer per folder.
 #[derive(Default)]
 pub struct FolderArt {
-    seen: HashMap<PathBuf, Option<(PathBuf, String)>>,
+    seen: HashMap<PathBuf, Option<FolderImage>>,
+}
+
+#[derive(Clone)]
+pub struct FolderImage {
+    pub path: PathBuf,
+    pub key: String,
+    pub pixels: Option<u64>,
 }
 
 const ART_NAMES: &[&str] = &["cover", "folder", "front", "album", "albumart"];
 
 impl FolderArt {
-    pub fn find(&mut self, file: &Path) -> Option<(PathBuf, String)> {
+    pub fn find(&mut self, file: &Path) -> Option<FolderImage> {
         let dir = file.parent()?;
         self.seen
             .entry(dir.to_path_buf())
@@ -212,13 +243,7 @@ impl FolderArt {
                             .and_then(|s| s.to_str())
                             .unwrap_or_default()
                             .to_ascii_lowercase();
-                        let ext = p
-                            .extension()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or_default()
-                            .to_ascii_lowercase();
-                        ART_NAMES.contains(&stem.as_str())
-                            && matches!(ext.as_str(), "jpg" | "jpeg" | "png")
+                        ART_NAMES.contains(&stem.as_str()) && is_image(p)
                     })
                     .collect();
                 // Prefer names earlier in the list (cover over folder…).
@@ -230,12 +255,23 @@ impl FolderArt {
                         .to_ascii_lowercase();
                     ART_NAMES.iter().position(|n| *n == stem)
                 });
-                let image = found.into_iter().next()?;
-                let key = crate::scan::art_key(&fs::read(&image).ok()?);
-                Some((image, key))
+                let path = found.into_iter().next()?;
+                let bytes = fs::read(&path).ok()?;
+                Some(FolderImage {
+                    key: crate::scan::art_key(&bytes),
+                    pixels: pixels(&bytes),
+                    path,
+                })
             })
             .clone()
     }
+}
+
+/// Image files the artwork code can read.
+pub fn is_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png"))
 }
 
 /// The FLAC stream's own MD5 of its decoded audio, if the encoder set it.

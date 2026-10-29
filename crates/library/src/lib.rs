@@ -390,10 +390,72 @@ impl Library {
             .query_row("SELECT path FROM art WHERE key = ?1", [key], |r| r.get(0))
             .optional()?
             .ok_or_else(|| Error::Other("no such artwork".into()))?;
-        let Some(size) = size else {
-            return Ok(source.into());
+        // Never upscaled: an image no larger than asked for is sent as it is.
+        let fits = |(w, h): (u32, u32)| size.is_none_or(|size| w.max(h) <= size);
+        match size {
+            Some(size) if !image::image_dimensions(&source).is_ok_and(fits) => {
+                thumbnail(&self.shared, key, &source, size)
+            }
+            _ => Ok(source.into()),
+        }
+    }
+
+    /// Artwork keys for every image of the track at `path`: its own art
+    /// first, then the other pictures embedded in it, then the other images
+    /// in its folder (back, booklet, disc…). Read when asked, not at scan (#18).
+    pub fn images(&self, path: &str) -> Result<Vec<String>> {
+        let art: Option<String> = self
+            .db()
+            .query_row("SELECT art FROM tracks WHERE path = ?1", [path], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .ok_or_else(|| Error::Other("not in the library".into()))?;
+        let file = Path::new(path);
+        let pictures = tags::pictures(file);
+        let mut folder: Vec<PathBuf> = file
+            .parent()
+            .and_then(|dir| fs::read_dir(dir).ok())
+            .into_iter()
+            .flatten()
+            .filter_map(|e| Some(e.ok()?.path()))
+            .filter(|p| tags::is_image(p))
+            .collect();
+        folder.sort();
+        let conn = self.db();
+        let shown: Option<String> = art.as_ref().and_then(|key| {
+            conn.query_row("SELECT path FROM art WHERE key = ?1", [key], |r| r.get(0))
+                .ok()
+        });
+        let mut keys: Vec<String> = art.into_iter().collect();
+        let mut add = |key: String| {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
         };
-        thumbnail(&self.shared, key, &source, size)
+        for (bytes, ext) in &pictures {
+            if let Some(key) = scan::save_embedded_art(&self.shared, &conn, bytes, ext) {
+                add(key);
+            }
+        }
+        for image in folder {
+            let (Some(image), Ok(meta)) = (image.to_str(), fs::metadata(&image)) else {
+                continue;
+            };
+            if shown.as_deref() == Some(image) {
+                continue;
+            }
+            // Keyed by path, size and modification time rather than content,
+            // so large booklet scans aren't read each time the sheet opens.
+            let id = format!("{image}\0{}\0{:?}", meta.len(), meta.modified().ok());
+            let key = scan::art_key(id.as_bytes());
+            conn.execute(
+                "INSERT OR IGNORE INTO art (key, path) VALUES (?1, ?2)",
+                params![key, image],
+            )?;
+            add(key);
+        }
+        Ok(keys)
     }
 }
 

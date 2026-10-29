@@ -134,7 +134,22 @@ fn scans_queries_matches_and_rescans() {
     let bar_thumb = data.join(format!("art/{art}-{}.jpg", library::BAR_ART_SIZE));
     assert!(bar_thumb.is_file(), "the scan pre-caches the bar size");
     assert!(library.art(&art, Some(32)).unwrap().is_file());
+    let cover = music.join("Artist B/Second Album/cover.png");
+    assert_eq!(
+        library.art(&art, Some(128)).unwrap(),
+        cover,
+        "never upscaled"
+    );
     assert_eq!(albums[0].art, None);
+
+    // Other images in the folder are listed on demand, the shown art first.
+    fs::copy(&cover, cover.with_file_name("back.png")).unwrap();
+    let beginning = cover.with_file_name("01 Beginning.mp3");
+    let images = library.images(beginning.to_str().unwrap()).unwrap();
+    assert_eq!(images.len(), 2);
+    assert_eq!(images[0], art);
+    let back = library.art(&images[1], None).unwrap();
+    assert_eq!(back, cover.with_file_name("back.png"));
 
     let query = LibraryQuery::AlbumPosition {
         search: None,

@@ -275,16 +275,24 @@ fn store(
     folder_art: &mut tags::FolderArt,
 ) -> rusqlite::Result<()> {
     let t = tags::read(path);
-    let art = match &t.picture {
-        Some((bytes, ext)) => save_embedded_art(shared, tx, bytes, ext),
-        None => folder_art.find(path).and_then(|(file, key)| {
-            tx.execute(
-                "INSERT OR IGNORE INTO art (key, path) VALUES (?1, ?2)",
-                params![key, file.to_str()?],
-            )
-            .ok()?;
-            Some(key)
-        }),
+    let folder = folder_art.find(path);
+    let art = match (&t.picture, folder) {
+        (Some((bytes, ext)), folder) if embedded_wins(bytes, folder.as_ref()) => {
+            save_embedded_art(shared, tx, bytes, ext)
+        }
+        (_, Some(image)) => image
+            .path
+            .to_str()
+            .and_then(|path| {
+                tx.execute(
+                    "INSERT OR IGNORE INTO art (key, path) VALUES (?1, ?2)",
+                    params![image.key, path],
+                )
+                .ok()
+            })
+            .map(|_| image.key),
+        // An embedded picture without a folder image always wins above.
+        (_, None) => None,
     };
     // A changed file keeps its row (and id) but loses a hash that may be
     // stale and any problem noted before.
@@ -323,14 +331,20 @@ fn store(
     Ok(())
 }
 
+/// Whether a track shows its embedded picture rather than the folder image:
+/// the larger by pixel area wins, a tie going to the folder image (#18).
+fn embedded_wins(embedded: &[u8], folder: Option<&tags::FolderImage>) -> bool {
+    folder.is_none_or(|f| tags::pixels(embedded) > f.pixels)
+}
+
 pub fn art_key(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex()[..32].to_string()
 }
 
 /// Copies an embedded picture into the artwork cache once per distinct image.
-fn save_embedded_art(
+pub(crate) fn save_embedded_art(
     shared: &Shared,
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     bytes: &[u8],
     ext: &str,
 ) -> Option<String> {
@@ -410,4 +424,43 @@ fn hash_next(shared: &Shared, conn: &Connection) -> bool {
     }
     shared.update(|s| s.hashing = s.hashing.saturating_sub(1));
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn png(side: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::RgbImage::new(side, side)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    /// Whether the embedded picture (if `embedded` is a side) beats `cover.png`
+    /// (if `folder` is a side), found as the scanner finds it.
+    fn embedded_shows(embedded: Option<u32>, folder: Option<u32>) -> bool {
+        let dir = std::env::temp_dir().join(format!(
+            "motif-art-{}-{embedded:?}-{folder:?}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        if let Some(side) = folder {
+            fs::write(dir.join("cover.png"), png(side)).unwrap();
+        }
+        let image = tags::FolderArt::default().find(&dir.join("track.flac"));
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(image.is_some(), folder.is_some());
+        embedded.is_some_and(|side| embedded_wins(&png(side), image.as_ref()))
+    }
+
+    #[test]
+    fn the_larger_art_wins_and_a_tie_goes_to_the_folder() {
+        assert!(embedded_shows(Some(600), Some(300)), "embedded larger");
+        assert!(!embedded_shows(Some(300), Some(600)), "folder larger");
+        assert!(!embedded_shows(Some(300), Some(300)), "tie");
+        assert!(!embedded_shows(None, Some(300)), "folder only");
+        assert!(embedded_shows(Some(300), None), "embedded only");
+    }
 }
