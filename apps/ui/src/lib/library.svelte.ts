@@ -5,6 +5,7 @@ import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { QueryResult } from './protocol/QueryResult';
 import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
+import type { TrackImage } from './protocol/TrackImage';
 import type { TrackRef } from './protocol/TrackRef';
 
 /** Rows fetched per request. */
@@ -281,8 +282,8 @@ export class LibraryClient {
     return `${this.engine.httpBase}/art/${art}${pixels ? `?size=${pixels}` : ''}`;
   }
 
-  /** Artwork ids for all images of the track at `path` (cover, back, booklet…), its own art first. */
-  async images(path: string): Promise<string[]> {
+  /** All images of the track at `path` (cover, back, booklet…), its own art first. */
+  async images(path: string): Promise<TrackImage[]> {
     if (!this.engine.httpBase) return [];
     const response = await fetch(`${this.engine.httpBase}/images?track=${encodeURIComponent(path)}`);
     return response.ok ? response.json() : [];

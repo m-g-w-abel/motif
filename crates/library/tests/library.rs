@@ -147,8 +147,10 @@ fn scans_queries_matches_and_rescans() {
     let beginning = cover.with_file_name("01 Beginning.mp3");
     let images = library.images(beginning.to_str().unwrap()).unwrap();
     assert_eq!(images.len(), 2);
-    assert_eq!(images[0], art);
-    let back = library.art(&images[1], None).unwrap();
+    assert_eq!(images[0].key, art);
+    assert_eq!(images[0].kind, Some(protocol::ImageKind::Front));
+    assert_eq!(images[1].kind, Some(protocol::ImageKind::Back));
+    let back = library.art(&images[1].key, None).unwrap();
     assert_eq!(back, cover.with_file_name("back.png"));
 
     // Listing and serving them never waits on the scanner writing (#18).
@@ -158,7 +160,8 @@ fn scans_queries_matches_and_rescans() {
     fs::copy(&cover, cover.with_file_name("booklet.png")).unwrap();
     let started = Instant::now();
     let images = library.images(beginning.to_str().unwrap()).unwrap();
-    let booklet = library.art(&images[1], None).unwrap();
+    assert_eq!(images[1].kind, Some(protocol::ImageKind::Booklet));
+    let booklet = library.art(&images[1].key, None).unwrap();
     assert!(
         started.elapsed() < Duration::from_secs(1),
         "waited for the lock"

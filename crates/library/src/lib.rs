@@ -22,8 +22,8 @@ use std::{
 };
 
 use protocol::{
-    Command, ContextKind, LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack, QueryResult,
-    SortRule, TrackGroup, TrackKeys, TrackRef,
+    Command, ContextKind, ImageKind, LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack,
+    QueryResult, SortRule, TrackGroup, TrackImage, TrackKeys, TrackRef,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
@@ -408,10 +408,11 @@ impl Library {
         }
     }
 
-    /// Artwork keys for every image of the track at `path`: its own art
-    /// first, then the other pictures embedded in it, then the other images
-    /// in its folder (back, booklet, disc…). Read when asked, not at scan (#18).
-    pub fn images(&self, path: &str) -> Result<Vec<String>> {
+    /// Every image of the track at `path`, named when it says what it shows:
+    /// its own art first, then the other pictures embedded in it, then the
+    /// other images in its folder (back, booklet, disc…). Read when asked,
+    /// not at scan (#18).
+    pub fn images(&self, path: &str) -> Result<Vec<TrackImage>> {
         let art: Option<String> = self
             .db()
             .query_row("SELECT art FROM tracks WHERE path = ?1", [path], |r| {
@@ -437,9 +438,12 @@ impl Library {
         });
         // Only read the database: the scanner may hold its write lock for
         // seconds, so new keys go in memory for `art` to find.
-        let mut found: Vec<(String, PathBuf)> = pictures
+        let mut found: Vec<(String, PathBuf, Option<ImageKind>)> = pictures
             .iter()
-            .filter_map(|(bytes, ext)| scan::cache_picture(&self.shared, bytes, ext))
+            .filter_map(|(bytes, ext, kind)| {
+                let (key, file) = scan::cache_picture(&self.shared, bytes, ext)?;
+                Some((key, file, *kind))
+            })
             .collect();
         for image in folder {
             let (Some(name), Ok(meta)) = (image.to_str(), fs::metadata(&image)) else {
@@ -451,17 +455,30 @@ impl Library {
             // Keyed by path, size and modification time rather than content,
             // so large booklet scans aren't read each time the sheet opens.
             let id = format!("{name}\0{}\0{:?}", meta.len(), meta.modified().ok());
-            found.push((scan::art_key(id.as_bytes()), image));
+            let kind = tags::image_kind(&image);
+            found.push((scan::art_key(id.as_bytes()), image, kind));
         }
-        let mut keys: Vec<String> = art.into_iter().collect();
+        let mut images: Vec<TrackImage> = art
+            .map(|key| {
+                // Named by its picture type if embedded, else by its file name.
+                let kind = match found.iter().find(|(k, ..)| *k == key) {
+                    Some((.., kind)) => *kind,
+                    None => shown
+                        .as_deref()
+                        .and_then(|p| tags::image_kind(Path::new(p))),
+                };
+                TrackImage { key, kind }
+            })
+            .into_iter()
+            .collect();
         let mut extras = self.shared.extras.lock().unwrap();
-        for (key, file) in found {
-            if !keys.contains(&key) {
-                keys.push(key.clone());
-                extras.insert(key, file);
+        for (key, file, kind) in found {
+            if !images.iter().any(|i| i.key == key) {
+                extras.insert(key.clone(), file);
+                images.push(TrackImage { key, kind });
             }
         }
-        Ok(keys)
+        Ok(images)
     }
 }
 

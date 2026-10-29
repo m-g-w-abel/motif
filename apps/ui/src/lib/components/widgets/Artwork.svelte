@@ -1,4 +1,11 @@
+<script lang="ts" module>
+  import type { ImageKind } from '../../protocol/ImageKind';
+
+  const KINDS: Record<ImageKind, string> = { front: 'Front', back: 'Back', booklet: 'Booklet', disc: 'Disc', artist: 'Artist' };
+</script>
+
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { albumKey } from '../../albums';
   import { menu } from '../../contextMenu.svelte';
@@ -6,8 +13,10 @@
   import { albumMenu, playTracks, queueTracks } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { viewSort } from '../../sort.svelte';
-  import Icon from '../Icon.svelte';
+  import type { LibraryTrack } from '../../protocol/LibraryTrack';
+  import type { TrackImage } from '../../protocol/TrackImage';
   import Artwork from '../player/Artwork.svelte';
+  import Coverflow, { type Card } from '../player/Coverflow.svelte';
 
   /** In the main window a click expands the player; inside it, it doesn't. `playing` shows the playing track, not the selected one. */
   let { expands = true, playing = false }: { expands?: boolean; playing?: boolean } = $props();
@@ -33,26 +42,55 @@
     );
   };
 
-  // In the sheet: the track's other images (back, booklet, disc…), listed when it opens. Page 0 is
-  // the track's own art, shown as everywhere else.
+  // In the sheet: every image of the playing album, listed when it opens (#18): each distinct
+  // track cover, then the track's other images (back, booklet, disc…).
   const path = $derived(!expands && sheet.open && !isDemo && track?.source === 'local' ? track.id : null);
-  let images = $state<string[]>([]);
-  let page = $state(0);
+  let covers = $state<{ key: string; titles: string[]; shared: boolean }[]>([]);
+  let images = $state<TrackImage[]>([]);
   $effect(() => {
     const p = path;
-    images = [];
-    page = 0;
-    if (!p) return;
+    const t = untrack(() => track);
+    if (!p || !t) return;
     let current = true;
-    library.images(p).then(
-      (keys) => current && (images = keys),
+    const tracks: Promise<LibraryTrack[]> = t.album
+      ? engine.query({ type: 'album_tracks', albums: [albumKey(t)], sort: [] }).then((r) => (r.type === 'tracks' ? r.tracks : []))
+      : Promise.resolve([untrack(() => library.details(t))].filter((d) => !!d));
+    Promise.all([tracks, library.images(p)]).then(
+      ([tracks, found]) => {
+        if (!current) return;
+        const byKey = new Map<string, string[]>();
+        for (const { track: x, art } of tracks) if (art) byKey.set(art, [...(byKey.get(art) ?? []), x.title ?? '']);
+        covers = [...byKey].map(([key, titles]) => ({ key, titles, shared: titles.length === tracks.length }));
+        images = found;
+      },
       () => {},
     );
     return () => (current = false);
   });
   const own = $derived(track ? library.details(track)?.art : undefined);
-  const pages = $derived([undefined, ...images.filter((k) => k !== own)]);
-  const turn = (by: number) => (page = (page + by + pages.length) % pages.length);
+  const cards = $derived.by(() => {
+    const album = track?.album ?? '';
+    // A cover all the album's tracks share is named after the album, else after its tracks.
+    const list: Card[] = covers.map((c) => ({ key: c.key, kicker: 'Front', title: c.shared && album ? album : c.titles.join(' · ') }));
+    for (const { key, kind } of images) {
+      if (!list.some((c) => c.key === key)) list.push({ key, kicker: kind ? album : '', title: kind ? KINDS[kind] : '' });
+    }
+    return list;
+  });
+  // Lands on the playing track's cover when the track changes, and stays wherever it was paged to
+  // until then.
+  let index = $state(0);
+  let landed: string | null = null;
+  $effect(() => {
+    const i = cards.findIndex((c) => c.key === own);
+    const id = track?.id ?? null;
+    if (i >= 0 && id !== landed) {
+      landed = id;
+      index = i;
+    }
+  });
+  // Until the list holds this track's cover (another album still loading), the plain cover shows.
+  const flow = $derived(path !== null && cards.length > 1 && cards.some((c) => c.key === own));
 
   // The largest square that fits, measured rather than left to CSS so it
   // behaves the same in every webview.
@@ -63,24 +101,15 @@
 </script>
 
 <section class="artwork" bind:clientWidth={width} bind:clientHeight={height}>
-  {#if side > 0}
+  {#if flow}
+    <Coverflow {cards} bind:index {track} {width} {height} {items} settled={sheet.progress === 1} />
+  {:else if side > 0}
     {#if expands}
       <button class="frame" use:menu={items} title="Expand player" style:width="{side}px" onclick={() => sheet.expand()}>
         <Artwork {track} size={side} />
       </button>
     {:else}
-      <div class="frame" use:menu={items} style:width="{side}px">
-        <Artwork {track} size={side} art={pages[page]} />
-        {#if pages.length > 1 && sheet.progress === 1}
-          <button class="turn previous" aria-label="Previous image" onclick={() => turn(-1)}>
-            <Icon name="chevron-left" />
-          </button>
-          <button class="turn next" aria-label="Next image" onclick={() => turn(1)}>
-            <Icon name="chevron-right" />
-          </button>
-          <span class="count">{page + 1} / {pages.length}</span>
-        {/if}
-      </div>
+      <div class="frame" use:menu={items} style:width="{side}px"><Artwork {track} size={side} /></div>
     {/if}
   {/if}
 </section>
@@ -96,7 +125,6 @@
   }
 
   .frame {
-    position: relative;
     padding: 0;
     border: 0;
     background: none;
@@ -105,49 +133,6 @@
 
   button.frame {
     cursor: pointer;
-  }
-
-  /* Paging through the sheet's images, over the artwork. */
-  .turn,
-  .count {
-    position: absolute;
-    border: 0;
-    border-radius: 999px;
-    background: rgb(0 0 0 / 0.5);
-    color: #fff;
-    line-height: 1;
-  }
-
-  .turn {
-    top: 50%;
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    margin-top: -18px;
-    padding: 0;
-    cursor: pointer;
-  }
-
-  .turn:hover {
-    background: rgb(0 0 0 / 0.7);
-  }
-
-  .previous {
-    left: 8px;
-  }
-
-  .next {
-    right: 8px;
-  }
-
-  .count {
-    bottom: 8px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 4px 8px;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
   }
 
   .frame :global(.art) {

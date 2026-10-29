@@ -12,6 +12,7 @@ use lofty::{
     picture::PictureType,
     prelude::{Accessor, AudioFile, ItemKey},
 };
+use protocol::ImageKind;
 
 /// File extensions the scanner looks at.
 pub const AUDIO_EXTENSIONS: &[&str] = &[
@@ -105,8 +106,9 @@ fn image_ext(bytes: &[u8]) -> &'static str {
     }
 }
 
-/// Every picture embedded in a file, in tag order, with a file extension.
-pub fn pictures(path: &Path) -> Vec<(Vec<u8>, &'static str)> {
+/// Every picture embedded in a file, in tag order, with a file extension
+/// and what its picture type says it shows.
+pub fn pictures(path: &Path) -> Vec<(Vec<u8>, &'static str, Option<ImageKind>)> {
     let Ok(tagged) = lofty::read_from_path(path) else {
         return Vec::new();
     };
@@ -114,8 +116,45 @@ pub fn pictures(path: &Path) -> Vec<(Vec<u8>, &'static str)> {
     tag.map(|t| t.pictures().iter())
         .into_iter()
         .flatten()
-        .map(|p| (p.data().to_vec(), image_ext(p.data())))
+        .map(|p| {
+            let kind = match p.pic_type() {
+                PictureType::CoverFront => Some(ImageKind::Front),
+                PictureType::CoverBack => Some(ImageKind::Back),
+                PictureType::Leaflet => Some(ImageKind::Booklet),
+                PictureType::Media => Some(ImageKind::Disc),
+                PictureType::LeadArtist | PictureType::Artist | PictureType::Band => {
+                    Some(ImageKind::Artist)
+                }
+                _ => None,
+            };
+            (p.data().to_vec(), image_ext(p.data()), kind)
+        })
         .collect()
+}
+
+/// What an image file shows, going by words in its name (`back.jpg`,
+/// `Booklet 03.png`, `cd1.jpg`); `None` when the name doesn't say.
+pub fn image_kind(path: &Path) -> Option<ImageKind> {
+    let stem = path.file_stem()?.to_str()?.to_ascii_lowercase();
+    let words: Vec<&str> = stem
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .map(|w| w.trim_end_matches(|c: char| c.is_ascii_digit()))
+        .collect();
+    let has = |names: &[&str]| words.iter().any(|w| names.contains(w));
+    // Back first: "back cover" is the back.
+    if has(&["back"]) {
+        Some(ImageKind::Back)
+    } else if has(&["booklet", "scan", "inlay", "leaflet"]) {
+        Some(ImageKind::Booklet)
+    } else if has(&["cd", "disc", "disk", "media"]) {
+        Some(ImageKind::Disc)
+    } else if has(&["artist"]) {
+        Some(ImageKind::Artist)
+    } else if has(ART_NAMES) {
+        Some(ImageKind::Front)
+    } else {
+        None
+    }
 }
 
 /// Pixel area of an image, read from its header without decoding it.
@@ -272,6 +311,21 @@ pub fn is_image(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png"))
+}
+
+#[cfg(test)]
+#[test]
+fn image_names_say_what_they_show() {
+    let kind = |name: &str| image_kind(Path::new(name));
+    assert_eq!(kind("Cover.jpg"), Some(ImageKind::Front));
+    assert_eq!(kind("folder.png"), Some(ImageKind::Front));
+    assert_eq!(kind("Back Cover.jpg"), Some(ImageKind::Back));
+    assert_eq!(kind("booklet-03.jpg"), Some(ImageKind::Booklet));
+    assert_eq!(kind("Scan02.jpg"), Some(ImageKind::Booklet));
+    assert_eq!(kind("cd1.jpg"), Some(ImageKind::Disc));
+    assert_eq!(kind("Disc 2.png"), Some(ImageKind::Disc));
+    assert_eq!(kind("IMG_0042.jpg"), None);
+    assert_eq!(kind("discography.jpg"), None);
 }
 
 /// The FLAC stream's own MD5 of its decoded audio, if the encoder set it.

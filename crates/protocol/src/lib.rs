@@ -468,6 +468,27 @@ pub struct LibraryTrack {
     pub problem: Option<String>,
 }
 
+/// One of a track's images, as listed by the server's `GET /images`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TrackImage {
+    /// Artwork key, for `/art/<key>`.
+    pub key: String,
+    /// What it shows, when its picture type or file name says; never guessed.
+    pub kind: Option<ImageKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ImageKind {
+    Front,
+    Back,
+    Booklet,
+    Disc,
+    Artist,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LibraryAlbum {

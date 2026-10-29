@@ -8,6 +8,7 @@
   let {
     track,
     size,
+    drawn,
     exact,
     art,
     title = '',
@@ -15,6 +16,8 @@
     track: TrackRef | null | undefined;
     /** Pixels; fills its container if absent. */
     size?: number;
+    /** Pixels it is drawn at, when a transform shows it smaller than `size`. */
+    drawn?: number;
     /** Image pixels to ask for whatever the pixel ratio, e.g. a size the engine has ready. */
     exact?: number;
     /** Artwork id. If not given, looked up in the library for `track`. */
@@ -37,7 +40,7 @@
   const waiting = $derived(loading || (id !== null && failed !== id));
   const kept = $derived(keptArt(shown, track, id, waiting));
   const visible = $derived(kept !== null && failed !== kept);
-  const src = (a: string) => exact ? library.artUrl(a, exact, true) : library.artUrl(a, size ?? 256);
+  const src = (a: string) => exact ? library.artUrl(a, exact, true) : library.artUrl(a, drawn ?? size ?? 256);
   $effect(() => {
     if (loading) return;
     if (!id) {
@@ -48,14 +51,20 @@
     const album = albumOf(track) ?? '';
     const img = new Image();
     img.src = src(next);
+    // Superseded (e.g. the same art at a new size): its decode fails when cleared, which isn't a failure.
+    let live = true;
     img.decode().then(
-      () => (shown = { id: next, album }),
+      () => live && (shown = { id: next, album }),
       () => {
+        if (!live) return;
         failed = next;
         shown = null;
       },
     );
-    return () => (img.src = '');
+    return () => {
+      live = false;
+      img.src = '';
+    };
   });
 </script>
 
