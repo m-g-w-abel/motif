@@ -13,6 +13,8 @@
   import ShortcutList from './ShortcutList.svelte';
   import Slider from '../Slider.svelte';
   import { FONT_LIST } from '../../themeFile';
+  import { canDecorate } from '../../windowChrome';
+  import WindowButtons from './WindowButtons.svelte';
 
   const { settings, themes, engine, library, settingsView } = getApp();
   let panel = $state<HTMLElement>();
@@ -106,9 +108,10 @@
   its control in the right group's `{#if}` below.
 -->
 <section class="screen" aria-label="Settings">
-  <header>
+  <header {...settings.current.ownDecorations && canDecorate ? { 'data-tauri-drag-region': '' } : {}}>
     <button class="button" onclick={() => settingsView.close()}>← Back</button>
-    <h1>Settings</h1>
+    <h1 data-tauri-drag-region={settings.current.ownDecorations && canDecorate ? '' : undefined}>Settings</h1>
+    <WindowButtons />
   </header>
 
   <div class="layout">
@@ -225,6 +228,25 @@
             />
           {/if}
         </div>
+
+        {#if canDecorate}
+          <div class="row">
+            <span class="label">Window buttons in the app</span>
+            <div class="segmented" role="radiogroup" aria-label="Window buttons in the app">
+              {#each [[false, 'Off'], [true, 'On']] as [value, text] (text)}
+                <button
+                  role="radio"
+                  aria-checked={settings.current.ownDecorations === value}
+                  class:active={settings.current.ownDecorations === value}
+                  onclick={() => settings.set('ownDecorations', value as boolean)}
+                >
+                  {text}
+                </button>
+              {/each}
+            </div>
+            <p class="status">Replaces the system title bar; takes effect at once.</p>
+          </div>
+        {/if}
 
         <div class="row">
           <span class="label">Colours from artwork</span>

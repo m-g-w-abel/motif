@@ -21,6 +21,8 @@ export interface Settings {
   navCollapsed: boolean;
   /** Vim-style list navigation (j/k, gg/G, Ctrl-d/u, counts). */
   vimKeys: boolean;
+  /** Desktop: the app draws its own window buttons instead of the system title bar. */
+  ownDecorations: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -33,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   player: 'bar',
   navCollapsed: false,
   vimKeys: false,
+  ownDecorations: false,
 };
 
 const KEY = 'settings';

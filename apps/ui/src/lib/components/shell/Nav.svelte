@@ -4,6 +4,7 @@
   import type { Source } from '../../layout/store.svelte';
   import Icon, { type IconName } from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import { canDecorate } from '../../windowChrome';
 
   const { engine, library, layout, drawer, settings, settingsView } = getApp();
   let scroller = $state<HTMLElement>();
@@ -18,6 +19,10 @@
 {#if drawer.open}<div class="scrim" onclick={() => drawer.close()}></div>{/if}
 
 <nav class="nav" class:open={drawer.open} class:collapsed={settings.current.navCollapsed} aria-label="Browse">
+  {#if settings.current.ownDecorations && canDecorate}
+    <!-- Also clears macOS's overlaid traffic lights. -->
+    <div class="drag" data-tauri-drag-region></div>
+  {/if}
   <div class="scroll" bind:this={scroller}>
     <ul class="sources">
       {#each sources as source (source.id)}
@@ -73,6 +78,12 @@
     border-right: 1px solid var(--divider);
     background: var(--surface);
     flex: none;
+  }
+
+  .drag {
+    height: 36px;
+    flex: none;
+    border-bottom: 1px solid var(--divider);
   }
 
   .scroll {

@@ -18,7 +18,9 @@
   import { PlayerSheet } from './lib/sheet.svelte';
   import CopyButton from './lib/components/CopyButton.svelte';
   import { toasts } from './lib/toast.svelte';
+  import { applyDecorations } from './lib/windowChrome';
   import { shortcutFor } from './lib/shortcuts';
+  import ResizeEdges from './lib/components/shell/ResizeEdges.svelte';
   import ContextMenu from './lib/components/ContextMenu.svelte';
   import ShortcutHelp from './lib/components/shell/ShortcutHelp.svelte';
   import LayoutEditor from './lib/components/shell/LayoutEditor.svelte';
@@ -79,6 +81,8 @@
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--accent-contrast', contrastFor(accent));
   });
+
+  $effect(() => void applyDecorations(settings.current.ownDecorations));
 
   // The playing track's art: 16px of pixels sampled from the art once
   // per track (and cached per art id), never while idle. It asks for the
@@ -265,6 +269,7 @@
 {#if helpOpen}<ShortcutHelp onClose={() => (helpOpen = false)} />{/if}
 
 <ContextMenu />
+<ResizeEdges />
 
 {#if StressTest}<StressTest />{/if}
 
