@@ -210,6 +210,7 @@
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     if (params.has('dev-sheet')) sheet.expand();
     if (params.has('dev-drawer')) drawer.open = true;
+    if (params.has('dev-arrange')) layout.arranging = true;
     const devSettings = params.get('dev-settings') as SettingsGroup;
     if (SETTINGS_GROUPS.includes(devSettings)) settingsView.open(devSettings);
     if (params.has('dev-stress')) import('./lib/components/StressTest.svelte').then((m) => (StressTest = m.default));

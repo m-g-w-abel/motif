@@ -288,7 +288,7 @@
   </header>
 
   <div class="area" bind:this={area}>
-    <LayoutNode node={layout.root} path={rootPath(layout.root)} />
+    <LayoutNode node={layout.shown} path={rootPath(layout.shown)} />
   </div>
   <Scrollbar target={area} />
 

@@ -1,7 +1,8 @@
 import { format, parse } from '@bgotink/kdl';
 import { MediaQuery } from 'svelte/reactivity';
-import type { Layout, LayoutNode, Size } from './model';
-import { applyOverlay, orderOf, prune, type Overlay } from './overlay';
+import type { Layout, LayoutNode, Size, Widget } from './model';
+import * as edit from './overlay';
+import { fingerprint, shownRoot, type At, type Overlay, type Side } from './overlay';
 import { serializeLayout } from './serialize';
 import { parseLayout, type LayoutError } from './parse';
 import type { SortRule } from '../protocol/SortRule';
@@ -55,11 +56,13 @@ function load(key: string): string | null {
   }
 }
 
-function loadEdits(key: string): Overlay {
+/** Edits stored by an older version, in another shape, are dropped. */
+function loadEdits(key: string): Overlay | undefined {
   try {
-    return JSON.parse(load(key) ?? '{}');
+    const overlay = JSON.parse(load(key) ?? 'null');
+    return typeof overlay?.of === 'string' && overlay.root ? overlay : undefined;
   } catch {
-    return {};
+    return undefined;
   }
 }
 
@@ -118,13 +121,14 @@ export class LayoutStore {
   variant: Variant = $derived(this.#narrow.current && this.layout.phone ? 'phone' : 'desktop');
   /** The tree on screen, before in-place edits. */
   root: LayoutNode = $derived(rootOf(this.layout, this.variant) ?? this.layout.root);
-  /** In-place edits written this session, by storage key; the rest are read from storage. */
-  #edits = $state<Record<string, Overlay>>({});
+  /** In-place edits written this session, by storage key (`null` once dropped); the rest are read from storage. */
+  #edits = $state.raw<Record<string, Overlay | null>>({});
   #editsKey = $derived(editsKey(this.active.id, this.variant));
-  /** In-place edits to the tree on screen. */
-  edits: Overlay = $derived(this.#edits[this.#editsKey] ?? loadEdits(this.#editsKey));
-  edited = $derived(Object.keys(this.edits).length > 0);
-  /** Edit mode: widgets show handles to drag them into another place in their split. */
+  #overlay = $derived(this.#overlayAt(this.#editsKey));
+  /** The tree on screen, with this device's in-place edits. */
+  shown: LayoutNode = $derived(shownRoot(this.root, this.#overlay));
+  edited = $derived(this.shown !== this.root);
+  /** Edit mode: widgets show handles to move, add and remove them. */
   arranging = $state(false);
 
   constructor() {
@@ -218,8 +222,7 @@ export class LayoutStore {
     const layout = this.layout;
     const shown = (variant: Variant) => {
       const root = rootOf(layout, variant);
-      const key = editsKey(this.active.id, variant);
-      return root && applyOverlay(root, this.#edits[key] ?? loadEdits(key));
+      return root && shownRoot(root, this.#overlayAt(editsKey(this.active.id, variant)));
     };
     const text = serializeLayout({ ...layout, name, root: shown('desktop')!, phone: shown('phone') });
     return this.install(text, fileNameFor(name));
@@ -237,40 +240,52 @@ export class LayoutStore {
     }
   }
 
-  /** Sets or (with no size) clears the size of the node at `path`. */
-  resize(path: string, size: Size | undefined) {
-    const sizes = { ...this.edits.sizes };
-    if (size) sizes[path] = size;
-    else delete sizes[path];
-    this.#setEdits({ ...this.edits, sizes });
+  /** Sets or (with no size) clears the size of the node at `at`. */
+  resize(at: At, size: Size | undefined) {
+    this.#setShown(edit.resize(this.shown, at, size));
   }
 
-  /** Moves a child of the split at `path`, which has `count` children, from one shown position to another. */
-  move(path: string, count: number, from: number, to: number) {
-    const order = [...orderOf(this.edits, path, count)];
-    order.splice(to, 0, ...order.splice(from, 1));
-    this.#setEdits({ ...this.edits, order: { ...this.edits.order, [path]: order } });
+  /** Moves the node at `from` beside the one at `to`. */
+  move(from: At, to: At, side: Side) {
+    this.#setShown(edit.move(this.shown, from, to, side));
+  }
+
+  /** Adds a widget beside the node at `at`. */
+  addWidget(at: At, side: Side, widget: Widget) {
+    this.#setShown(edit.insert(this.shown, at, side, edit.widget(widget)));
+  }
+
+  removeWidget(at: At) {
+    this.#setShown(edit.remove(this.shown, at));
   }
 
   /** Drops the in-place edits to the tree on screen. */
   resetEdits() {
-    this.#setEdits({});
+    this.#setShown(this.root);
   }
 
-  #setEdits(edits: Overlay) {
-    const pruned = prune(this.root, edits);
-    this.#edits[this.#editsKey] = pruned;
-    save(this.#editsKey, Object.keys(pruned).length ? JSON.stringify(pruned) : null);
+  #overlayAt(key: string): Overlay | undefined {
+    const overlay = this.#edits[key];
+    return overlay === null ? undefined : (overlay ?? loadEdits(key));
   }
 
-  /** Keeps only the edits that still fit a layout's trees, e.g. after its file changed. */
+  #setShown(shown: LayoutNode) {
+    const of = fingerprint(this.root);
+    this.#store(this.#editsKey, fingerprint(shown) === of ? null : { of, root: shown });
+  }
+
+  #store(key: string, overlay: Overlay | null) {
+    this.#edits = { ...this.#edits, [key]: overlay };
+    save(key, overlay && JSON.stringify(overlay));
+  }
+
+  /** Drops the edits that no longer fit a layout's trees, e.g. after its file changed. */
   #pruneEdits(id: string, layout: Layout | null) {
     for (const variant of VARIANTS) {
       const key = editsKey(id, variant);
       const root = layout && rootOf(layout, variant);
-      const pruned = root ? prune(root, this.#edits[key] ?? loadEdits(key)) : {};
-      this.#edits[key] = pruned;
-      save(key, Object.keys(pruned).length ? JSON.stringify(pruned) : null);
+      const overlay = this.#overlayAt(key);
+      if (overlay && (!root || overlay.of !== fingerprint(root))) this.#store(key, null);
     }
   }
 
