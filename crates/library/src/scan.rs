@@ -332,9 +332,10 @@ fn store(
 }
 
 /// Whether a track shows its embedded picture rather than the folder image:
-/// the larger by pixel area wins, a tie going to the folder image (#18).
+/// the folder image only when it is larger by pixel area, so albums with a
+/// cover per track keep them (#18).
 fn embedded_wins(embedded: &[u8], folder: Option<&tags::FolderImage>) -> bool {
-    folder.is_none_or(|f| tags::pixels(embedded) > f.pixels)
+    folder.is_none_or(|f| tags::pixels(embedded) >= f.pixels)
 }
 
 pub fn art_key(bytes: &[u8]) -> String {
@@ -467,10 +468,10 @@ mod tests {
     }
 
     #[test]
-    fn the_larger_art_wins_and_a_tie_goes_to_the_folder() {
+    fn the_larger_art_wins_and_a_tie_goes_to_the_embedded() {
         assert!(embedded_shows(Some(600), Some(300)), "embedded larger");
         assert!(!embedded_shows(Some(300), Some(600)), "folder larger");
-        assert!(!embedded_shows(Some(300), Some(300)), "tie");
+        assert!(embedded_shows(Some(300), Some(300)), "tie");
         assert!(!embedded_shows(None, Some(300)), "folder only");
         assert!(embedded_shows(Some(300), None), "embedded only");
     }

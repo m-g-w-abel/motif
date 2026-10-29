@@ -138,7 +138,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 5;
+const VERSION: i32 = 6;
 
 fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -177,6 +177,11 @@ fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
             "UPDATE tracks SET mtime = -1 WHERE art IN (SELECT key FROM art WHERE path GLOB '*' || key || '.*')",
             [],
         )?;
+    }
+    if version < 6 {
+        // Version 6 gives ties to embedded art again. A folder image can
+        // share its key with an embedded copy, so re-read every track with art.
+        conn.execute("UPDATE tracks SET mtime = -1 WHERE art IS NOT NULL", [])?;
     }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
