@@ -42,8 +42,8 @@
     ['.volume', '.controls .volume', 'box', 'stage'],
     ['.end > [aria-label="Expand player"]', 'header .icon-button', 'box', 'stage'],
   ];
-  /** No counterpart in the bar: fade in in IN. */
-  const FADE = 'header .handle, .hero-album';
+  /** No counterpart in the bar: fade in in IN (the carousel's side cards and controls after its cover). */
+  const FADE = 'header .handle, .hero-album, .coverflow .card:not(.frame), .coverflow .turns, .coverflow .below';
 
   type Mode = 'box' | 'even' | 'text';
   type Kind = 'move' | 'cross' | 'handover' | 'stage' | 'edge';

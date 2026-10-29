@@ -1,4 +1,11 @@
+<script lang="ts" module>
+  import type { ImageKind } from '../../protocol/ImageKind';
+
+  const KINDS: Record<ImageKind, string> = { front: 'Front', back: 'Back', booklet: 'Booklet', disc: 'Disc', artist: 'Artist' };
+</script>
+
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { albumKey } from '../../albums';
   import { menu } from '../../contextMenu.svelte';
@@ -6,12 +13,15 @@
   import { albumMenu, playTracks, queueTracks } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { viewSort } from '../../sort.svelte';
+  import type { LibraryTrack } from '../../protocol/LibraryTrack';
+  import type { TrackImage } from '../../protocol/TrackImage';
   import Artwork from '../player/Artwork.svelte';
+  import Coverflow, { type Card } from '../player/Coverflow.svelte';
 
   /** In the main window a click expands the player; inside it, it doesn't. `playing` shows the playing track, not the selected one. */
   let { expands = true, playing = false }: { expands?: boolean; playing?: boolean } = $props();
 
-  const { engine, sheet } = getApp();
+  const { engine, sheet, library } = getApp();
   const view = getViewState();
   const track = $derived(playing ? engine.current?.track : (view.browse.selectedTrack ?? undefined));
 
@@ -32,6 +42,81 @@
     );
   };
 
+  // In the sheet: every image of the playing album, listed when it opens (#18): each distinct
+  // track cover, then the track's other images (back, booklet, disc…). Listed once per album, so
+  // skipping tracks within it keeps the same cards and only slides.
+  const albumId = $derived(!expands && !isDemo && track?.source === 'local' ? (track.album ? albumKey(track) : track.id) : null);
+  /** Listed once the sheet opens; the cards stay while it closes. */
+  const album = $derived(sheet.open ? albumId : null);
+  /** The album the cards are for. */
+  let listed = $state<string | null>(null);
+  let covers = $state<{ key: string; titles: string[]; shared: boolean }[]>([]);
+  let images = $state<TrackImage[]>([]);
+  /** Each album track's cover, as listed with the cards (the details cache can be older). */
+  let artOf = $state.raw(new Map<string, string>());
+  $effect(() => {
+    const a = album;
+    const t = untrack(() => track);
+    if (!a || !t) return;
+    let current = true;
+    const tracks: Promise<LibraryTrack[]> = t.album
+      ? engine.query({ type: 'album_tracks', albums: [a], sort: [] }).then((r) => (r.type === 'tracks' ? r.tracks : []))
+      : Promise.resolve([untrack(() => library.details(t))].filter((d) => !!d));
+    // shortcut: extra embedded pictures come from the track the sheet opened on; others' extras show after reopening.
+    Promise.all([tracks, library.images(t.id)]).then(
+      ([tracks, found]) => {
+        if (!current) return;
+        const byKey = new Map<string, string[]>();
+        for (const { track: x, art } of tracks) if (art) byKey.set(art, [...(byKey.get(art) ?? []), x.title ?? '']);
+        covers = [...byKey].map(([key, titles]) => ({ key, titles, shared: titles.length === tracks.length }));
+        images = found;
+        artOf = new Map(tracks.flatMap((x) => (x.art ? [[x.track.id, x.art] as const] : [])));
+        listed = a;
+      },
+      () => {},
+    );
+    return () => (current = false);
+  });
+  const own = $derived(track ? (artOf.get(track.id) ?? library.details(track)?.art) : undefined);
+  const cards = $derived.by(() => {
+    const album = track?.album ?? '';
+    // A cover all the album's tracks share is named after the album, else after its tracks.
+    const list: Card[] = covers.map((c) => ({ key: c.key, kicker: 'Front', title: c.shared && album ? album : c.titles.join(' · ') }));
+    for (const { key, kind } of images) {
+      if (!list.some((c) => c.key === key)) list.push({ key, kicker: kind ? album : '', title: kind ? KINDS[kind] : '' });
+    }
+    return list;
+  });
+  // Lands on the playing track's cover when the track changes, and stays wherever it was paged to
+  // until then.
+  let index = $state(0);
+  let landed: string | null = null;
+  $effect(() => {
+    const i = cards.findIndex((c) => c.key === own);
+    const id = track?.id ?? null;
+    if (i >= 0 && id !== landed) {
+      landed = id;
+      index = i;
+    }
+  });
+  // Side cards and controls wait until the cover has arrived (the sheet's morph takes 260ms), also
+  // when the list comes in during the morph; while dragging, the morph fades them itself.
+  let settled = $state(false);
+  $effect(() => {
+    if (sheet.dragging) settled = true;
+    else if (sheet.progress < 1) settled = false;
+    else {
+      const timer = setTimeout(() => (settled = true), 260);
+      return () => clearTimeout(timer);
+    }
+  });
+  // Until the list holds this track's cover (another album still loading), the track's own cover
+  // alone, keyed by its art so it stays the same card (and the sheet's morph target) when the rest
+  // arrive.
+  const shownCards = $derived(
+    albumId !== null && listed === albumId && cards.some((c) => c.key === own) ? cards : [{ key: own ?? '', kicker: '', title: '' }],
+  );
+
   // The largest square that fits, measured rather than left to CSS so it
   // behaves the same in every webview.
   let width = $state(0);
@@ -41,14 +126,15 @@
 </script>
 
 <section class="artwork" bind:clientWidth={width} bind:clientHeight={height}>
-  {#if side > 0}
-    {#if expands}
-      <button class="frame" use:menu={items} title="Expand player" style:width="{side}px" onclick={() => sheet.expand()}>
-        <Artwork {track} size={side} />
-      </button>
-    {:else}
-      <div class="frame" use:menu={items} style:width="{side}px"><Artwork {track} size={side} /></div>
+  {#if !expands}
+    <!-- The sheet: always the carousel, so its centre card is the same box with or without the rest. -->
+    {#if width > 0}
+      <Coverflow cards={shownCards} bind:index {track} {width} {height} {items} {settled} />
     {/if}
+  {:else if side > 0}
+    <button class="frame" use:menu={items} title="Expand player" style:width="{side}px" onclick={() => sheet.expand()}>
+      <Artwork {track} size={side} />
+    </button>
   {/if}
 </section>
 

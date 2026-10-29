@@ -134,7 +134,42 @@ fn scans_queries_matches_and_rescans() {
     let bar_thumb = data.join(format!("art/{art}-{}.jpg", library::BAR_ART_SIZE));
     assert!(bar_thumb.is_file(), "the scan pre-caches the bar size");
     assert!(library.art(&art, Some(32)).unwrap().is_file());
+    let cover = music.join("Artist B/Second Album/cover.png");
+    assert_eq!(
+        library.art(&art, Some(128)).unwrap(),
+        cover,
+        "never upscaled"
+    );
     assert_eq!(albums[0].art, None);
+
+    // Other images in the folder are listed on demand, the shown art first.
+    // Not a copy of the cover (identical images list once): one byte more.
+    let other = [fs::read(&cover).unwrap(), vec![0]].concat();
+    fs::write(cover.with_file_name("back.png"), &other).unwrap();
+    let beginning = cover.with_file_name("01 Beginning.mp3");
+    let images = library.images(beginning.to_str().unwrap()).unwrap();
+    assert_eq!(images.len(), 2);
+    assert_eq!(images[0].key, art);
+    assert_eq!(images[0].kind, Some(protocol::ImageKind::Front));
+    assert_eq!(images[1].kind, Some(protocol::ImageKind::Back));
+    let back = library.art(&images[1].key, None).unwrap();
+    assert_eq!(back, cover.with_file_name("back.png"));
+
+    // Listing and serving them never waits on the scanner writing (#18).
+    let writer = rusqlite::Connection::open(data.join("library.db")).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    fs::remove_file(cover.with_file_name("back.png")).unwrap();
+    fs::write(cover.with_file_name("booklet.png"), &other).unwrap();
+    let started = Instant::now();
+    let images = library.images(beginning.to_str().unwrap()).unwrap();
+    assert_eq!(images[1].kind, Some(protocol::ImageKind::Booklet));
+    let booklet = library.art(&images[1].key, None).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "waited for the lock"
+    );
+    assert_eq!(booklet, cover.with_file_name("booklet.png"));
+    writer.execute_batch("ROLLBACK").unwrap();
 
     let query = LibraryQuery::AlbumPosition {
         search: None,
@@ -353,4 +388,42 @@ fn scans_queries_matches_and_rescans() {
     wait_until(&library, |s| s.tracks == 1);
     let _ = fs::remove_dir_all(sibling);
     let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
+}
+
+#[test]
+fn a_folder_copy_of_the_embedded_cover_lists_once() {
+    use lofty::{
+        config::WriteOptions,
+        picture::{MimeType, Picture, PictureType},
+        prelude::*,
+    };
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let cover = fs::read(fixtures.join("Artist B/Second Album/cover.png")).unwrap();
+    let flac = music.join("01 Opening.flac");
+    fs::copy(fixtures.join("Artist A/First Album/01 Opening.flac"), &flac).unwrap();
+    let mut tagged = lofty::read_from_path(&flac).unwrap();
+    let tag = tagged.primary_tag_mut().unwrap();
+    tag.push_picture(
+        Picture::unchecked(cover.clone())
+            .pic_type(PictureType::CoverFront)
+            .mime_type(MimeType::Png)
+            .build(),
+    );
+    tag.save_to_path(&flac, WriteOptions::default()).unwrap();
+    fs::write(music.join("cover.png"), &cover).unwrap();
+
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 1 && !s.scanning);
+    let images = library.images(flac.to_str().unwrap()).unwrap();
+    assert_eq!(images.len(), 1, "{images:?}");
+    assert_eq!(
+        Some(&images[0].key),
+        track(&library, "Opening").art.as_ref()
+    );
 }

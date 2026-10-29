@@ -10,6 +10,7 @@ mod scan;
 mod tags;
 
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -21,8 +22,8 @@ use std::{
 };
 
 use protocol::{
-    Command, ContextKind, LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack, QueryResult,
-    SortRule, TrackGroup, TrackKeys, TrackRef,
+    Command, ContextKind, ImageKind, LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack,
+    QueryResult, SortRule, TrackGroup, TrackImage, TrackKeys, TrackRef,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
@@ -43,6 +44,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 struct Shared {
     status: watch::Sender<LibraryStatus>,
     art_dir: PathBuf,
+    /// Images listed by [`Library::images`] (key → file), kept in memory so
+    /// listing them never waits on the scanner's writes.
+    extras: Mutex<HashMap<String, PathBuf>>,
 }
 
 impl Shared {
@@ -79,6 +83,7 @@ impl Library {
         let shared = Arc::new(Shared {
             status: watch::channel(status).0,
             art_dir,
+            extras: Mutex::default(),
         });
         let (scanner, requests) = mpsc::channel();
         let scanner_conn = db::open(&db_path)?;
@@ -385,17 +390,109 @@ impl Library {
     /// The image file for artwork `key`, scaled to fit `size` pixels (made
     /// once and cached) or full size.
     pub fn art(&self, key: &str, size: Option<u32>) -> Result<PathBuf> {
-        let source: String = self
+        let stored: Option<String> = self
             .db()
             .query_row("SELECT path FROM art WHERE key = ?1", [key], |r| r.get(0))
-            .optional()?
+            .optional()?;
+        let source = stored
+            .map(PathBuf::from)
+            .or_else(|| self.shared.extras.lock().unwrap().get(key).cloned())
             .ok_or_else(|| Error::Other("no such artwork".into()))?;
-        let Some(size) = size else {
-            return Ok(source.into());
-        };
-        thumbnail(&self.shared, key, &source, size)
+        // Never upscaled: an image no larger than asked for is sent as it is.
+        let fits = |(w, h): (u32, u32)| size.is_none_or(|size| w.max(h) <= size);
+        match size {
+            Some(size) if !image::image_dimensions(&source).is_ok_and(fits) => {
+                thumbnail(&self.shared, key, &source, size)
+            }
+            _ => Ok(source),
+        }
+    }
+
+    /// Every image of the track at `path`, named when it says what it shows:
+    /// its own art first, then the other pictures embedded in it, then the
+    /// other images in its folder (back, booklet, disc…). Read when asked,
+    /// not at scan (#18).
+    pub fn images(&self, path: &str) -> Result<Vec<TrackImage>> {
+        let art: Option<String> = self
+            .db()
+            .query_row("SELECT art FROM tracks WHERE path = ?1", [path], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .ok_or_else(|| Error::Other("not in the library".into()))?;
+        let file = Path::new(path);
+        let pictures = tags::pictures(file);
+        let mut folder: Vec<PathBuf> = file
+            .parent()
+            .and_then(|dir| fs::read_dir(dir).ok())
+            .into_iter()
+            .flatten()
+            .filter_map(|e| Some(e.ok()?.path()))
+            .filter(|p| tags::is_image(p))
+            .collect();
+        folder.sort();
+        let shown: Option<String> = art.as_ref().and_then(|key| {
+            self.db()
+                .query_row("SELECT path FROM art WHERE key = ?1", [key], |r| r.get(0))
+                .ok()
+        });
+        // Only read the database: the scanner may hold its write lock for
+        // seconds, so new keys go in memory for `art` to find.
+        let mut found: Vec<(String, PathBuf, Option<ImageKind>)> = pictures
+            .iter()
+            .filter_map(|(bytes, ext, kind)| {
+                let (key, file) = scan::cache_picture(&self.shared, bytes, ext)?;
+                Some((key, file, *kind))
+            })
+            .collect();
+        for image in folder {
+            let (Some(name), Ok(meta)) = (image.to_str(), fs::metadata(&image)) else {
+                continue;
+            };
+            if shown.as_deref() == Some(name) {
+                continue;
+            }
+            // Keyed by content like embedded art, so a copy of a track's
+            // cover shows once; large booklet scans by path, size and
+            // modification time instead, so they aren't read each time.
+            let small = meta.len() <= CONTENT_KEY_LIMIT;
+            let key = match small.then(|| fs::read(&image).ok()).flatten() {
+                Some(bytes) => scan::art_key(&bytes),
+                None => {
+                    let id = format!("{name}\0{}\0{:?}", meta.len(), meta.modified().ok());
+                    scan::art_key(id.as_bytes())
+                }
+            };
+            let kind = tags::image_kind(&image);
+            found.push((key, image, kind));
+        }
+        let mut images: Vec<TrackImage> = art
+            .map(|key| {
+                // Named by its picture type if embedded, else by its file name.
+                let kind = match found.iter().find(|(k, ..)| *k == key) {
+                    Some((.., kind)) => *kind,
+                    None => shown
+                        .as_deref()
+                        .and_then(|p| tags::image_kind(Path::new(p))),
+                };
+                TrackImage { key, kind }
+            })
+            .into_iter()
+            .collect();
+        let mut extras = self.shared.extras.lock().unwrap();
+        for (key, file, kind) in found {
+            if !images.iter().any(|i| i.key == key) {
+                extras.insert(key.clone(), file);
+                images.push(TrackImage { key, kind });
+            }
+        }
+        Ok(images)
     }
 }
+
+/// Folder images up to this size are keyed by their content (see
+/// [`Library::images`]).
+const CONTENT_KEY_LIMIT: u64 = 2 << 20;
 
 /// The artwork size the player bar asks for. The scanner makes it for all
 /// artwork in the background, so the bar's cover shows at once (#59).
@@ -407,7 +504,7 @@ fn thumb_path(shared: &Shared, key: &str, size: u32) -> PathBuf {
 
 /// Artwork `key` (stored at `source`) scaled to fit `size`, made and cached
 /// on first use.
-fn thumbnail(shared: &Shared, key: &str, source: &str, size: u32) -> Result<PathBuf> {
+fn thumbnail(shared: &Shared, key: &str, source: &Path, size: u32) -> Result<PathBuf> {
     let size = size.clamp(32, 1024);
     let thumb = thumb_path(shared, key, size);
     if !thumb.exists() {

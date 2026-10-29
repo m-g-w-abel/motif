@@ -12,6 +12,7 @@ use lofty::{
     picture::PictureType,
     prelude::{Accessor, AudioFile, ItemKey},
 };
+use protocol::ImageKind;
 
 /// File extensions the scanner looks at.
 pub const AUDIO_EXTENSIONS: &[&str] = &[
@@ -93,15 +94,77 @@ pub fn read(path: &Path) -> Tags {
         .iter()
         .find(|p| p.pic_type() == PictureType::CoverFront)
         .or(pictures.first())
-        .map(|p| {
-            let ext = if p.data().starts_with(&[0x89, b'P', b'N', b'G']) {
-                "png"
-            } else {
-                "jpg"
-            };
-            (p.data().to_vec(), ext)
-        });
+        .map(|p| (p.data().to_vec(), image_ext(p.data())));
     tags
+}
+
+fn image_ext(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "png"
+    } else {
+        "jpg"
+    }
+}
+
+/// Every picture embedded in a file, in tag order, with a file extension
+/// and what its picture type says it shows.
+pub fn pictures(path: &Path) -> Vec<(Vec<u8>, &'static str, Option<ImageKind>)> {
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return Vec::new();
+    };
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+    tag.map(|t| t.pictures().iter())
+        .into_iter()
+        .flatten()
+        .map(|p| {
+            let kind = match p.pic_type() {
+                PictureType::CoverFront => Some(ImageKind::Front),
+                PictureType::CoverBack => Some(ImageKind::Back),
+                PictureType::Leaflet => Some(ImageKind::Booklet),
+                PictureType::Media => Some(ImageKind::Disc),
+                PictureType::LeadArtist | PictureType::Artist | PictureType::Band => {
+                    Some(ImageKind::Artist)
+                }
+                _ => None,
+            };
+            (p.data().to_vec(), image_ext(p.data()), kind)
+        })
+        .collect()
+}
+
+/// What an image file shows, going by words in its name (`back.jpg`,
+/// `Booklet 03.png`, `cd1.jpg`); `None` when the name doesn't say.
+pub fn image_kind(path: &Path) -> Option<ImageKind> {
+    let stem = path.file_stem()?.to_str()?.to_ascii_lowercase();
+    let words: Vec<&str> = stem
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .map(|w| w.trim_end_matches(|c: char| c.is_ascii_digit()))
+        .collect();
+    let has = |names: &[&str]| words.iter().any(|w| names.contains(w));
+    // Back first: "back cover" is the back.
+    if has(&["back"]) {
+        Some(ImageKind::Back)
+    } else if has(&["booklet", "scan", "inlay", "leaflet"]) {
+        Some(ImageKind::Booklet)
+    } else if has(&["cd", "disc", "disk", "media"]) {
+        Some(ImageKind::Disc)
+    } else if has(&["artist"]) {
+        Some(ImageKind::Artist)
+    } else if has(ART_NAMES) {
+        Some(ImageKind::Front)
+    } else {
+        None
+    }
+}
+
+/// Pixel area of an image, read from its header without decoding it.
+pub fn pixels(bytes: &[u8]) -> Option<u64> {
+    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()?;
+    Some(u64::from(w) * u64::from(h))
 }
 
 /// Symphonia's container readers, for files lofty can't parse (some MP4s).
@@ -189,16 +252,23 @@ fn codec_name(file_type: FileType, path: &Path) -> String {
 }
 
 /// Finds `cover.jpg`, `folder.png` and the like next to a file, with the
-/// image's artwork key, remembering the answer per folder.
+/// image's artwork key and pixel area, remembering the answer per folder.
 #[derive(Default)]
 pub struct FolderArt {
-    seen: HashMap<PathBuf, Option<(PathBuf, String)>>,
+    seen: HashMap<PathBuf, Option<FolderImage>>,
+}
+
+#[derive(Clone)]
+pub struct FolderImage {
+    pub path: PathBuf,
+    pub key: String,
+    pub pixels: Option<u64>,
 }
 
 const ART_NAMES: &[&str] = &["cover", "folder", "front", "album", "albumart"];
 
 impl FolderArt {
-    pub fn find(&mut self, file: &Path) -> Option<(PathBuf, String)> {
+    pub fn find(&mut self, file: &Path) -> Option<FolderImage> {
         let dir = file.parent()?;
         self.seen
             .entry(dir.to_path_buf())
@@ -212,13 +282,7 @@ impl FolderArt {
                             .and_then(|s| s.to_str())
                             .unwrap_or_default()
                             .to_ascii_lowercase();
-                        let ext = p
-                            .extension()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or_default()
-                            .to_ascii_lowercase();
-                        ART_NAMES.contains(&stem.as_str())
-                            && matches!(ext.as_str(), "jpg" | "jpeg" | "png")
+                        ART_NAMES.contains(&stem.as_str()) && is_image(p)
                     })
                     .collect();
                 // Prefer names earlier in the list (cover over folder…).
@@ -230,12 +294,38 @@ impl FolderArt {
                         .to_ascii_lowercase();
                     ART_NAMES.iter().position(|n| *n == stem)
                 });
-                let image = found.into_iter().next()?;
-                let key = crate::scan::art_key(&fs::read(&image).ok()?);
-                Some((image, key))
+                let path = found.into_iter().next()?;
+                let bytes = fs::read(&path).ok()?;
+                Some(FolderImage {
+                    key: crate::scan::art_key(&bytes),
+                    pixels: pixels(&bytes),
+                    path,
+                })
             })
             .clone()
     }
+}
+
+/// Image files the artwork code can read.
+pub fn is_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png"))
+}
+
+#[cfg(test)]
+#[test]
+fn image_names_say_what_they_show() {
+    let kind = |name: &str| image_kind(Path::new(name));
+    assert_eq!(kind("Cover.jpg"), Some(ImageKind::Front));
+    assert_eq!(kind("folder.png"), Some(ImageKind::Front));
+    assert_eq!(kind("Back Cover.jpg"), Some(ImageKind::Back));
+    assert_eq!(kind("booklet-03.jpg"), Some(ImageKind::Booklet));
+    assert_eq!(kind("Scan02.jpg"), Some(ImageKind::Booklet));
+    assert_eq!(kind("cd1.jpg"), Some(ImageKind::Disc));
+    assert_eq!(kind("Disc 2.png"), Some(ImageKind::Disc));
+    assert_eq!(kind("IMG_0042.jpg"), None);
+    assert_eq!(kind("discography.jpg"), None);
 }
 
 /// The FLAC stream's own MD5 of its decoded audio, if the encoder set it.
