@@ -452,11 +452,19 @@ impl Library {
             if shown.as_deref() == Some(name) {
                 continue;
             }
-            // Keyed by path, size and modification time rather than content,
-            // so large booklet scans aren't read each time the sheet opens.
-            let id = format!("{name}\0{}\0{:?}", meta.len(), meta.modified().ok());
+            // Keyed by content like embedded art, so a copy of a track's
+            // cover shows once; large booklet scans by path, size and
+            // modification time instead, so they aren't read each time.
+            let small = meta.len() <= CONTENT_KEY_LIMIT;
+            let key = match small.then(|| fs::read(&image).ok()).flatten() {
+                Some(bytes) => scan::art_key(&bytes),
+                None => {
+                    let id = format!("{name}\0{}\0{:?}", meta.len(), meta.modified().ok());
+                    scan::art_key(id.as_bytes())
+                }
+            };
             let kind = tags::image_kind(&image);
-            found.push((scan::art_key(id.as_bytes()), image, kind));
+            found.push((key, image, kind));
         }
         let mut images: Vec<TrackImage> = art
             .map(|key| {
@@ -481,6 +489,10 @@ impl Library {
         Ok(images)
     }
 }
+
+/// Folder images up to this size are keyed by their content (see
+/// [`Library::images`]).
+const CONTENT_KEY_LIMIT: u64 = 2 << 20;
 
 /// The artwork size the player bar asks for. The scanner makes it for all
 /// artwork in the background, so the bar's cover shows at once (#59).

@@ -48,6 +48,7 @@
     Math.max(0, Math.min(height - 2 * PADDING - BELOW, (width - 2 * PADDING) / (1 + 2 * PEEK * near))),
   );
   const at = $derived(Math.min(index, cards.length - 1));
+  const alone = $derived(cards.length < 2);
 
   /** Where card `i` sits: the centre card flat, neighbours stepping back and turned towards it. */
   function place(i: number) {
@@ -129,21 +130,24 @@
         </div>
       {/if}
     {/each}
-    {#if cards.length > 1}
-      <button class="icon-button turn previous" class:hidden={!settled} aria-label="Previous image" onclick={() => go(at - 1)}>
+    <!-- The sheet's morph fades `.turns` and `.below` (inline opacity); what shows inside them
+         fades by class, also when the list arrives late. -->
+    <div class="turns">
+      <button class="icon-button turn previous" class:hidden={!settled || alone} aria-label="Previous image" onclick={() => go(at - 1)}>
         <Icon name="chevron-left" />
       </button>
-      <button class="icon-button turn next" class:hidden={!settled} aria-label="Next image" onclick={() => go(at + 1)}>
+      <button class="icon-button turn next" class:hidden={!settled || alone} aria-label="Next image" onclick={() => go(at + 1)}>
         <Icon name="chevron-right" />
       </button>
-    {/if}
+    </div>
   </div>
-  <!-- Always two lines high, so nothing below moves as it pages. -->
-  <div class="caption" style:width="{side}px" aria-live="polite">
-    <span class="kicker">{cards[at]?.kicker ?? ''}</span>
-    <span class="title">{cards[at]?.title ?? ''}</span>
-  </div>
-  <div class="dots" class:hidden={!settled || cards.length < 2}>
+  <div class="below">
+    <!-- Always two lines high, so nothing below moves as it pages. -->
+    <div class="caption" class:hidden={!settled || !cards[at]?.title} style:width="{side}px" aria-live="polite">
+      <span class="kicker">{cards[at]?.kicker ?? ''}</span>
+      <span class="title">{cards[at]?.title ?? ''}</span>
+    </div>
+    <div class="dots" class:hidden={!settled || alone}>
     {#each cards as card, i (card.key)}
       <button
         class="dot"
@@ -151,8 +155,9 @@
         aria-label="Image {i + 1} of {cards.length}{card.title ? `: ${card.title}` : ''}"
         aria-current={i === at}
         onclick={() => go(i)}
-      ></button>
-    {/each}
+        ></button>
+      {/each}
+    </div>
   </div>
 </div>
 
@@ -181,6 +186,13 @@
     transition:
       transform 250ms ease,
       opacity 250ms ease;
+  }
+
+  /* Cards added once the sheet is open (a slow list) fade in rather than pop. */
+  @starting-style {
+    .slot {
+      opacity: 0;
+    }
   }
 
   .card {
@@ -213,7 +225,26 @@
     transition: opacity 250ms ease;
   }
 
+  .turns {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .turns .turn:not(.hidden) {
+    pointer-events: auto;
+  }
+
+  .below {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
   .caption {
+    transition: opacity 250ms ease;
     display: flex;
     flex-direction: column;
     align-items: center;
