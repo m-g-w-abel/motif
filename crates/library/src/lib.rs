@@ -13,7 +13,11 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
 };
 
 use protocol::{
@@ -389,23 +393,42 @@ impl Library {
         let Some(size) = size else {
             return Ok(source.into());
         };
-        let size = size.clamp(32, 1024);
-        let thumb = self.shared.art_dir.join(format!("{key}-{size}.jpg"));
-        if !thumb.exists() {
-            let image = image::open(&source).map_err(|e| Error::Other(e.to_string()))?;
-            let mut out = Vec::new();
-            image
-                .thumbnail(size, size)
-                .into_rgb8()
-                .write_to(
-                    &mut std::io::Cursor::new(&mut out),
-                    image::ImageFormat::Jpeg,
-                )
-                .map_err(|e| Error::Other(e.to_string()))?;
-            fs::write(&thumb, out)?;
-        }
-        Ok(thumb)
+        thumbnail(&self.shared, key, &source, size)
     }
+}
+
+/// The artwork size the player bar asks for. The scanner makes it for all
+/// artwork in the background, so the bar's cover shows at once (#59).
+pub const BAR_ART_SIZE: u32 = 128;
+
+fn thumb_path(shared: &Shared, key: &str, size: u32) -> PathBuf {
+    shared.art_dir.join(format!("{key}-{size}.jpg"))
+}
+
+/// Artwork `key` (stored at `source`) scaled to fit `size`, made and cached
+/// on first use.
+fn thumbnail(shared: &Shared, key: &str, source: &str, size: u32) -> Result<PathBuf> {
+    let size = size.clamp(32, 1024);
+    let thumb = thumb_path(shared, key, size);
+    if !thumb.exists() {
+        let image = image::open(source).map_err(|e| Error::Other(e.to_string()))?;
+        let mut out = Vec::new();
+        image
+            .thumbnail(size, size)
+            .into_rgb8()
+            .write_to(
+                &mut std::io::Cursor::new(&mut out),
+                image::ImageFormat::Jpeg,
+            )
+            .map_err(|e| Error::Other(e.to_string()))?;
+        // Written aside and renamed, so a request racing the scanner never
+        // reads a half-written file.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let part = thumb.with_extension(format!("{}.part", NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&part, out)?;
+        fs::rename(&part, &thumb)?;
+    }
+    Ok(thumb)
 }
 
 const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track_no, disc_no, year, genre, \

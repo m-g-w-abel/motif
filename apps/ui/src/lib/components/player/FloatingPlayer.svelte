@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { getApp } from '../../context';
+  import { BAR_ART_SIZE } from '../../library.svelte';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
   import { isFloatPos, MARGIN, place, resolve, snap, type FloatBox, type FloatPos } from './floating';
@@ -130,7 +131,7 @@
 >
   <div class="row">
     <button class="expand" title="Expand player" onclick={() => sheet.expand()}>
-      <Artwork track={engine.current?.track} size={48} />
+      <Artwork track={engine.current?.track} size={48} exact={BAR_ART_SIZE} />
       <TrackLabel />
     </button>
     <span

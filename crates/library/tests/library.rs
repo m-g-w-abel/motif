@@ -130,6 +130,9 @@ fn scans_queries_matches_and_rescans() {
         .art
         .clone()
         .expect("folder cover.png is the album art");
+    // Made in the background before hashing, so ready by now.
+    let bar_thumb = data.join(format!("art/{art}-{}.jpg", library::BAR_ART_SIZE));
+    assert!(bar_thumb.is_file(), "the scan pre-caches the bar size");
     assert!(library.art(&art, Some(32)).unwrap().is_file());
     assert_eq!(albums[0].art, None);
 

@@ -8,12 +8,15 @@
   let {
     track,
     size,
+    exact,
     art,
     title = '',
   }: {
     track: TrackRef | null | undefined;
     /** Pixels; fills its container if absent. */
     size?: number;
+    /** Image pixels to ask for whatever the pixel ratio, e.g. a size the engine has ready. */
+    exact?: number;
     /** Artwork id. If not given, looked up in the library for `track`. */
     art?: string | null;
     /** For the image's description. */
@@ -31,7 +34,7 @@
   let shown = $state<ShownArt | null>(null);
   const kept = $derived(keptArt(shown, track, id));
   const visible = $derived(kept !== null && failed !== kept);
-  const src = (a: string) => library.artUrl(a, size ?? 256);
+  const src = (a: string) => exact ? library.artUrl(a, exact, true) : library.artUrl(a, size ?? 256);
   $effect(() => {
     if (loading) return;
     if (!id) {

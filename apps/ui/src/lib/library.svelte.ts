@@ -271,13 +271,20 @@ export class LibraryClient {
       .catch(() => paths.forEach((path) => this.#details.get(path) === undefined && this.#details.set(path, null)));
   }
 
-  /** URL of artwork `art`, scaled to fit `size` pixels. */
-  artUrl(art: string, size: number): string {
+  /** URL of artwork `art`, scaled to fit `size` pixels, or exactly `size` image pixels if `exact`. */
+  artUrl(art: string, size: number, exact = false): string {
     // Whole steps keep the server's thumbnail cache small.
     const step = size <= 64 ? 64 : size <= 128 ? 128 : size <= 256 ? 256 : 512;
-    return `${this.engine.httpBase}/art/${art}?size=${Math.round(step * (globalThis.devicePixelRatio ?? 1))}`;
+    const pixels = exact ? size : Math.round(step * (globalThis.devicePixelRatio ?? 1));
+    return `${this.engine.httpBase}/art/${art}?size=${pixels}`;
   }
 }
+
+/**
+ * Image pixels the player bar asks for at any pixel ratio: the engine makes this size for all artwork after a
+ * scan (`library::BAR_ART_SIZE`), so the bar's cover shows at once. Sharp at 48px up to a ratio of about 2.7.
+ */
+export const BAR_ART_SIZE = 128;
 
 function cached<T>(map: Map<string, T>, search: string | null, sort: SortRule[], make: () => T): T {
   const key = JSON.stringify([search ?? '', sort]);
