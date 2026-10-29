@@ -1,8 +1,14 @@
 <script lang="ts">
   import { getApp } from '../../context';
-  import { needsResizeEdges, startResize } from '../../windowChrome';
+  import { needsResizeEdges, startResize, watchMaximised } from '../../windowChrome';
 
   const { settings } = getApp();
+  const shown = $derived(settings.current.ownDecorations && needsResizeEdges);
+  // A maximised window can't be resized, so its edges shouldn't offer to.
+  let maximised = $state(false);
+  $effect(() => {
+    if (shown) return watchMaximised((m) => (maximised = m));
+  });
   // Edge names are the Tauri ResizeDirection values; the cursor is the CSS one.
   const edges = [
     ['North', 'n-resize', 'top: 0; left: 8px; right: 8px; height: 4px'],
@@ -16,7 +22,7 @@
   ];
 </script>
 
-{#if settings.current.ownDecorations && needsResizeEdges}
+{#if shown && !maximised}
   {#each edges as [direction, cursor, place] (direction)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="edge" style="{place}; cursor: {cursor}" onpointerdown={(e) => e.button === 0 && startResize(direction)}></div>

@@ -16,6 +16,24 @@ export async function applyDecorations(own: boolean) {
 /** Linux's undecorated windows get no resize edges from the webview, so the UI draws its own. */
 export const needsResizeEdges = canDecorate && /Linux/i.test(navigator.userAgent);
 
+/** Calls `on` with whether the window is maximised, now and after each resize; returns a stop function. */
+export function watchMaximised(on: (maximised: boolean) => void): () => void {
+  let stop = () => {};
+  let stopped = false;
+  void (async () => {
+    const win = (await import('@tauri-apps/api/window')).getCurrentWindow();
+    const check = async () => on(await win.isMaximized());
+    await check();
+    const unlisten = await win.onResized(check);
+    if (stopped) unlisten();
+    else stop = unlisten;
+  })();
+  return () => {
+    stopped = true;
+    stop();
+  };
+}
+
 export async function startResize(direction: string) {
   const win = (await import('@tauri-apps/api/window')).getCurrentWindow();
   await win.startResizeDragging(direction as 'North');
