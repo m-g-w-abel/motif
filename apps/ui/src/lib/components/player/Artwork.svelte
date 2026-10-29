@@ -29,10 +29,13 @@
   // Still being looked up: neither the gradient nor an image yet.
   const loading = $derived(art === undefined && details === undefined);
   let failed = $state<string | null>(null);
-  // The decoded image on screen. It stays while the track is from the same album, even while
-  // its own art id is unknown or decoding (no flicker); another album gets the placeholder.
+  // The decoded image on screen. It stays while the track is from the same album, and while the
+  // next art is looked up or decoding (no flicker).
   let shown = $state<ShownArt | null>(null);
-  const kept = $derived(keptArt(shown, track, id));
+  // New art on its way: keep what's shown (or nothing) instead of the placeholder, which is only for
+  // tracks known to have no art and images that fail.
+  const waiting = $derived(loading || (id !== null && failed !== id));
+  const kept = $derived(keptArt(shown, track, id, waiting));
   const visible = $derived(kept !== null && failed !== kept);
   const src = (a: string) => exact ? library.artUrl(a, exact, true) : library.artUrl(a, size ?? 256);
   $effect(() => {
@@ -60,7 +63,7 @@
   class="art"
   style:width={size ? `${size}px` : undefined}
   style:height={size ? `${size}px` : undefined}
-  style:background={track && !loading && !visible ? placeholderArt(track) : undefined}
+  style:background={track && !waiting && !visible ? placeholderArt(track) : undefined}
 >
   {#if visible}
     <img
