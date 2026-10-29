@@ -435,3 +435,43 @@ formats (late in phase 1 if time allows, otherwise phase 10); tag editing
 (phase 10); libsoxr (phase 9, rubato until then); AcoustID fingerprints as
 an identity key (phase 10); measuring background hashing cost on phones
 (phase 5).
+
+## Phase 2 notes
+
+### Visualiser (#17, 2026-10-29)
+
+**Choice: the engine computes spectrum bands** (option 1 in #17). While at
+least one client subscribes (`{"id":…,"bands":true}`), the output callback
+copies what it plays, before the volume, into a second lock-free ring buffer
+(wait-free, no allocation, dropped if full). Every 33 ms the engine task runs
+a 2048-point FFT (`realfft`, already built for rubato) over the latest
+samples and publishes 32 log-spaced bands, 40 Hz–16 kHz, as bytes (0 = 60 dB
+down, 255 = full scale) in `Event::Bands`. The engine notices subscribers on
+its existing 100 ms tick; without any, the tap is off and nothing extra runs.
+The `visualiser` widget draws bars on a canvas as frames arrive, and
+subscribes only while playing, on screen and in a visible window. MilkDrop
+(raw PCM) is a possible later bonus.
+
+Measured with a release `motif-headless` (volume 0) and WebKitGTK 2.52.6
+MiniBrowser, X11, Ryzen 12 threads, RTX 3060, a 300×120 widget:
+
+| | Cost |
+|---|---|
+| Engine CPU (tap, FFT, JSON, WebSocket) | +0.4% of a core (0.75% → 1.2% while playing) |
+| Engine CPU, unsubscribed | unchanged; no frames sent after unsubscribing |
+| Bandwidth | 30.3 frames/s × 116 B = 3.5 KiB/s |
+| WebKit, CPU rendering (default on NVIDIA) | +5% of a core (2.0–2.5% → 6.6–7.5%): ~1.2% receiving frames, ~3.7% painting |
+| WebKit, GPU rendering (desktop shell's SHM mode) | +9% (2.7% → 12%) |
+| WebKit, paused | 0.1% |
+
+Latency: bands describe audio as the callback hands it to the device, and
+reach the client 0–33 ms later (half a tick on average; loopback WebSocket
+under 1 ms), then wait up to a display frame. The device plays it about
+32 ms after the callback (cpal timestamps, 512-frame callbacks through
+PipeWire), so pictures land within roughly ±20 ms of the sound, on average
+slightly early. That is inside what viewers notice (lip-sync guidance allows
+~45 ms early, ~125 ms late). Remote clients would add their network delay.
+
+Painting is the main cost and scales with the frame rate (each frame
+recomposites the window); if that matters on slow machines, draw fewer
+frames.

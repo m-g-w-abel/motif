@@ -3,4 +3,4 @@ import type { LibraryStatus } from "./LibraryStatus";
 import type { PlayerState } from "./PlayerState";
 import type { QueueItem } from "./QueueItem";
 
-export type Event = { "type": "state", state: PlayerState, } | { "type": "queue", items: Array<QueueItem>, } | { "type": "context", offset: number, items: Array<QueueItem>, } | { "type": "library", status: LibraryStatus, };
+export type Event = { "type": "state", state: PlayerState, } | { "type": "queue", items: Array<QueueItem>, } | { "type": "context", offset: number, items: Array<QueueItem>, } | { "type": "library", status: LibraryStatus, } | { "type": "bands", bands: Array<number>, };

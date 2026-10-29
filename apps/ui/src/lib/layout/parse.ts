@@ -23,7 +23,7 @@ export interface LayoutError {
 
 export type ParseResult = { ok: true; layout: Layout } | { ok: false; errors: LayoutError[] };
 
-const CONTENT_NODES = ['split', 'tracklist', 'album-grid', 'artwork', 'track-info', 'controls', 'queue'];
+const CONTENT_NODES = ['split', 'tracklist', 'album-grid', 'artwork', 'track-info', 'controls', 'queue', 'visualiser'];
 
 /**
  * Parses and validates a layout file, collecting every error it finds.
@@ -173,6 +173,7 @@ class Reader {
       }
       case 'artwork':
       case 'controls':
+      case 'visualiser':
         this.check(node, ['size']);
         return { kind: 'panel', panel: name, size: this.size(node) };
       case 'when':

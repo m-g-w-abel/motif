@@ -41,6 +41,7 @@ export type PanelNode = {
   | { panel: 'track-info'; style: InfoStyle }
   | { panel: 'controls' }
   | { panel: 'queue'; collapsible: boolean }
+  | { panel: 'visualiser' }
 );
 
 export type LayoutNode = SplitNode | PanelNode;
@@ -55,6 +56,7 @@ export const WIDGETS: Record<Widget, string> = {
   'track-info': 'Track info',
   controls: 'Controls',
   queue: 'Queue',
+  visualiser: 'Visualiser',
 };
 
 export interface Layout {
