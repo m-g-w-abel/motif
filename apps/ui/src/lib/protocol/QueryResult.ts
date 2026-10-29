@@ -4,4 +4,4 @@ import type { LibraryStatus } from "./LibraryStatus";
 import type { LibraryTrack } from "./LibraryTrack";
 import type { TrackGroup } from "./TrackGroup";
 
-export type QueryResult = { "type": "status", status: LibraryStatus, } | { "type": "tracks", total: number, offset: number, tracks: Array<LibraryTrack>, } | { "type": "groups", groups: Array<TrackGroup>, } | { "type": "albums", total: number, offset: number, albums: Array<LibraryAlbum>, } | { "type": "position", index: number | null, } | { "type": "done" };
+export type QueryResult = { "type": "status", status: LibraryStatus, } | { "type": "tracks", total: number, offset: number, tracks: Array<LibraryTrack>, } | { "type": "groups", groups: Array<TrackGroup>, } | { "type": "albums", total: number, offset: number, albums: Array<LibraryAlbum>, } | { "type": "position", index: number | null, } | { "type": "waveform", levels: Array<number>, } | { "type": "done" };

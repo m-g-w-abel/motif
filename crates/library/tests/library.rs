@@ -427,3 +427,46 @@ fn a_folder_copy_of_the_embedded_cover_lists_once() {
         track(&library, "Opening").art.as_ref()
     );
 }
+
+#[test]
+fn waveforms_are_decoded_then_cached() {
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &music,
+    );
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 4 && !s.scanning);
+    let waveform = |path: String| match library.query(LibraryQuery::Waveform { path }) {
+        Ok(QueryResult::Waveform { levels }) => levels,
+        other => panic!("{other:?}"),
+    };
+    let path = track(&library, "Opening").track.id;
+    let levels = waveform(path.clone());
+    assert_eq!(levels.len(), 1000);
+    assert_eq!(levels.iter().max(), Some(&255));
+    // Cached by the FLAC's hash (written on a thread of its own).
+    let db = rusqlite::Connection::open(data.join("library.db")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while db
+        .query_row("SELECT count(*) FROM waveforms", [], |r| r.get::<_, u32>(0))
+        .unwrap()
+        == 0
+    {
+        assert!(Instant::now() < deadline, "never cached");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(waveform(path), levels);
+    assert!(
+        library
+            .query(LibraryQuery::Waveform {
+                path: "/not/in/the/library.flac".into()
+            })
+            .is_err()
+    );
+}

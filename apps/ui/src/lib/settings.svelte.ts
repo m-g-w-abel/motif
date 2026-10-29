@@ -17,6 +17,8 @@ export interface Settings {
   font: string;
   /** The always-visible player: a bar along the bottom, or a floating widget. */
   player: 'bar' | 'floating';
+  /** The full seek bar draws the track's waveform, or a plain line. */
+  seekBar: 'waveform' | 'plain';
   /** Desktop: the left panel folded away. */
   navCollapsed: boolean;
   /** Vim-style list navigation (j/k, gg/G, Ctrl-d/u, counts). */
@@ -33,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   scale: 100,
   font: '',
   player: 'bar',
+  seekBar: 'waveform',
   navCollapsed: false,
   vimKeys: false,
   ownDecorations: false,

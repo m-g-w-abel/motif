@@ -12,6 +12,7 @@
     disabled = false,
     variant = 'normal',
     running = false,
+    levels,
     oninput,
     onchange,
   }: {
@@ -25,6 +26,8 @@
     variant?: 'normal' | 'strip' | 'muted';
     /** The value is advancing by 1 per millisecond (playback), so keep moving between updates. */
     running?: boolean;
+    /** Loudness along the range (0–255), drawn as a waveform in place of the rail. */
+    levels?: number[];
     oninput?: (value: number) => void;
     onchange?: (value: number) => void;
   } = $props();
@@ -52,6 +55,16 @@
       timer = setTimeout(tick, step);
     }, step);
     return () => clearTimeout(timer);
+  });
+
+  /** The waveform as one filled outline, mirrored about the middle, in a box `levels.length` wide and 2 high. */
+  const wave = $derived.by(() => {
+    if (!levels?.length) return '';
+    // The quietest points keep a hairline, so silence still reads as part of the track.
+    const h = levels.map((l) => Math.max(0.06, l / 255).toFixed(3));
+    const top = h.map((v, i) => `${i} ${(1 - +v).toFixed(3)}`);
+    const bottom = h.map((v, i) => `${i} ${(1 + +v).toFixed(3)}`).reverse();
+    return `M${top.join('L')}L${bottom.join('L')}Z`;
   });
 
   function valueAt(clientX: number): number {
@@ -106,6 +119,7 @@
   bind:this={track}
   class="slider {variant}"
   class:disabled
+  class:waveform={!!wave}
   class:dragging={dragValue !== null}
   role="slider"
   tabindex={disabled ? -1 : 0}
@@ -122,7 +136,17 @@
   onpointercancel={onPointerUp}
   onkeydown={onKey}
 >
-  <div class="rail"><div class="fill"></div></div>
+  {#if wave}
+    <!-- Drawn once per track; progress moves a clip over an accent copy with transforms only. -->
+    <div class="wave">
+      <svg viewBox="0 0 {levels!.length - 1} 2" preserveAspectRatio="none" aria-hidden="true"><path d={wave} /></svg>
+      <div class="played">
+        <svg viewBox="0 0 {levels!.length - 1} 2" preserveAspectRatio="none" aria-hidden="true"><path d={wave} /></svg>
+      </div>
+    </div>
+  {:else}
+    <div class="rail"><div class="fill"></div></div>
+  {/if}
   <div class="thumbs"><div class="thumb-track"><div class="thumb"></div></div></div>
 </div>
 
@@ -162,6 +186,43 @@
 
   .muted .fill {
     background: var(--text-muted);
+  }
+
+  .slider.waveform {
+    height: 28px;
+  }
+
+  .wave {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .wave svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    fill: var(--text-muted);
+    opacity: 0.45;
+  }
+
+  /* Slides right to reveal the accent copy, which slides back by as much to stay put. */
+  .played {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    transform: translateX(calc((var(--fraction) - 1) * 100%));
+  }
+
+  .played svg {
+    fill: var(--accent);
+    opacity: 1;
+    transform: translateX(calc((1 - var(--fraction)) * 100%));
+  }
+
+  .muted .played svg {
+    fill: var(--text-muted);
   }
 
   /* Clips the moved track below (transforms count as overflow and would
@@ -232,7 +293,8 @@
     outline: none;
   }
 
-  .slider:focus-visible .rail {
+  .slider:focus-visible .rail,
+  .slider:focus-visible .wave {
     outline: 2px solid var(--text);
     outline-offset: 2px;
   }

@@ -285,6 +285,23 @@ the navigation bar and the toolbar under the status bar. Not tested yet:
 real (not forced) overnight Doze, Sony's STAMINA mode, other vendors'
 battery killers, and release builds.
 
+### Waveform seek bar (2026-10-29, #16)
+
+The library decodes a track's waveform when it is first asked for (the
+playing track and the next two), 1000 RMS levels of a byte each, and caches
+them by audio hash in `library.db`; nothing runs over the whole library.
+Timed over `/ws` against a release `motif-headless` on a Ryzen 5 3600:
+
+| File | First request | Cached |
+|---|---|---|
+| 4 min FLAC, 16-bit/44.1 kHz stereo | 142 ms | 1 ms |
+| 1 hour FLAC, same format | 1.86 s | 1 ms |
+| 4 min MP3 192 kbps (also hashed in the same decode) | 210 ms | 1 ms |
+
+An answer is about 3.9 KB of JSON. The full seek bar shows the plain line
+until it arrives. Formats the library's Symphonia decode can't read (those
+the engine plays with libopus or FFmpeg) keep the plain line.
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game
