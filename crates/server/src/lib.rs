@@ -121,7 +121,12 @@ async fn images(
     let Some(library) = state.library else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let track = params.track.clone();
     match tokio::task::spawn_blocking(move || library.images(&params.track)).await {
+        Ok(Err(err)) => {
+            tracing::warn!(track, %err, "can't list images");
+            StatusCode::NOT_FOUND.into_response()
+        }
         Ok(Ok(keys)) => {
             let mut response = axum::Json(keys).into_response();
             if let Some(origin) = origin {
@@ -131,7 +136,10 @@ async fn images(
             }
             response
         }
-        _ => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::warn!(%err, "listing images failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }
 

@@ -10,6 +10,7 @@ mod scan;
 mod tags;
 
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -43,6 +44,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 struct Shared {
     status: watch::Sender<LibraryStatus>,
     art_dir: PathBuf,
+    /// Images listed by [`Library::images`] (key → file), kept in memory so
+    /// listing them never waits on the scanner's writes.
+    extras: Mutex<HashMap<String, PathBuf>>,
 }
 
 impl Shared {
@@ -79,6 +83,7 @@ impl Library {
         let shared = Arc::new(Shared {
             status: watch::channel(status).0,
             art_dir,
+            extras: Mutex::default(),
         });
         let (scanner, requests) = mpsc::channel();
         let scanner_conn = db::open(&db_path)?;
@@ -385,10 +390,13 @@ impl Library {
     /// The image file for artwork `key`, scaled to fit `size` pixels (made
     /// once and cached) or full size.
     pub fn art(&self, key: &str, size: Option<u32>) -> Result<PathBuf> {
-        let source: String = self
+        let stored: Option<String> = self
             .db()
             .query_row("SELECT path FROM art WHERE key = ?1", [key], |r| r.get(0))
-            .optional()?
+            .optional()?;
+        let source = stored
+            .map(PathBuf::from)
+            .or_else(|| self.shared.extras.lock().unwrap().get(key).cloned())
             .ok_or_else(|| Error::Other("no such artwork".into()))?;
         // Never upscaled: an image no larger than asked for is sent as it is.
         let fits = |(w, h): (u32, u32)| size.is_none_or(|size| w.max(h) <= size);
@@ -396,7 +404,7 @@ impl Library {
             Some(size) if !image::image_dimensions(&source).is_ok_and(fits) => {
                 thumbnail(&self.shared, key, &source, size)
             }
-            _ => Ok(source.into()),
+            _ => Ok(source),
         }
     }
 
@@ -422,38 +430,36 @@ impl Library {
             .filter(|p| tags::is_image(p))
             .collect();
         folder.sort();
-        let conn = self.db();
         let shown: Option<String> = art.as_ref().and_then(|key| {
-            conn.query_row("SELECT path FROM art WHERE key = ?1", [key], |r| r.get(0))
+            self.db()
+                .query_row("SELECT path FROM art WHERE key = ?1", [key], |r| r.get(0))
                 .ok()
         });
-        let mut keys: Vec<String> = art.into_iter().collect();
-        let mut add = |key: String| {
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-        };
-        for (bytes, ext) in &pictures {
-            if let Some(key) = scan::save_embedded_art(&self.shared, &conn, bytes, ext) {
-                add(key);
-            }
-        }
+        // Only read the database: the scanner may hold its write lock for
+        // seconds, so new keys go in memory for `art` to find.
+        let mut found: Vec<(String, PathBuf)> = pictures
+            .iter()
+            .filter_map(|(bytes, ext)| scan::cache_picture(&self.shared, bytes, ext))
+            .collect();
         for image in folder {
-            let (Some(image), Ok(meta)) = (image.to_str(), fs::metadata(&image)) else {
+            let (Some(name), Ok(meta)) = (image.to_str(), fs::metadata(&image)) else {
                 continue;
             };
-            if shown.as_deref() == Some(image) {
+            if shown.as_deref() == Some(name) {
                 continue;
             }
             // Keyed by path, size and modification time rather than content,
             // so large booklet scans aren't read each time the sheet opens.
-            let id = format!("{image}\0{}\0{:?}", meta.len(), meta.modified().ok());
-            let key = scan::art_key(id.as_bytes());
-            conn.execute(
-                "INSERT OR IGNORE INTO art (key, path) VALUES (?1, ?2)",
-                params![key, image],
-            )?;
-            add(key);
+            let id = format!("{name}\0{}\0{:?}", meta.len(), meta.modified().ok());
+            found.push((scan::art_key(id.as_bytes()), image));
+        }
+        let mut keys: Vec<String> = art.into_iter().collect();
+        let mut extras = self.shared.extras.lock().unwrap();
+        for (key, file) in found {
+            if !keys.contains(&key) {
+                keys.push(key.clone());
+                extras.insert(key, file);
+            }
         }
         Ok(keys)
     }
@@ -469,7 +475,7 @@ fn thumb_path(shared: &Shared, key: &str, size: u32) -> PathBuf {
 
 /// Artwork `key` (stored at `source`) scaled to fit `size`, made and cached
 /// on first use.
-fn thumbnail(shared: &Shared, key: &str, source: &str, size: u32) -> Result<PathBuf> {
+fn thumbnail(shared: &Shared, key: &str, source: &Path, size: u32) -> Result<PathBuf> {
     let size = size.clamp(32, 1024);
     let thumb = thumb_path(shared, key, size);
     if !thumb.exists() {

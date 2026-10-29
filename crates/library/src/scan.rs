@@ -342,12 +342,28 @@ pub fn art_key(bytes: &[u8]) -> String {
 }
 
 /// Copies an embedded picture into the artwork cache once per distinct image.
-pub(crate) fn save_embedded_art(
+fn save_embedded_art(
     shared: &Shared,
-    tx: &Connection,
+    tx: &rusqlite::Transaction<'_>,
     bytes: &[u8],
     ext: &str,
 ) -> Option<String> {
+    let (key, file) = cache_picture(shared, bytes, ext)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO art (key, path) VALUES (?1, ?2)",
+        params![key, file.to_str()?],
+    )
+    .ok()?;
+    Some(key)
+}
+
+/// Writes an embedded picture to the artwork folder (once), returning its
+/// key and file.
+pub(crate) fn cache_picture(
+    shared: &Shared,
+    bytes: &[u8],
+    ext: &str,
+) -> Option<(String, std::path::PathBuf)> {
     let key = art_key(bytes);
     let file = shared.art_dir.join(format!("{key}.{ext}"));
     if !file.exists() {
@@ -355,12 +371,7 @@ pub(crate) fn save_embedded_art(
             .inspect_err(|err| tracing::warn!(%err, "can't cache artwork"))
             .ok()?;
     }
-    tx.execute(
-        "INSERT OR IGNORE INTO art (key, path) VALUES (?1, ?2)",
-        params![key, file.to_str()?],
-    )
-    .ok()?;
-    Some(key)
+    Some((key, file))
 }
 
 /// Artwork (key, path) without a player bar thumbnail yet.
@@ -382,7 +393,7 @@ fn thumb_next(shared: &Shared, thumbs: &mut Vec<(String, String)>) -> bool {
     let Some((key, path)) = thumbs.pop() else {
         return false;
     };
-    if let Err(err) = crate::thumbnail(shared, &key, &path, crate::BAR_ART_SIZE) {
+    if let Err(err) = crate::thumbnail(shared, &key, Path::new(&path), crate::BAR_ART_SIZE) {
         tracing::debug!(key, %err, "can't make bar thumbnail");
     }
     true

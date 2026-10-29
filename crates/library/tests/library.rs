@@ -151,6 +151,21 @@ fn scans_queries_matches_and_rescans() {
     let back = library.art(&images[1], None).unwrap();
     assert_eq!(back, cover.with_file_name("back.png"));
 
+    // Listing and serving them never waits on the scanner writing (#18).
+    let writer = rusqlite::Connection::open(data.join("library.db")).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    fs::remove_file(cover.with_file_name("back.png")).unwrap();
+    fs::copy(&cover, cover.with_file_name("booklet.png")).unwrap();
+    let started = Instant::now();
+    let images = library.images(beginning.to_str().unwrap()).unwrap();
+    let booklet = library.art(&images[1], None).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "waited for the lock"
+    );
+    assert_eq!(booklet, cover.with_file_name("booklet.png"));
+    writer.execute_batch("ROLLBACK").unwrap();
+
     let query = LibraryQuery::AlbumPosition {
         search: None,
         sort: vec![],
