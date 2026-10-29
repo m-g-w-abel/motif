@@ -1,102 +1,143 @@
-import type { LayoutNode, PanelNode, Size, SplitNode, Widget } from './model';
+import type { LayoutNode, PanelNode, Size, Widget } from './model';
 import { parseLayout } from './parse';
 
 /**
- * Edits made in place (dragged dividers, reordered widgets), kept per layout
- * and variant on each device; layout files are never rewritten. Keys are node
- * paths such as `split-row/1.split-column/0.artwork`: each step names the node,
- * so a path stops matching where the file changes shape. Added widgets follow
- * a split's file children, so they get the next indices.
+ * Edits made in place (dragged dividers, moved, added and removed widgets),
+ * kept per layout and variant on each device; layout files are never
+ * rewritten. The device keeps the edited tree, with the file's tree it was
+ * made from, so edits are dropped once the file changes.
  */
 export interface Overlay {
-  sizes?: Record<string, Size>;
-  /** A split's children in the order shown, as indices into the file's order. */
-  order?: Record<string, number[]>;
-  /** Widgets added to a split, after its file children, by the split's path. */
-  added?: Record<string, Widget[]>;
-  /** Paths of removed nodes, file or added ones. */
-  removed?: string[];
+  /** `fingerprint` of the file's tree. */
+  of: string;
+  root: LayoutNode;
 }
 
+export const fingerprint = (root: LayoutNode) => JSON.stringify(root);
+
+/** The tree on screen: the edited one if it was made from this `root`. */
+export const shownRoot = (root: LayoutNode, overlay: Overlay | undefined) =>
+  overlay?.of === fingerprint(root) ? overlay.root : root;
+
+/** A node's place in the tree: child indices from the root. */
+export type At = number[];
+export type Side = 'left' | 'right' | 'above' | 'below';
+
 const name = (node: LayoutNode) => (node.kind === 'split' ? `split-${node.direction}` : node.panel);
+/** Names a node by its place, such as `split-row/1.split-column/0.artwork`, to key a widget's remembered state. */
 export const rootPath = name;
-const childPath = (path: string, i: number, child: LayoutNode) => `${path}/${i}.${name(child)}`;
+export const childPath = (path: string, i: number, child: LayoutNode) => `${path}/${i}.${name(child)}`;
 
-const isOrder = (order: number[] | undefined, n: number): order is number[] =>
-  Array.isArray(order) && order.length === n && [...Array(n).keys()].every((i) => order.includes(i));
+const ids = new WeakMap<LayoutNode, number>();
+let nextId = 0;
+/** Stays the same when an edit rebuilds a node, so its widget keeps its state. */
+export function idOf(node: LayoutNode): number {
+  let id = ids.get(node);
+  if (id === undefined) ids.set(node, (id = nextId++));
+  return id;
+}
 
-/** The order a split at `path` with `n` children is shown in. */
-export function orderOf(overlay: Overlay, path: string, n: number): number[] {
-  const order = overlay.order?.[path];
-  return isOrder(order, n) ? order : [...Array(n).keys()];
+function rebuilt<T extends LayoutNode>(old: LayoutNode, node: T): T {
+  ids.set(node, idOf(old));
+  return node;
 }
 
 const defaults = new Map<Widget, PanelNode>();
 /** A widget with the options a layout file gets when it names just the widget. */
-function widget(name: Widget): PanelNode {
+export function widget(name: Widget): PanelNode {
   let node = defaults.get(name);
   if (!node) {
     const result = parseLayout(`layout version=1\n${name}`);
     if (!result.ok || result.layout.root.kind !== 'panel') throw new Error(`no defaults for ${name}`);
     defaults.set(name, (node = result.layout.root));
   }
+  return { ...node };
+}
+
+export function nodeAt(root: LayoutNode, at: At): LayoutNode | undefined {
+  let node: LayoutNode | undefined = root;
+  for (const i of at) node = node?.kind === 'split' ? node.children[i] : undefined;
   return node;
 }
 
-/** A split's file children and then its added widgets. */
-export function childrenOf(split: SplitNode, path: string, overlay: Overlay): LayoutNode[] {
-  return [...split.children, ...(overlay.added?.[path] ?? []).map(widget)];
+/** Replaces the node at `at` with what `edit` returns; a split's child list may grow or shrink. */
+function editAt(root: LayoutNode, at: At, edit: (node: LayoutNode) => LayoutNode[]): LayoutNode[] {
+  if (!at.length) return edit(root);
+  if (root.kind !== 'split' || !root.children[at[0]]) return [root];
+  const [i, ...rest] = at;
+  const children = root.children.flatMap((child, j) => (j === i ? editAt(child, rest, edit) : [child]));
+  // A split left with one widget becomes that widget, in the split's place.
+  if (children.length === 1 && root.children.length > 1) return [rebuilt(children[0], { ...children[0], size: root.size })];
+  return [rebuilt(root, { ...root, children })];
 }
 
-export interface Slot {
-  node: LayoutNode;
-  path: string;
-  /** Into `childrenOf`. */
-  index: number;
-  size?: Size;
+const one = (nodes: LayoutNode[], fallback: LayoutNode) => (nodes.length === 1 ? nodes[0] : fallback);
+
+/** Sets or (with no size) clears the size of the node at `at`. */
+export function resize(root: LayoutNode, at: At, size: Size | undefined): LayoutNode {
+  return one(
+    editAt(root, at, (node) => [rebuilt(node, { ...node, size })]),
+    root,
+  );
 }
 
-/** A split's children as shown: the overlay's order, sizes, additions and removals over the file's. */
-export function slots(split: SplitNode, path: string, overlay: Overlay): Slot[] {
-  const children = childrenOf(split, path, overlay);
-  return orderOf(overlay, path, children.length).flatMap((index) => {
-    const node = children[index];
-    const p = childPath(path, index, node);
-    return overlay.removed?.includes(p) ? [] : [{ node, path: p, index, size: overlay.sizes?.[p] ?? node.size }];
-  });
+/** Removes the node at `at`. The root stays: there must be something to show. */
+export function remove(root: LayoutNode, at: At): LayoutNode {
+  return at.length ? one(editAt(root, at, () => []), root) : root;
 }
 
-/** Drops edits whose node is gone from `root`, and orders that change nothing. */
-export function prune(root: LayoutNode, overlay: Overlay): Overlay {
-  const sizes: Record<string, Size> = {};
-  const order: Record<string, number[]> = {};
-  const added: Record<string, Widget[]> = {};
-  const removed: string[] = [];
-  const walk = (node: LayoutNode, path: string) => {
-    const size = overlay.sizes?.[path];
-    if (size) sizes[path] = size;
-    if (overlay.removed?.includes(path)) removed.push(path);
-    if (node.kind !== 'split') return;
-    if (overlay.added?.[path]?.length) added[path] = overlay.added[path];
-    const children = childrenOf(node, path, overlay);
-    const shown = orderOf(overlay, path, children.length);
-    if (shown.some((v, i) => v !== i)) order[path] = shown;
-    children.forEach((child, i) => walk(child, childPath(path, i, child)));
-  };
-  walk(root, rootPath(root));
-  return {
-    ...(Object.keys(sizes).length ? { sizes } : {}),
-    ...(Object.keys(order).length ? { order } : {}),
-    ...(Object.keys(added).length ? { added } : {}),
-    ...(removed.length ? { removed } : {}),
-  };
+/**
+ * Puts `node` beside the node at `at`. A split running that way takes it in
+ * (the parent split, or the target itself); otherwise the target is wrapped
+ * in a new split.
+ */
+export function insert(root: LayoutNode, at: At, side: Side, node: LayoutNode): LayoutNode {
+  const direction = side === 'left' || side === 'right' ? 'row' : 'column';
+  const after = side === 'right' || side === 'below';
+  const target = nodeAt(root, at);
+  if (!target) return root;
+  if (target.kind === 'split' && target.direction === direction) {
+    const children = after ? [...target.children, node] : [node, ...target.children];
+    return one(
+      editAt(root, at, () => [rebuilt(target, { ...target, children })]),
+      root,
+    );
+  }
+  const parent = nodeAt(root, at.slice(0, -1));
+  if (at.length && parent?.kind === 'split' && parent.direction === direction) {
+    const i = at[at.length - 1] + (after ? 1 : 0);
+    const children = [...parent.children.slice(0, i), node, ...parent.children.slice(i)];
+    return one(
+      editAt(root, at.slice(0, -1), () => [rebuilt(parent, { ...parent, children })]),
+      root,
+    );
+  }
+  return one(
+    editAt(root, at, (old) => {
+      const inner = rebuilt(old, { ...old, size: undefined });
+      return [{ kind: 'split', direction, size: old.size, children: after ? [inner, node] : [node, inner] }];
+    }),
+    root,
+  );
 }
 
-/** `node` as shown: the overlay's edits written into the tree. Splits left empty are dropped, as a file can't have them. */
-export function applyOverlay(node: LayoutNode, overlay: Overlay, path = rootPath(node)): LayoutNode {
-  if (node.kind !== 'split') return node;
-  const children = slots(node, path, overlay)
-    .map((s) => ({ ...applyOverlay(s.node, overlay, s.path), size: s.size }))
-    .filter((child) => child.kind !== 'split' || child.children.length);
-  return { ...node, children };
+/** Moves the node at `from` beside the one at `to`. Nothing happens if `to` is inside `from`. */
+export function move(root: LayoutNode, from: At, to: At, side: Side): LayoutNode {
+  const node = nodeAt(root, from);
+  if (!node || from.every((v, i) => to[i] === v)) return root;
+  // Put a copy in first, so `to` still points at the target, then take out the original.
+  const placed = insert(root, to, side, rebuilt(node, { ...node }));
+  const left = find(placed, node);
+  return left ? remove(placed, left) : root;
+}
+
+/** Where `node` (that very object) is in the tree. */
+function find(root: LayoutNode, node: LayoutNode, at: At = []): At | null {
+  if (root === node) return at;
+  if (root.kind !== 'split') return null;
+  for (const [i, child] of root.children.entries()) {
+    const found = find(child, node, [...at, i]);
+    if (found) return found;
+  }
+  return null;
 }
