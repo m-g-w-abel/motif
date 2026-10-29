@@ -7,6 +7,8 @@
     repeat: 'M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3',
     volume: 'M11 5 6 9H2v6h4l5 4V5Zm4.5 3.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13',
     close: 'M6 6l12 12M18 6 6 18',
+    minimize: 'M5 18h14',
+    maximize: 'M5 5h14v14H5z',
     plus: 'M12 5v14M5 12h14',
     music: 'M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm12-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
     library: 'M4 4v16M9 4v16M14 4l5 16',

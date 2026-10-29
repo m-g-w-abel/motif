@@ -16,6 +16,8 @@
   import Scrollbar from '../Scrollbar.svelte';
   import { rootPath } from '../../layout/overlay';
   import LayoutNode from './LayoutNode.svelte';
+  import { canDecorate } from '../../windowChrome';
+  import WindowButtons from './WindowButtons.svelte';
 
   let { onEditLayout }: { onEditLayout: () => void } = $props();
 
@@ -69,6 +71,8 @@
     menuOpen = false;
   }
 
+  const own = $derived(settings.current.ownDecorations && canDecorate);
+  const drag = $derived(own ? { 'data-tauri-drag-region': '' } : {});
   const focus = (node: HTMLInputElement) => node.select();
 
   function onWindowPointer(e: PointerEvent) {
@@ -105,8 +109,8 @@
 />
 
 <section class="content" aria-label={data.title}>
-  <header class="toolbar">
-    <div class="title">
+  <header class="toolbar" {...drag}>
+    <div class="title" {...drag}>
       <button
         class="icon-button menu-button"
         aria-label="Toggle navigation"
@@ -115,8 +119,8 @@
       >
         <Icon name="list" size={18} />
       </button>
-      <h1>{data.title}</h1>
-      <span class="count">
+      <h1 {...drag}>{data.title}</h1>
+      <span class="count" {...drag}>
         {data.count} tracks · {formatTime(data.totalMs)}
         {#if library.status?.scanning}{' · '}scanning…{/if}
       </span>
@@ -285,6 +289,8 @@
         {/if}
       </div>
     </div>
+
+    <WindowButtons />
   </header>
 
   <div class="area" bind:this={area}>
