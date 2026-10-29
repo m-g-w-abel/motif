@@ -45,9 +45,9 @@
   // In the sheet: every image of the playing album, listed when it opens (#18): each distinct
   // track cover, then the track's other images (back, booklet, disc…). Listed once per album, so
   // skipping tracks within it keeps the same cards and only slides.
-  const album = $derived(
-    !expands && sheet.open && !isDemo && track?.source === 'local' ? (track.album ? albumKey(track) : track.id) : null,
-  );
+  const albumId = $derived(!expands && !isDemo && track?.source === 'local' ? (track.album ? albumKey(track) : track.id) : null);
+  /** Listed once the sheet opens; the cards stay while it closes. */
+  const album = $derived(sheet.open ? albumId : null);
   /** The album the cards are for. */
   let listed = $state<string | null>(null);
   let covers = $state<{ key: string; titles: string[]; shared: boolean }[]>([]);
@@ -99,8 +99,23 @@
       index = i;
     }
   });
-  // Until the list holds this track's cover (another album still loading), the plain cover shows.
-  const flow = $derived(album !== null && listed === album && cards.length > 1 && cards.some((c) => c.key === own));
+  // Side cards and controls wait until the cover has arrived (the sheet's morph takes 260ms), also
+  // when the list comes in during the morph; while dragging, the morph fades them itself.
+  let settled = $state(false);
+  $effect(() => {
+    if (sheet.dragging) settled = true;
+    else if (sheet.progress < 1) settled = false;
+    else {
+      const timer = setTimeout(() => (settled = true), 260);
+      return () => clearTimeout(timer);
+    }
+  });
+  // Until the list holds this track's cover (another album still loading), the track's own cover
+  // alone, keyed by its art so it stays the same card (and the sheet's morph target) when the rest
+  // arrive.
+  const shownCards = $derived(
+    albumId !== null && listed === albumId && cards.some((c) => c.key === own) ? cards : [{ key: own ?? '', kicker: '', title: '' }],
+  );
 
   // The largest square that fits, measured rather than left to CSS so it
   // behaves the same in every webview.
@@ -111,16 +126,15 @@
 </script>
 
 <section class="artwork" bind:clientWidth={width} bind:clientHeight={height}>
-  {#if flow}
-    <Coverflow {cards} bind:index {track} {width} {height} {items} settled={sheet.progress === 1} />
-  {:else if side > 0}
-    {#if expands}
-      <button class="frame" use:menu={items} title="Expand player" style:width="{side}px" onclick={() => sheet.expand()}>
-        <Artwork {track} size={side} />
-      </button>
-    {:else}
-      <div class="frame" use:menu={items} style:width="{side}px"><Artwork {track} size={side} /></div>
+  {#if !expands}
+    <!-- The sheet: always the carousel, so its centre card is the same box with or without the rest. -->
+    {#if width > 0}
+      <Coverflow cards={shownCards} bind:index {track} {width} {height} {items} {settled} />
     {/if}
+  {:else if side > 0}
+    <button class="frame" use:menu={items} title="Expand player" style:width="{side}px" onclick={() => sheet.expand()}>
+      <Artwork {track} size={side} />
+    </button>
   {/if}
 </section>
 

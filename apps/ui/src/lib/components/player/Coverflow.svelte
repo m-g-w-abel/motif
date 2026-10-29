@@ -32,7 +32,7 @@
     height: number;
     /** The centre card's context menu. */
     items: () => MenuItem[];
-    /** Neighbours, arrows and dots show only once the sheet has finished opening. */
+    /** Neighbours, arrows and dots show only while the sheet is open or being dragged. */
     settled: boolean;
   } = $props();
 
@@ -102,36 +102,38 @@
       {#if Math.abs(i - at) <= near + 1}
         {@const p = place(i)}
         {@const centre = i === at}
-        <!-- The centre card is the `.frame` the sheet's open and close morph moves. -->
+        <!-- The slot places the card; the centre card's face is the `.frame` the sheet's open and
+             close morph moves, and the other faces fade in after it (see ExpandedPlayer). -->
         <div
-          class="card"
-          class:frame={centre}
+          class="slot"
           class:hidden={p.hidden}
           style:width="{side}px"
           style:height="{side}px"
           style:margin-left="{-side / 2}px"
           style:transform={p.transform}
           style:z-index={p.z}
-          use:menu={centre ? items : () => []}
         >
-          <Artwork {track} art={card.key} size={side} drawn={side * p.scale} />
-          {#if !centre}
-            <button
-              class="shade"
-              style:opacity={p.shade}
-              tabindex="-1"
-              aria-label="Show {card.title || `image ${i + 1}`}"
-              onclick={() => go(i)}
-            ></button>
-          {/if}
+          <div class="card" class:frame={centre} use:menu={centre ? items : () => []}>
+            <!-- An empty key is the track's own cover, looked up (and held while the next loads). -->
+            <Artwork {track} art={card.key || undefined} size={side} drawn={side * p.scale} />
+            {#if !centre}
+              <button
+                class="shade"
+                style:opacity={p.shade}
+                tabindex="-1"
+                aria-label="Show {card.title || `image ${i + 1}`}"
+                onclick={() => go(i)}
+              ></button>
+            {/if}
+          </div>
         </div>
       {/if}
     {/each}
-    {#if settled}
-      <button class="icon-button turn previous" aria-label="Previous image" onclick={() => go(at - 1)}>
+    {#if cards.length > 1}
+      <button class="icon-button turn previous" class:hidden={!settled} aria-label="Previous image" onclick={() => go(at - 1)}>
         <Icon name="chevron-left" />
       </button>
-      <button class="icon-button turn next" aria-label="Next image" onclick={() => go(at + 1)}>
+      <button class="icon-button turn next" class:hidden={!settled} aria-label="Next image" onclick={() => go(at + 1)}>
         <Icon name="chevron-right" />
       </button>
     {/if}
@@ -141,7 +143,7 @@
     <span class="kicker">{cards[at]?.kicker ?? ''}</span>
     <span class="title">{cards[at]?.title ?? ''}</span>
   </div>
-  <div class="dots" class:hidden={!settled}>
+  <div class="dots" class:hidden={!settled || cards.length < 2}>
     {#each cards as card, i (card.key)}
       <button
         class="dot"
@@ -172,17 +174,23 @@
     width: 100%;
   }
 
-  .card {
+  .slot {
     position: absolute;
     top: 0;
     left: 50%;
+    transition:
+      transform 250ms ease,
+      opacity 250ms ease;
+  }
+
+  .card {
+    position: relative;
+    width: 100%;
+    height: 100%;
     overflow: hidden;
     border-radius: var(--radius-lg);
     line-height: 0;
     box-shadow: 0 2px 0 rgb(0 0 0 / 0.25);
-    transition:
-      transform 250ms ease,
-      opacity 250ms ease;
   }
 
   .card :global(.art) {
@@ -241,6 +249,7 @@
     position: absolute;
     top: 50%;
     z-index: 20;
+    transition: opacity 250ms ease;
     width: 36px;
     height: 36px;
     margin-top: -18px;
