@@ -43,31 +43,41 @@
   };
 
   // In the sheet: every image of the playing album, listed when it opens (#18): each distinct
-  // track cover, then the track's other images (back, booklet, disc…).
-  const path = $derived(!expands && sheet.open && !isDemo && track?.source === 'local' ? track.id : null);
+  // track cover, then the track's other images (back, booklet, disc…). Listed once per album, so
+  // skipping tracks within it keeps the same cards and only slides.
+  const album = $derived(
+    !expands && sheet.open && !isDemo && track?.source === 'local' ? (track.album ? albumKey(track) : track.id) : null,
+  );
+  /** The album the cards are for. */
+  let listed = $state<string | null>(null);
   let covers = $state<{ key: string; titles: string[]; shared: boolean }[]>([]);
   let images = $state<TrackImage[]>([]);
+  /** Each album track's cover, as listed with the cards (the details cache can be older). */
+  let artOf = $state.raw(new Map<string, string>());
   $effect(() => {
-    const p = path;
+    const a = album;
     const t = untrack(() => track);
-    if (!p || !t) return;
+    if (!a || !t) return;
     let current = true;
     const tracks: Promise<LibraryTrack[]> = t.album
-      ? engine.query({ type: 'album_tracks', albums: [albumKey(t)], sort: [] }).then((r) => (r.type === 'tracks' ? r.tracks : []))
+      ? engine.query({ type: 'album_tracks', albums: [a], sort: [] }).then((r) => (r.type === 'tracks' ? r.tracks : []))
       : Promise.resolve([untrack(() => library.details(t))].filter((d) => !!d));
-    Promise.all([tracks, library.images(p)]).then(
+    // shortcut: extra embedded pictures come from the track the sheet opened on; others' extras show after reopening.
+    Promise.all([tracks, library.images(t.id)]).then(
       ([tracks, found]) => {
         if (!current) return;
         const byKey = new Map<string, string[]>();
         for (const { track: x, art } of tracks) if (art) byKey.set(art, [...(byKey.get(art) ?? []), x.title ?? '']);
         covers = [...byKey].map(([key, titles]) => ({ key, titles, shared: titles.length === tracks.length }));
         images = found;
+        artOf = new Map(tracks.flatMap((x) => (x.art ? [[x.track.id, x.art] as const] : [])));
+        listed = a;
       },
       () => {},
     );
     return () => (current = false);
   });
-  const own = $derived(track ? library.details(track)?.art : undefined);
+  const own = $derived(track ? (artOf.get(track.id) ?? library.details(track)?.art) : undefined);
   const cards = $derived.by(() => {
     const album = track?.album ?? '';
     // A cover all the album's tracks share is named after the album, else after its tracks.
@@ -90,7 +100,7 @@
     }
   });
   // Until the list holds this track's cover (another album still loading), the plain cover shows.
-  const flow = $derived(path !== null && cards.length > 1 && cards.some((c) => c.key === own));
+  const flow = $derived(album !== null && listed === album && cards.length > 1 && cards.some((c) => c.key === own));
 
   // The largest square that fits, measured rather than left to CSS so it
   // behaves the same in every webview.

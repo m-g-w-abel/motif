@@ -41,10 +41,11 @@
   const near = $derived(narrow.current ? 1 : 2);
   /** How much of each neighbour shows beside the centre card, as a share of its side. */
   const PEEK = 0.2;
-  const DOTS = 24;
+  /** The centre card's caption and the dots under the cards, with the gaps between them. */
+  const BELOW = 80;
   const PADDING = 12;
   const side = $derived(
-    Math.max(0, Math.min(height - 2 * PADDING - DOTS, (width - 2 * PADDING) / (1 + 2 * PEEK * near))),
+    Math.max(0, Math.min(height - 2 * PADDING - BELOW, (width - 2 * PADDING) / (1 + 2 * PEEK * near))),
   );
   const at = $derived(Math.min(index, cards.length - 1));
 
@@ -55,8 +56,7 @@
     const scale = 1 - 0.15 * k;
     const x = Math.sign(d) * side * (0.5 + PEEK * k - (scale * 0.5 * 0.75));
     return {
-      // Each card has its own perspective, so z-index (not depth) keeps neighbours behind.
-      transform: `perspective(${side * 3}px) translateX(${x}px) rotateY(${Math.sign(d) * 40}deg) scale(${scale})`,
+      transform: `translateX(${x}px) rotateY(${Math.sign(d) * 40}deg) scale(${scale})`,
       scale,
       hidden: k > near || (k > 0 && !settled),
       shade: Math.min(0.5, 0.22 * k),
@@ -95,7 +95,9 @@
   onpointerup={onPointerUp}
   onpointercancel={() => (swipeX = null)}
 >
-  <div class="stage" style:height="{side}px">
+  <!-- Perspective without preserve-3d: cards are seen from the centre, and z-index (not depth)
+       keeps the neighbours behind. -->
+  <div class="stage" style:height="{side}px" style:perspective="{side * 3}px">
     {#each cards as card, i (card.key)}
       {#if Math.abs(i - at) <= near + 1}
         {@const p = place(i)}
@@ -113,12 +115,6 @@
           use:menu={centre ? items : () => []}
         >
           <Artwork {track} art={card.key} size={side} drawn={side * p.scale} />
-          {#if card.title}
-            <div class="caption">
-              {#if card.kicker}<span class="kicker">{card.kicker}</span>{/if}
-              <span class="title" style:font-size="{Math.max(14, Math.round(side * 0.06))}px">{card.title}</span>
-            </div>
-          {/if}
           {#if !centre}
             <button
               class="shade"
@@ -139,6 +135,11 @@
         <Icon name="chevron-right" />
       </button>
     {/if}
+  </div>
+  <!-- Always two lines high, so nothing below moves as it pages. -->
+  <div class="caption" style:width="{side}px" aria-live="polite">
+    <span class="kicker">{cards[at]?.kicker ?? ''}</span>
+    <span class="title">{cards[at]?.title ?? ''}</span>
   </div>
   <div class="dots" class:hidden={!settled}>
     {#each cards as card, i (card.key)}
@@ -205,16 +206,21 @@
   }
 
   .caption {
-    position: absolute;
-    inset: auto 0 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 32px 16px 14px;
-    background: linear-gradient(transparent, rgb(0 0 0 / 0.72));
-    color: #fff;
-    line-height: 1.15;
-    pointer-events: none;
+    align-items: center;
+    gap: 2px;
+    text-align: center;
+    line-height: 1.25;
+  }
+
+  .kicker,
+  .title {
+    max-width: 100%;
+    min-height: 1.25em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .kicker {
@@ -226,10 +232,9 @@
   }
 
   .title {
-    overflow: hidden;
+    color: var(--text);
+    font-size: 16px;
     font-weight: 700;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .turn {
