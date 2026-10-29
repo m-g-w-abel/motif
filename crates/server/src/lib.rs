@@ -108,9 +108,11 @@ struct ArtParams {
 /// browser may cache them forever.
 async fn art(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(key): Path<String>,
     Query(params): Query<ArtParams>,
 ) -> Response {
+    let origin = headers.get(header::ORIGIN).cloned();
     let Some(library) = state.library else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -131,8 +133,18 @@ async fn art(
                     if png { "image/png" } else { "image/jpeg" },
                 ),
                 (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                (header::VARY, "origin"),
             ];
-            (headers, bytes).into_response()
+            let mut response = (headers, bytes).into_response();
+            // The desktop window's page has another origin than this server,
+            // and it reads the cover's pixels for art colours.
+            if let Some(origin) = origin.filter(|o| origin_allowed(Some(o.to_str().unwrap_or(""))))
+            {
+                response
+                    .headers_mut()
+                    .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+            }
+            response
         }
         _ => StatusCode::NOT_FOUND.into_response(),
     }
