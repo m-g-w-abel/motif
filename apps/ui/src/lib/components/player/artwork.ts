@@ -14,13 +14,19 @@ export function albumOf(track: TrackRef | null | undefined): string | null {
 /**
  * The image to keep on screen for `track`: the one already shown while it is
  * from the same album, even if this track's own art is unknown or still
- * decoding (albums can have per-track art, so the id may still change). Another
- * album never keeps the old image. An image that is `id` itself always shows,
- * album or not (album grid cards pass no track).
+ * decoding (albums can have per-track art, so the id may still change), and
+ * for any track while its art is still `waiting` (looked up or decoding), so a
+ * cover is replaced by the next cover rather than a placeholder. An image that
+ * is `id` itself always shows, album or not (album grid cards pass no track).
  */
-export function keptArt(shown: ShownArt | null, track: TrackRef | null | undefined, id: string | null): string | null {
+export function keptArt(
+  shown: ShownArt | null,
+  track: TrackRef | null | undefined,
+  id: string | null,
+  waiting = false,
+): string | null {
   if (!shown) return null;
-  if (id !== null && shown.id === id) return shown.id;
+  if (waiting || (id !== null && shown.id === id)) return shown.id;
   const album = albumOf(track);
   return album !== null && shown.album === album ? shown.id : null;
 }

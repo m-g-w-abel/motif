@@ -47,6 +47,7 @@ pub fn run(
     rewatch(&mut watcher, &notify_tx, &conn);
     let mut pending = true; // scan at start-up
     let mut changed_at: Option<Instant> = None;
+    let mut thumbs = Vec::new();
     loop {
         if pending {
             pending = false;
@@ -54,15 +55,19 @@ pub fn run(
                 tracing::error!(%err, "library scan failed");
                 shared.update(|s| s.error = Some(err.to_string()));
             }
+            thumbs = missing_bar_thumbs(&shared, &conn);
         }
-        // Hash in the background, one file at a time, giving way to scans.
+        // Make bar thumbnails, then hash, in the background, one file at a
+        // time, giving way to scans.
         let request = match changed_at {
             Some(at) => requests.recv_timeout(SETTLE.saturating_sub(at.elapsed())),
-            None if hash_next(&shared, &conn) => match requests.try_recv() {
-                Ok(r) => Ok(r),
-                Err(mpsc::TryRecvError::Empty) => continue,
-                Err(mpsc::TryRecvError::Disconnected) => return,
-            },
+            None if thumb_next(&shared, &mut thumbs) || hash_next(&shared, &conn) => {
+                match requests.try_recv() {
+                    Ok(r) => Ok(r),
+                    Err(mpsc::TryRecvError::Empty) => continue,
+                    Err(mpsc::TryRecvError::Disconnected) => return,
+                }
+            }
             None => requests
                 .recv()
                 .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
@@ -342,6 +347,31 @@ fn save_embedded_art(
     )
     .ok()?;
     Some(key)
+}
+
+/// Artwork (key, path) without a player bar thumbnail yet.
+fn missing_bar_thumbs(shared: &Shared, conn: &Connection) -> Vec<(String, String)> {
+    let all = conn
+        .prepare("SELECT key, path FROM art")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<(String, String)>>>()
+        });
+    all.unwrap_or_default()
+        .into_iter()
+        .filter(|(key, _)| !crate::thumb_path(shared, key, crate::BAR_ART_SIZE).exists())
+        .collect()
+}
+
+/// Makes one bar thumbnail from `thumbs`. Returns false when there are none left.
+fn thumb_next(shared: &Shared, thumbs: &mut Vec<(String, String)>) -> bool {
+    let Some((key, path)) = thumbs.pop() else {
+        return false;
+    };
+    if let Err(err) = crate::thumbnail(shared, &key, &path, crate::BAR_ART_SIZE) {
+        tracing::debug!(key, %err, "can't make bar thumbnail");
+    }
+    true
 }
 
 /// Hashes one track still missing its audio hash. Returns false when there

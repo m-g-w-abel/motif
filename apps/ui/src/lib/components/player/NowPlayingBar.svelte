@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getApp } from '../../context';
   import { formatTime } from '../../format';
+  import { BAR_ART_SIZE } from '../../library.svelte';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
   import RepeatButton from './RepeatButton.svelte';
@@ -33,7 +34,7 @@
     <div class="transport"><Transport size={17} /></div>
 
     <button class="identity" title="Expand player">
-      <Artwork track={engine.current?.track} size={40} />
+      <Artwork track={engine.current?.track} size={40} exact={BAR_ART_SIZE} />
       <TrackLabel />
     </button>
 
