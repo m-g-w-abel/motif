@@ -4,8 +4,8 @@ A music player for collectors: plays anything, desktop (Linux/Windows/macOS) and
 Android, remote control, no central server. Architecture and roadmap:
 [docs/PLAN.md](docs/PLAN.md). Layout file format: [docs/LAYOUT.md](docs/LAYOUT.md).
 
-Status: phase 1 (desktop player) is done; see the milestones and
-measurements in `docs/PLAN.md`. Phase 2 (looks great) is next. Local files play for real (decoder plugins → `pipeline.rs` →
+Status: phases 1 (desktop player) and 2 (looks great) are done; see the notes and
+measurements in `docs/PLAN.md`. Phase 3 (cheap wins) is next. Local files play for real (decoder plugins → `pipeline.rs` →
 cpal, in `crates/engine/src/audio/`), and the library (`crates/library`) is
 scanned from the folders added in Settings. Data lives in the OS data
 directory (`MOTIF_DATA_DIR` overrides it, handy for tests).
