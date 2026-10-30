@@ -7,6 +7,8 @@ const KEY = 'themes.user';
 interface Stored {
   id: string;
   text: string;
+  /** The file name, used when the text has no `name` (missing in older entries). */
+  name?: string;
 }
 
 const slug = (name: string) =>
@@ -19,8 +21,8 @@ export class UserThemes {
   #stored = $state.raw<Stored[]>([]);
 
   list: Theme[] = $derived(
-    this.#stored.flatMap(({ id, text }) => {
-      const result = parseTheme(text);
+    this.#stored.flatMap(({ id, text, name }) => {
+      const result = parseTheme(text, name);
       return result.ok ? [{ ...result.theme, id }] : [];
     }),
   );
@@ -39,10 +41,11 @@ export class UserThemes {
 
   /** Adds a theme, replacing an installed one of the same name. */
   install(text: string, fileName: string): ThemeParse & { id?: string } {
-    const result = parseTheme(text, fileName.replace(/\.kdl$/i, ''));
+    const name = fileName.replace(/\.kdl$/i, '');
+    const result = parseTheme(text, name);
     if (!result.ok) return result;
     const id = `user:${slug(result.theme.name)}`;
-    this.#set([...this.#stored.filter((s) => s.id !== id), { id, text }]);
+    this.#set([...this.#stored.filter((s) => s.id !== id), { id, text, name }]);
     return { ...result, theme: { ...result.theme, id }, id };
   }
 

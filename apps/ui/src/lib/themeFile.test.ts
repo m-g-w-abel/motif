@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { contrast, isThemeFile, parseTheme } from './themeFile';
 import { UserThemes } from './userThemes.svelte';
+
+const storage = new Map<string, string>();
+vi.stubGlobal('localStorage', {
+  getItem: (k: string) => storage.get(k) ?? null,
+  setItem: (k: string, v: string) => storage.set(k, v),
+});
 
 const ok = (text: string) => {
   const r = parseTheme(text);
@@ -83,5 +89,10 @@ describe('UserThemes', () => {
     expect(themes.byId('user:mine')?.tokens.bg).toBe('#000');
     themes.remove('user:mine');
     expect(themes.list).toEqual([]);
+  });
+
+  it('keeps the file name of a nameless theme across a reload', () => {
+    new UserThemes().install('theme version=1 scheme="dark"\n', 'Ocean.kdl');
+    expect(new UserThemes().list.map((t) => t.name)).toEqual(['Ocean']);
   });
 });
