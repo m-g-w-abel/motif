@@ -134,11 +134,17 @@ async fn start_engine(
         library.as_ref().map(|(library, _)| library.clone()),
         hwnd,
     );
+    let integrations = match library.is_some().then(library::data_dir).flatten() {
+        Some(dir) => integrations::settings::keep(&dir),
+        // No data directory: the settings last until the app quits.
+        None => tokio::sync::watch::channel(Default::default()).0,
+    };
     let config = server::Config {
         // Loopback only until pairing exists (phase 4).
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         ui_dir: None,
         library: library.as_ref().map(|(library, _)| library.clone()),
+        integrations,
     };
     let (addr, serve) = server::bind(engine, config).await?;
     let url = format!("ws://{addr}/ws");

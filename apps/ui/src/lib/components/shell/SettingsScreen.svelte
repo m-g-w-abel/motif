@@ -24,6 +24,7 @@
     { id: 'library', label: 'Library' },
     { id: 'playback', label: 'Playback' },
     { id: 'keyboard', label: 'Keyboard' },
+    { id: 'integrations', label: 'Integrations' },
     { id: 'technical', label: 'Technical' },
     { id: 'about', label: 'About' },
   ];
@@ -376,6 +377,24 @@
           </div>
         </div>
         <ShortcutList />
+      {:else if group === 'integrations'}
+        {#if engine.integrations}
+          {@const integrations = engine.integrations}
+          <div class="row">
+            <span class="label">Lyrics from LRCLIB</span>
+            <div class="segmented" role="radiogroup" aria-label="Lyrics from LRCLIB">
+              {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
+                <button role="radio" aria-checked={integrations.lrclib === value} class:active={integrations.lrclib === value} onclick={() => engine.setIntegrations({ ...integrations, lrclib: value })}>{text}</button>
+              {/each}
+            </div>
+            <p class="status">Looks up lyrics for what plays on lrclib.net. Applies to every window and device using this engine.</p>
+          </div>
+          {#if integrations.secrets_unencrypted}
+            <p class="status">No system keyring found: sign-ins are stored unencrypted, readable only by your user.</p>
+          {/if}
+        {:else}
+          <p class="status">Integration settings aren't available yet.</p>
+        {/if}
       {:else if group === 'technical'}
         <div class="row">
           <span class="label">Engine connection</span>
