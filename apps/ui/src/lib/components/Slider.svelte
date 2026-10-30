@@ -327,7 +327,9 @@
     height: 6px;
   }
 
-  .strip .thumb {
+  /* A waveform's played edge marks the position. */
+  .strip .thumb,
+  .waveform .thumb {
     display: none;
   }
 
