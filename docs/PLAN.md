@@ -79,7 +79,7 @@ arranged by **KDL layout files** ([LAYOUT.md](LAYOUT.md)): track lists (table
 or album-grouped), cover gallery, artwork, track info, queue, in splits, like
 foobar2000's or Tauon's view modes. Built-in layouts sit on toolbar buttons;
 users install more by dropping a `.kdl` file onto the window. Appearance
-(theme, accent, density, bar vs floating player) is a separate client-side
+(theme, user [theme files](THEMES.md), accent, density, bar vs floating player) is a separate client-side
 setting. Layouts and settings never touch the engine, which stays
 playback-only. The player bar expands into a full now-playing screen
 (dragged up on phones).

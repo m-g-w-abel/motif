@@ -2,7 +2,8 @@
 
 A music player for collectors: plays anything, desktop (Linux/Windows/macOS) and
 Android, remote control, no central server. Architecture and roadmap:
-[docs/PLAN.md](docs/PLAN.md). Layout file format: [docs/LAYOUT.md](docs/LAYOUT.md).
+[docs/PLAN.md](docs/PLAN.md). Layout file format: [docs/LAYOUT.md](docs/LAYOUT.md). Theme file format:
+[docs/THEMES.md](docs/THEMES.md).
 
 Status: phases 1 (desktop player) and 2 (looks great) are done; see the notes and
 measurements in `docs/PLAN.md`. Phase 3 (cheap wins) is next. Local files play for real (decoder plugins → `pipeline.rs` →
@@ -30,10 +31,12 @@ directory (`MOTIF_DATA_DIR` overrides it, handy for tests).
 |---|---|
 | `crates/protocol` | Wire types; `cargo test -p protocol` regenerates `apps/ui/src/lib/protocol/*.ts` (commit them; CI fails if stale) |
 | `crates/engine` | Queue and transport state machine (`player.rs` is pure and unit-tested) |
+| `crates/library` | Library: scan, tags, SQLite (`db.rs` holds sort orders and migrations), artwork, waveforms |
+| `crates/integrations` | OS media controls |
 | `crates/server` | WebSocket `/ws` + static UI hosting (loopback only until pairing exists) |
 | `apps/desktop` | Tauri 2 shell embedding engine + server (binary `motif`) |
 | `apps/headless` | Engine without a window on `127.0.0.1:7700` (binary `motif-headless`) |
-| `apps/ui` | Svelte 5 + Vite SPA (no SvelteKit). `lib/layout/` parser, presets and store; `lib/themes.ts`; `lib/settings.svelte.ts` |
+| `apps/ui` | Svelte 5 + Vite SPA (no SvelteKit). `lib/layout/` parser, presets and store; `lib/themes.ts` (built-ins), `lib/themeFile.ts` + `lib/userThemes.svelte.ts` (user themes); `lib/sort.svelte.ts`; `lib/settings.svelte.ts` |
 
 ## Commands
 
