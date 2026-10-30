@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use protocol::{
     Command, ContextKind, OutputDevice, PlayContext, PlaybackStatus, PlayerState, QueueItem,
-    RepeatMode, TrackRef,
+    RepeatMode, ReplayGain, ReplayGainMode, ReplayGainSettings, TrackRef,
 };
 
 use crate::{EngineError, Playable, Resolver, audio::decoder};
@@ -68,6 +68,7 @@ pub struct Player {
     decoders: Vec<String>,
     output: Option<String>,
     outputs: Vec<OutputDevice>,
+    replay_gain: ReplayGainSettings,
 }
 
 impl Default for Player {
@@ -90,6 +91,7 @@ impl Default for Player {
             decoders: decoder::all().iter().map(|p| p.name.to_string()).collect(),
             output: None,
             outputs: Vec::new(),
+            replay_gain: ReplayGainSettings::default(),
         }
     }
 }
@@ -173,6 +175,7 @@ impl Player {
             }
             Command::SetOutput { device } => self.output = device,
             Command::ListOutputs => self.outputs = crate::audio::outputs(),
+            Command::SetReplayGain { settings } => self.replay_gain = settings,
         }
         Ok(())
     }
@@ -182,7 +185,7 @@ impl Player {
     /// whether state changed.
     pub fn tick(&mut self, now: Instant) -> bool {
         if self.status != PlaybackStatus::Playing
-            || matches!(self.playable(), Some(Playable::File(_)))
+            || matches!(self.playable(), Some(Playable::File(..)))
         {
             return false;
         }
@@ -217,6 +220,11 @@ impl Player {
             available_decoders: decoder::all().iter().map(|p| p.name.to_string()).collect(),
             output: self.output.clone(),
             outputs: self.outputs.clone(),
+            replay_gain: self.replay_gain,
+            gain_db: match self.playable() {
+                Some(Playable::File(_, tags)) => self.gain_db(tags, false),
+                _ => None,
+            },
         }
     }
 
@@ -260,6 +268,18 @@ impl Player {
     /// The chosen output device id, `None` for the system default.
     pub fn output(&self) -> Option<&str> {
         self.output.as_deref()
+    }
+
+    /// The ReplayGain adjustment in dB for a file with `tags` that is the
+    /// current entry, or with `upcoming` the one after it.
+    pub fn gain_db(&self, tags: &ReplayGain, upcoming: bool) -> Option<f32> {
+        let from_context = if upcoming {
+            matches!(self.step(true), Some(Step::Context(_) | Step::Same))
+        } else {
+            matches!(self.current, Some(Current::Context(_)))
+        };
+        let album = from_context && matches!(self.context_meta, Some((ContextKind::Album, _)));
+        gain_db(&self.replay_gain, tags, album)
     }
 
     pub fn seeks(&self) -> u64 {
@@ -609,6 +629,31 @@ fn position(items: &[QueueItem], id: u64) -> Result<usize, EngineError> {
         .iter()
         .position(|item| item.id == id)
         .ok_or(EngineError::UnknownItem(id))
+}
+
+/// The ReplayGain adjustment in dB for a file with `tags`, `None` when off.
+/// `album` says whether it plays from an album context (for Auto).
+fn gain_db(settings: &ReplayGainSettings, tags: &ReplayGain, album: bool) -> Option<f32> {
+    let track = (tags.track_gain, tags.track_peak);
+    let album_values = (tags.album_gain, tags.album_peak);
+    // Each falls back to the other when its tags are missing.
+    let (first, second) = match settings.mode {
+        ReplayGainMode::Off => return None,
+        ReplayGainMode::Track => (track, album_values),
+        ReplayGainMode::Album => (album_values, track),
+        ReplayGainMode::Auto if album => (album_values, track),
+        ReplayGainMode::Auto => (track, album_values),
+    };
+    let (Some(gain), peak) = (if first.0.is_some() { first } else { second }) else {
+        return Some(settings.untagged_db);
+    };
+    let gain = gain + settings.preamp_db;
+    Some(
+        match peak.filter(|&p| settings.prevent_clipping && p > 0.0) {
+            Some(peak) => gain.min(-20.0 * peak.log10()),
+            None => gain,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -1133,5 +1178,68 @@ mod tests {
         );
         assert!(set(&mut p, &["symphonia", "symphonia"]).is_err());
         assert!(set(&mut p, &["vlc"]).is_err());
+    }
+
+    const TAGS: ReplayGain = ReplayGain {
+        track_gain: Some(-6.0),
+        track_peak: Some(0.5),
+        album_gain: Some(-4.0),
+        album_peak: Some(0.9),
+    };
+
+    #[test]
+    fn auto_gain_uses_album_gain_only_in_an_album_context() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        assert_eq!(
+            p.gain_db(&TAGS, false),
+            Some(-6.0),
+            "a list uses track gain"
+        );
+        let tracks = vec![track("a", 1000), track("b", 1000)];
+        let album = Command::SetContext {
+            tracks,
+            start: Some(0),
+            kind: ContextKind::Album,
+            label: None,
+        };
+        p.apply(album, t0).unwrap();
+        assert_eq!(p.gain_db(&TAGS, false), Some(-4.0));
+        assert_eq!(p.gain_db(&TAGS, true), Some(-4.0), "b follows in the album");
+        enqueue(&mut p, &["x"], t0);
+        assert_eq!(
+            p.gain_db(&TAGS, true),
+            Some(-6.0),
+            "x is queued, not the album"
+        );
+        let x = p.upcoming().unwrap().id;
+        p.moved_to(x, Playable::Simulated, t0);
+        assert_eq!(p.gain_db(&TAGS, false), Some(-6.0));
+    }
+
+    #[test]
+    fn gain_modes_fall_back_and_cap_by_peak() {
+        let mut settings = ReplayGainSettings {
+            mode: ReplayGainMode::Track,
+            preamp_db: 10.0,
+            prevent_clipping: false,
+            untagged_db: -3.0,
+        };
+        assert_eq!(gain_db(&settings, &TAGS, true), Some(4.0));
+        settings.mode = ReplayGainMode::Album;
+        assert_eq!(gain_db(&settings, &TAGS, false), Some(6.0));
+        // A peak of 0.9 allows about +0.92 dB.
+        settings.prevent_clipping = true;
+        let capped = gain_db(&settings, &TAGS, false).unwrap();
+        assert!((capped - 0.915).abs() < 0.01, "{capped}");
+        let only_track = ReplayGain {
+            album_gain: None,
+            album_peak: None,
+            ..TAGS
+        };
+        assert_eq!(gain_db(&settings, &only_track, true), Some(4.0));
+        assert_eq!(gain_db(&settings, &ReplayGain::default(), true), Some(-3.0));
+        settings.mode = ReplayGainMode::Off;
+        assert_eq!(gain_db(&settings, &TAGS, true), None);
     }
 }

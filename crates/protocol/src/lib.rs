@@ -132,6 +132,55 @@ pub enum Command {
     },
     /// Refreshes [`PlayerState::outputs`] (devices come and go).
     ListOutputs,
+    SetReplayGain {
+        settings: ReplayGainSettings,
+    },
+}
+
+/// Which ReplayGain value levels each track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ReplayGainMode {
+    Off,
+    Track,
+    Album,
+    /// Album gain while playing an album context, track gain otherwise.
+    #[default]
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReplayGainSettings {
+    pub mode: ReplayGainMode,
+    /// Added to tagged gains, in dB.
+    pub preamp_db: f32,
+    /// Lowers the gain so the tagged peak doesn't clip.
+    pub prevent_clipping: bool,
+    /// Applied instead to files without gain tags, in dB.
+    pub untagged_db: f32,
+}
+
+impl Default for ReplayGainSettings {
+    fn default() -> Self {
+        Self {
+            mode: ReplayGainMode::Auto,
+            preamp_db: 0.0,
+            prevent_clipping: true,
+            untagged_db: 0.0,
+        }
+    }
+}
+
+/// A file's ReplayGain values: gains in dB relative to the ReplayGain
+/// reference (-18 LUFS), peaks as linear sample amplitude.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ReplayGain {
+    pub track_gain: Option<f32>,
+    pub track_peak: Option<f32>,
+    pub album_gain: Option<f32>,
+    pub album_peak: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -248,6 +297,10 @@ pub struct PlayerState {
     pub output: Option<String>,
     /// Output devices found at the last [`Command::ListOutputs`].
     pub outputs: Vec<OutputDevice>,
+    pub replay_gain: ReplayGainSettings,
+    /// The ReplayGain adjustment applied to the current track, in dB
+    /// (`None` when off or nothing is loaded).
+    pub gain_db: Option<f32>,
 }
 
 impl Default for PlayerState {
@@ -264,6 +317,8 @@ impl Default for PlayerState {
             available_decoders: Vec::new(),
             output: None,
             outputs: Vec::new(),
+            replay_gain: ReplayGainSettings::default(),
+            gain_db: None,
         }
     }
 }

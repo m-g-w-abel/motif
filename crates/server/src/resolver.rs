@@ -11,6 +11,17 @@ pub struct LibraryResolver {
     pub library: Option<Library>,
 }
 
+impl LibraryResolver {
+    fn file(&self, path: PathBuf) -> Playable {
+        let gain = self
+            .library
+            .as_ref()
+            .map(|library| library.replay_gain(&path))
+            .unwrap_or_default();
+        Playable::File(path, gain)
+    }
+}
+
 impl Resolver for LibraryResolver {
     fn resolve(&self, track: &TrackRef) -> Result<Playable, String> {
         match track.source.as_str() {
@@ -19,7 +30,7 @@ impl Resolver for LibraryResolver {
             "local" => {
                 let path = PathBuf::from(&track.id);
                 if path.is_file() {
-                    return Ok(Playable::File(path));
+                    return Ok(self.file(path));
                 }
             }
             _ => {}
@@ -29,7 +40,7 @@ impl Resolver for LibraryResolver {
             .as_ref()
             .and_then(|library| library.find(track))
         {
-            return Ok(Playable::File(path));
+            return Ok(self.file(path));
         }
         Err(match track.source.as_str() {
             "local" => format!("not on this device: {}", track.id),

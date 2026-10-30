@@ -3,6 +3,8 @@
   import { addFolder } from '../../folders';
   import { installTheme } from '../../layout/install';
   import { moveItem } from '../../reorder';
+  import type { ReplayGainMode } from '../../protocol/ReplayGainMode';
+  import type { ReplayGainSettings } from '../../protocol/ReplayGainSettings';
   import type { Settings } from '../../settings.svelte';
   import type { SettingsGroup } from '../../settingsView.svelte';
   import { SYSTEM_THEMES, THEMES, themeById } from '../../themes';
@@ -51,6 +53,20 @@
 
   function setDecoders(order: string[]) {
     engine.run({ type: 'set_decoders', order });
+  }
+
+  const REPLAY_GAIN_MODES: [ReplayGainMode, string][] = [
+    ['off', 'Off'],
+    ['track', 'Track'],
+    ['album', 'Album'],
+    ['auto', 'Auto'],
+  ];
+  /** The ReplayGain sliders go this many dB either way. */
+  const GAIN_RANGE = 15;
+  const formatDb = (db: number) => `${db > 0 ? '+' : ''}${db} dB`;
+
+  function setReplayGain(change: Partial<ReplayGainSettings>) {
+    if (engine.player) engine.run({ type: 'set_replay_gain', settings: { ...engine.player.replay_gain, ...change } });
   }
 
   function toggleDecoder(name: string, on: boolean) {
@@ -336,6 +352,38 @@
               {/if}
             </select>
           </div>
+
+          {@const rg = player.replay_gain}
+          <div class="row">
+            <span class="label">ReplayGain</span>
+            <div class="segmented" role="radiogroup" aria-label="ReplayGain">
+              {#each REPLAY_GAIN_MODES as [mode, text] (mode)}
+                <button
+                  role="radio"
+                  aria-checked={rg.mode === mode}
+                  class:active={rg.mode === mode}
+                  onclick={() => setReplayGain({ mode })}
+                >
+                  {text}
+                </button>
+              {/each}
+            </div>
+            <p class="status">Auto uses album gain when playing an album, track gain otherwise.</p>
+          </div>
+          {#if rg.mode !== 'off'}
+            {@render gainSlider('Preamp', 'preamp_db', rg.preamp_db)}
+            {@render gainSlider('Files without gain tags', 'untagged_db', rg.untagged_db)}
+            <div class="row">
+              <label class="decoder">
+                <input
+                  type="checkbox"
+                  checked={rg.prevent_clipping}
+                  onchange={(e) => setReplayGain({ prevent_clipping: e.currentTarget.checked })}
+                />
+                Prevent clipping (lower the gain to keep the tagged peak)
+              </label>
+            </div>
+          {/if}
         {/if}
 
         {#if decoders.length}
@@ -391,6 +439,22 @@
     <Scrollbar target={panel} />
   </div>
 </section>
+
+{#snippet gainSlider(label: string, key: 'preamp_db' | 'untagged_db', db: number)}
+  <div class="row">
+    <span class="label">{label}</span>
+    <div class="scale">
+      <Slider
+        {label}
+        value={db + GAIN_RANGE}
+        max={GAIN_RANGE * 2}
+        valueText={formatDb(db)}
+        onchange={(v) => setReplayGain({ [key]: Math.round(v - GAIN_RANGE) })}
+      />
+      <span class="status">{formatDb(db)}</span>
+    </div>
+  </div>
+{/snippet}
 
 {#snippet decoderLabel(decoder: { name: string; on: boolean })}
   <label class="decoder">

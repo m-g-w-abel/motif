@@ -298,13 +298,15 @@ fn store(
     // stale and any problem noted before.
     tx.execute(
         "INSERT INTO tracks (path, size, mtime, title, artist, album, album_artist, track_no, disc_no, year, genre,
-             duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, art, added)
+             duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, art,
+             rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak, added)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-             CAST(strftime('%s', 'now') AS INTEGER))
+             ?21, ?22, ?23, ?24, CAST(strftime('%s', 'now') AS INTEGER))
          ON CONFLICT (path) DO UPDATE SET size = ?2, mtime = ?3, title = ?4, artist = ?5, album = ?6,
              album_artist = ?7, track_no = ?8, disc_no = ?9, year = ?10, genre = ?11, duration_ms = ?12,
              codec = ?13, sample_rate = ?14, bit_depth = ?15, channels = ?16, bitrate = ?17,
-             musicbrainz_recording = ?18, isrc = ?19, art = ?20, audio_hash = NULL, missing = 0, problem = NULL",
+             musicbrainz_recording = ?18, isrc = ?19, art = ?20, rg_track_gain = ?21, rg_track_peak = ?22,
+             rg_album_gain = ?23, rg_album_peak = ?24, audio_hash = NULL, missing = 0, problem = NULL",
         params![
             path_str,
             size,
@@ -326,6 +328,10 @@ fn store(
             t.musicbrainz_recording,
             t.isrc,
             art,
+            t.replay_gain.track_gain,
+            t.replay_gain.track_peak,
+            t.replay_gain.album_gain,
+            t.replay_gain.album_peak,
         ],
     )?;
     Ok(())

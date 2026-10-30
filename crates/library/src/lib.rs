@@ -397,6 +397,30 @@ impl Library {
         path.is_file().then_some(path)
     }
 
+    /// The ReplayGain values stored for the file at `path` (all `None` if
+    /// it isn't in the library or has no gain tags).
+    // #84: coalesce measured loudness here for files without tags.
+    pub fn replay_gain(&self, path: &Path) -> protocol::ReplayGain {
+        let Some(path) = path.to_str() else {
+            return Default::default();
+        };
+        self.db()
+            .query_row(
+                "SELECT rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak
+                 FROM tracks WHERE path = ?1",
+                [path],
+                |r| {
+                    Ok(protocol::ReplayGain {
+                        track_gain: r.get(0)?,
+                        track_peak: r.get(1)?,
+                        album_gain: r.get(2)?,
+                        album_peak: r.get(3)?,
+                    })
+                },
+            )
+            .unwrap_or_default()
+    }
+
     /// The seek bar waveform of the track at `path` (see [`waveform::compute`]),
     /// cached by audio hash or decoded now, which takes a moment for a long
     /// file. The database isn't locked meanwhile.

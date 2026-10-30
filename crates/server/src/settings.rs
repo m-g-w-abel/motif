@@ -1,10 +1,11 @@
-//! Engine settings that outlive a restart (decoder order, volume, repeat),
+//! Engine settings that outlive a restart (decoder order, volume, repeat,
+//! ReplayGain),
 //! kept in a small JSON file next to the library.
 
 use std::path::PathBuf;
 
 use engine::Engine;
-use protocol::{Command, PlayerState, RepeatMode};
+use protocol::{Command, PlayerState, RepeatMode, ReplayGainSettings};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -14,6 +15,8 @@ struct Saved {
     repeat: RepeatMode,
     #[serde(default)]
     output: Option<String>,
+    #[serde(default)]
+    replay_gain: ReplayGainSettings,
 }
 
 impl Saved {
@@ -23,6 +26,7 @@ impl Saved {
             volume: state.volume,
             repeat: state.repeat,
             output: state.output.clone(),
+            replay_gain: state.replay_gain,
         }
     }
 }
@@ -43,6 +47,9 @@ pub async fn keep(engine: Engine, file: PathBuf) {
             Command::SetRepeat { mode: saved.repeat },
             Command::SetOutput {
                 device: saved.output,
+            },
+            Command::SetReplayGain {
+                settings: saved.replay_gain,
             },
         ] {
             if let Err(err) = engine.send(command).await {
