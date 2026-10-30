@@ -86,7 +86,7 @@ impl Output {
         if self.audio.is_none() {
             let device = player.output().map(str::to_string);
             match Audio::open(device.clone(), self.events.clone(), self.plugins.clone()) {
-                Ok(audio) => {
+                Ok(mut audio) => {
                     audio.set_tap(self.tap);
                     self.audio = Some(audio);
                     self.device = device;
@@ -193,7 +193,7 @@ impl Output {
     /// Starts or stops collecting audio for [`Output::bands`].
     pub fn set_tap(&mut self, on: bool) {
         self.tap = on;
-        if let Some(audio) = &self.audio {
+        if let Some(audio) = &mut self.audio {
             audio.set_tap(on);
         }
     }

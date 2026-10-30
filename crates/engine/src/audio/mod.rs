@@ -217,7 +217,15 @@ impl Audio {
     }
 
     /// Starts or stops copying played audio for [`Audio::bands`].
-    pub fn set_tap(&self, on: bool) {
+    pub fn set_tap(&mut self, on: bool) {
+        // Drop what was left from the last time the tap was on, so the first
+        // frame after turning it back on shows only fresh audio.
+        if on && !self.shared.tap.load(Ordering::Relaxed) {
+            if let Ok(stale) = self.tap.read_chunk(self.tap.slots()) {
+                stale.commit_all();
+            }
+            self.analyser.reset();
+        }
         self.shared.tap.store(on, Ordering::Relaxed);
     }
 

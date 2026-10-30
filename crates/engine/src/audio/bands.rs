@@ -74,6 +74,11 @@ impl Analyser {
         }
     }
 
+    /// Forgets all samples, as if only silence had been pushed.
+    pub fn reset(&mut self) {
+        self.history.fill(0.0);
+    }
+
     /// Band levels of the latest samples, `0` (silence, or `RANGE_DB` down) to `255` (full scale).
     pub fn bands(&mut self) -> Vec<u8> {
         for ((input, sample), w) in self.input.iter_mut().zip(&self.history).zip(&self.window) {
@@ -132,6 +137,14 @@ mod tests {
         for _ in 0..10 {
             analyser.push(&vec![0.0; 512], 2);
         }
+        assert_eq!(analyser.bands(), vec![0; BANDS]);
+    }
+
+    #[test]
+    fn reset_forgets_old_samples() {
+        let mut analyser = Analyser::new(48_000);
+        analyser.push(&sine(1000.0, 48_000, 4096), 2);
+        analyser.reset();
         assert_eq!(analyser.bands(), vec![0; BANDS]);
     }
 }
