@@ -52,7 +52,8 @@ These edits never change the layout file, built-ins included. Each device
 keeps them per layout, and separately for the phone variant (below), keyed by
 where each widget sits in the file, e.g. `split-row/1.split-column/0.artwork`.
 When the file changes so that a path no longer matches, that edit is dropped.
-**⋯ → Reset layout** discards them. Sizes and order are all they cover;
+**⋯ → Reset layout** discards them, and **⋯ → Save as…** writes the layout
+with them as a new layout file. Sizes and order are all they cover;
 adding or removing widgets is done in the file.
 
 ## Format
@@ -166,9 +167,6 @@ shows until something is selected. The `artwork` widget follows the same selecti
 |---|---|
 | `style` | `list`: title, artist and details stacked (default). `table`: a field/value table. `hero`: large type, as on the now-playing screen |
 
-Codec details (bitrate, sample rate, bit depth) are added once real playback
-lands in phase 1.
-
 ### `controls`
 
 Seek bar with times, and the transport centred between repeat and volume, as
@@ -198,5 +196,3 @@ the artwork: `visualiser size=120`.
 
 These will be added without breaking existing files:
 - more widgets: lyrics, spectrogram, waveform, stats
-- column sorting, saved per track list
-- **Save as…**: writing in-place edits back into a layout file
