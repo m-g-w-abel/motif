@@ -24,10 +24,13 @@ use axum::{
 use engine::Engine;
 use futures_util::{SinkExt, StreamExt};
 use library::Library;
-use protocol::{ClientMessage, Event, LibraryQuery, PROTOCOL_VERSION, QueryResult, ServerMessage};
+use protocol::{
+    ClientMessage, Event, IntegrationSettings, LibraryQuery, PROTOCOL_VERSION, QueryResult,
+    ServerMessage,
+};
 use tokio::{
     net::TcpListener,
-    sync::{Semaphore, mpsc},
+    sync::{Semaphore, mpsc, watch},
 };
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -38,12 +41,15 @@ pub struct Config {
     /// Built web UI (`apps/ui/dist`). `None` serves only `/ws`.
     pub ui_dir: Option<PathBuf>,
     pub library: Option<Library>,
+    /// The host's integration settings, which clients read and replace.
+    pub integrations: watch::Sender<IntegrationSettings>,
 }
 
 #[derive(Clone)]
 struct AppState {
     engine: Engine,
     library: Option<Library>,
+    integrations: watch::Sender<IntegrationSettings>,
     /// Limits artwork requests in flight. Each can hold a whole image or a
     /// decoded one (tens of MB), and a grid asks for hundreds at once.
     art_slots: Arc<Semaphore>,
@@ -61,11 +67,16 @@ pub async fn bind(
 ) -> std::io::Result<(SocketAddr, impl Future<Output = std::io::Result<()>>)> {
     let listener = TcpListener::bind(config.addr).await?;
     let addr = listener.local_addr()?;
-    let app = router(engine, config.library, config.ui_dir);
+    let app = router(engine, config.library, config.integrations, config.ui_dir);
     Ok((addr, async move { axum::serve(listener, app).await }))
 }
 
-pub fn router(engine: Engine, library: Option<Library>, ui_dir: Option<PathBuf>) -> Router {
+pub fn router(
+    engine: Engine,
+    library: Option<Library>,
+    integrations: watch::Sender<IntegrationSettings>,
+    ui_dir: Option<PathBuf>,
+) -> Router {
     let router = Router::new()
         .route("/ws", get(upgrade))
         .route("/art/{key}", get(art))
@@ -73,6 +84,7 @@ pub fn router(engine: Engine, library: Option<Library>, ui_dir: Option<PathBuf>)
         .with_state(AppState {
             engine,
             library,
+            integrations,
             art_slots: Arc::new(Semaphore::new(ART_SLOTS)),
         });
     match ui_dir {
@@ -263,6 +275,8 @@ async fn session(socket: WebSocket, state: AppState) {
     states.mark_changed();
     queue.mark_changed();
     context.mark_changed();
+    let mut integrations = state.integrations.subscribe();
+    integrations.mark_changed();
     // Without a library, a channel that never changes stands in.
     let (no_library, mut library) = tokio::sync::watch::channel(Default::default());
     if let Some(lib) = &state.library {
@@ -284,6 +298,7 @@ async fn session(socket: WebSocket, state: AppState) {
                 Ok(()) = queue.changed() => Event::Queue { items: queue.borrow_and_update().clone() },
                 Ok(()) = states.changed() => Event::State { state: states.borrow_and_update().clone() },
                 Ok(()) = library.changed() => Event::Library { status: library.borrow_and_update().clone() },
+                Ok(()) = integrations.changed() => Event::Integrations { settings: integrations.borrow_and_update().clone() },
                 else => break,
             };
             if event_tx.send(ServerMessage::Event { event }).await.is_err() {
@@ -339,6 +354,18 @@ async fn session(socket: WebSocket, state: AppState) {
                 }
                 ServerMessage::Response { id, error: None }
             }
+            Ok(ClientMessage::SetIntegrations {
+                id,
+                integrations: mut new,
+            }) => {
+                state.integrations.send_if_modified(|settings| {
+                    new.secrets_unencrypted = settings.secrets_unencrypted;
+                    let changed = *settings != new;
+                    *settings = new;
+                    changed
+                });
+                ServerMessage::Response { id, error: None }
+            }
             Err(err) => {
                 tracing::debug!(%err, "malformed client message");
                 ServerMessage::Response {
@@ -385,6 +412,7 @@ mod tests {
             addr: "127.0.0.1:0".parse().unwrap(),
             ui_dir: None,
             library: None,
+            integrations: watch::channel(Default::default()).0,
         };
         let (addr, serve) = bind(engine, config).await.unwrap();
         tokio::spawn(serve);
@@ -439,7 +467,7 @@ mod tests {
                     event: Event::State { state },
                 } => playing = state.status == PlaybackStatus::Playing,
                 ServerMessage::Event {
-                    event: Event::Queue { .. } | Event::Context { .. },
+                    event: Event::Queue { .. } | Event::Context { .. } | Event::Integrations { .. },
                 } => {}
                 other => panic!("unexpected {other:?}"),
             }
@@ -452,6 +480,7 @@ mod tests {
             addr: "127.0.0.1:0".parse().unwrap(),
             ui_dir: None,
             library: None,
+            integrations: watch::channel(Default::default()).0,
         };
         let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
             .await
@@ -469,6 +498,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn integration_settings_reach_every_client() {
+        let (integrations, _) = watch::channel(IntegrationSettings::default());
+        let config = Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui_dir: None,
+            library: None,
+            integrations,
+        };
+        let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
+            .await
+            .unwrap();
+        tokio::spawn(serve);
+        let url = format!("ws://{addr}/ws");
+        let (mut a, _) = connect_async(&url).await.unwrap();
+        let (mut b, _) = connect_async(&url).await.unwrap();
+        async fn settings(
+            ws: &mut (
+                     impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+                     + Unpin
+                 ),
+        ) -> IntegrationSettings {
+            loop {
+                if let ServerMessage::Event {
+                    event: Event::Integrations { settings },
+                } = next_message(ws).await
+                {
+                    return settings;
+                }
+            }
+        }
+        assert!(settings(&mut b).await.lrclib);
+        let new = IntegrationSettings {
+            lrclib: false,
+            secrets_unencrypted: true,
+        };
+        let json = serde_json::to_string(&ClientMessage::SetIntegrations {
+            id: 1,
+            integrations: new,
+        })
+        .unwrap();
+        a.send(WsMessage::Text(json.into())).await.unwrap();
+        let got = settings(&mut b).await;
+        assert!(!got.lrclib);
+        assert!(
+            !got.secrets_unencrypted,
+            "only the host says where secrets are"
+        );
     }
 
     #[test]

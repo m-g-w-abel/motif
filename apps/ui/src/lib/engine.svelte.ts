@@ -1,6 +1,7 @@
 import { untrack } from 'svelte';
 import type { ClientMessage } from './protocol/ClientMessage';
 import type { Command } from './protocol/Command';
+import type { IntegrationSettings } from './protocol/IntegrationSettings';
 import type { LibraryQuery } from './protocol/LibraryQuery';
 import type { LibraryStatus } from './protocol/LibraryStatus';
 import type { QueryResult } from './protocol/QueryResult';
@@ -36,6 +37,8 @@ export class EngineClient {
   context = $state.raw<{ offset: number; items: QueueItem[] }>({ offset: 0, items: [] });
   /** `null` until the engine reports it; engines without a library never do. */
   library = $state<LibraryStatus | null>(null);
+  /** The host's integration settings; `null` until it sends them. */
+  integrations = $state<IntegrationSettings | null>(null);
   /** Where the engine serves HTTP (artwork), e.g. `http://127.0.0.1:7700`. */
   httpBase = $state('');
   /** Engine clock minus ours, so snapshot times (`sampled_at_ms`) can be read on our clock. */
@@ -69,6 +72,19 @@ export class EngineClient {
     const message: ClientMessage = { id, command };
     socket.send(JSON.stringify(message));
     return new Promise((resolve, reject) => this.#pending.set(id, { resolve, reject }));
+  }
+
+  /** Replaces the host's integration settings (all of them); shows failures in the UI. */
+  setIntegrations(integrations: IntegrationSettings): void {
+    const socket = this.#socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      this.error = 'not connected to the engine';
+      return;
+    }
+    const id = this.#nextId++;
+    const message: ClientMessage = { id, integrations };
+    socket.send(JSON.stringify(message));
+    new Promise<void>((resolve, reject) => this.#pending.set(id, { resolve, reject })).catch((e: Error) => (this.error = e.message));
   }
 
   /** Asks the library a question. */
@@ -194,6 +210,8 @@ export class EngineClient {
           this.context = { offset: message.event.offset, items: message.event.items };
         } else if (message.event.type === 'library') {
           this.library = message.event.status;
+        } else if (message.event.type === 'integrations') {
+          this.integrations = message.event.settings;
         } else {
           for (const listener of this.#bands) listener(message.event.bands);
         }

@@ -31,6 +31,12 @@ pub enum ClientMessage {
         id: u32,
         bands: bool,
     },
+    /// Replaces the host's [`IntegrationSettings`]; every client then gets
+    /// [`Event::Integrations`].
+    SetIntegrations {
+        id: u32,
+        integrations: IntegrationSettings,
+    },
 }
 
 /// A message sent from the engine to a client.
@@ -222,6 +228,33 @@ pub enum Event {
     Bands {
         bands: Vec<u8>,
     },
+    /// The host's integration settings, on connecting and whenever they change.
+    Integrations {
+        settings: IntegrationSettings,
+    },
+}
+
+/// Settings for integrations with outside services (lyrics, scrobbling…),
+/// kept and obeyed by the host and always sent whole. Secrets (tokens) stay
+/// on the host; at most who is signed in goes over the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct IntegrationSettings {
+    /// Look up lyrics on LRCLIB.
+    pub lrclib: bool,
+    /// Set by the host, ignored from clients: no OS keyring was found, so
+    /// secrets are kept unencrypted in a file only this user can read.
+    pub secrets_unencrypted: bool,
+}
+
+impl Default for IntegrationSettings {
+    fn default() -> Self {
+        Self {
+            lrclib: true,
+            secrets_unencrypted: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]

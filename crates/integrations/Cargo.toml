@@ -10,6 +10,9 @@ license.workspace = true
 engine.workspace = true
 library.workspace = true
 protocol.workspace = true
+serde_json.workspace = true
+# Without a native store (Android) it falls back to a mock, which `settings` never uses there.
+keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 souvlaki = "0.8.3"
 tokio.workspace = true
 tracing.workspace = true
