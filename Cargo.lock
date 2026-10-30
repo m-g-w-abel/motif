@@ -1037,6 +1037,7 @@ dependencies = [
  "cpal",
  "opus",
  "protocol",
+ "realfft",
  "rtrb",
  "rubato",
  "symphonia",

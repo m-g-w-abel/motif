@@ -3,8 +3,8 @@ import type { Command } from "./Command";
 import type { LibraryQuery } from "./LibraryQuery";
 
 /**
- * A message sent from a client: a command for the engine, or a query for
- * the library. `id` is echoed back in the matching
+ * A message sent from a client: a command for the engine, a query for the
+ * library, or a change of subscription. `id` is echoed back in the matching
  * [`ServerMessage::Response`] or [`ServerMessage::QueryResult`].
  */
-export type ClientMessage = { id: number, command: Command, } | { id: number, query: LibraryQuery, };
+export type ClientMessage = { id: number, command: Command, } | { id: number, query: LibraryQuery, } | { id: number, bands: boolean, };

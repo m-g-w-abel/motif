@@ -2,9 +2,9 @@
 
 A layout arranges the **music area**: the part of the window that shows what
 you're browsing (the library now, saved playlists later). The app has one set
-of widgets (track list, album gallery, artwork, track info, controls, queue),
-and a layout only chooses which of them appear there, where, and how each is
-configured. The now-playing screen is built from the same widgets.
+of widgets (track list, album gallery, artwork, track info, controls, queue,
+visualiser), and a layout only chooses which of them appear there, where, and
+how each is configured. The now-playing screen is built from the same widgets.
 
 Layouts never change the rest of the app. The left panel and the player bar
 stay put, and appearance (theme, accent colour, density, bar or floating
@@ -25,7 +25,7 @@ use a plain list while the library shows a gallery).
 |---|---|
 | Tracks | Album-grouped track list |
 | Tracks + art | Track list with artwork and track details beside it |
-| Details | Columns, artwork and a full metadata table |
+| Details | Columns, artwork, a visualiser and a full metadata table |
 | Tracks + gallery | Track list beside a cover gallery |
 | Gallery | Album covers only |
 
@@ -186,9 +186,17 @@ tracks at a time). Handy beside a library list.
 |---|---|
 | `collapsible` | `#true` adds a header that folds the list away (default `#false`) |
 
+### `visualiser`
+
+Spectrum bars of what is playing (32 bands, 40 Hz to 16 kHz, in the accent
+colour), as large as the space allows. It moves only while playing, on screen
+and in a visible window; otherwise it is blank and the engine does no analysis.
+It shows the music as it is played, whatever the volume. E.g. a strip under
+the artwork: `visualiser size=120`.
+
 ## Planned
 
 These will be added without breaking existing files:
-- more widgets: lyrics, visualiser, spectrogram, waveform, stats
+- more widgets: lyrics, spectrogram, waveform, stats
 - column sorting, saved per track list
 - **Save as…**: writing in-place edits back into a layout file

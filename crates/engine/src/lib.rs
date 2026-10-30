@@ -50,6 +50,7 @@ pub struct Engine {
     state: watch::Receiver<PlayerState>,
     queue: watch::Receiver<Vec<QueueItem>>,
     context: watch::Receiver<ContextWindow>,
+    bands: watch::Sender<Vec<u8>>,
 }
 
 /// The part of the context published to clients (see [`Player::context_window`]).
@@ -61,6 +62,8 @@ pub struct ContextWindow {
 
 /// How often the engine follows the audio output (track changes, drift).
 const TICK: Duration = Duration::from_millis(100);
+/// How often visualiser bands are published while anyone subscribes.
+const BANDS_TICK: Duration = Duration::from_millis(33);
 
 impl Engine {
     /// Starts the engine on the current Tokio runtime. `resolver` decides what
@@ -72,6 +75,8 @@ impl Engine {
         let (state_tx, state) = watch::channel(snapshot(&player));
         let (queue_tx, queue) = watch::channel(Vec::new());
         let (context_tx, context) = watch::channel(ContextWindow::default());
+        let (bands, _) = watch::channel(Vec::new());
+        let bands_tx = bands.clone();
 
         let (audio_tx, mut audio_events) = mpsc::unbounded_channel();
         let mut output = Output::new(audio_tx);
@@ -79,6 +84,9 @@ impl Engine {
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(TICK);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut bands_tick = tokio::time::interval(BANDS_TICK);
+            bands_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut tapping = false;
             loop {
                 let now = Instant::now();
                 let changed = tokio::select! {
@@ -94,7 +102,22 @@ impl Engine {
                         output.handle(event, &mut player, now);
                         true
                     }
-                    _ = tick.tick() => player.tick(now) | output.poll(&mut player, now),
+                    _ = tick.tick() => {
+                        // Subscribers are noticed within a tick; the tap costs nothing without them.
+                        let wanted = bands_tx.receiver_count() > 0;
+                        if wanted != tapping {
+                            tapping = wanted;
+                            output.set_tap(wanted);
+                            bands_tick.reset();
+                        }
+                        player.tick(now) | output.poll(&mut player, now)
+                    }
+                    _ = bands_tick.tick(), if tapping => {
+                        if let Some(bands) = output.bands() {
+                            bands_tx.send_replace(bands);
+                        }
+                        false
+                    }
                 };
                 if changed {
                     // Repeat while a failure moves playback on to another entry;
@@ -139,6 +162,7 @@ impl Engine {
             state,
             queue,
             context,
+            bands,
         }
     }
 
@@ -170,6 +194,13 @@ impl Engine {
     /// A receiver that is notified when the published part of the context changes.
     pub fn subscribe_context(&self) -> watch::Receiver<ContextWindow> {
         self.context.clone()
+    }
+
+    /// Spectrum bands of what is playing (see [`audio::bands`]), about 30
+    /// times a second while playing. They are only computed while a receiver
+    /// is alive, so drop it when the visualiser hides.
+    pub fn subscribe_bands(&self) -> watch::Receiver<Vec<u8>> {
+        self.bands.subscribe()
     }
 }
 

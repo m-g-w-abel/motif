@@ -19,6 +19,7 @@
   import Queue from '../widgets/Queue.svelte';
   import TrackInfo from '../widgets/TrackInfo.svelte';
   import TrackList from '../widgets/TrackList.svelte';
+  import Visualiser from '../widgets/Visualiser.svelte';
   import Self from './LayoutNode.svelte';
 
   /**
@@ -213,6 +214,8 @@
     <div class="controls"><Controls /></div>
   {:else if node.panel === 'queue'}
     <Queue collapsible={node.collapsible} />
+  {:else if node.panel === 'visualiser'}
+    <Visualiser />
   {/if}
   {#if layout.arranging}
     <div class="handle" style:top="{8 + stack * 36}px">

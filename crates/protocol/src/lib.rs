@@ -10,15 +10,27 @@ use ts_rs::TS;
 /// Bumped on any incompatible change to the types below.
 pub const PROTOCOL_VERSION: u32 = 7;
 
-/// A message sent from a client: a command for the engine, or a query for
-/// the library. `id` is echoed back in the matching
+/// A message sent from a client: a command for the engine, a query for the
+/// library, or a change of subscription. `id` is echoed back in the matching
 /// [`ServerMessage::Response`] or [`ServerMessage::QueryResult`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(untagged)]
 #[ts(export)]
 pub enum ClientMessage {
-    Command { id: u32, command: Command },
-    Query { id: u32, query: LibraryQuery },
+    Command {
+        id: u32,
+        command: Command,
+    },
+    Query {
+        id: u32,
+        query: LibraryQuery,
+    },
+    /// Starts (`true`) or stops [`Event::Bands`] for this connection. Off
+    /// when connecting; the engine only analyses audio while someone listens.
+    Subscribe {
+        id: u32,
+        bands: bool,
+    },
 }
 
 /// A message sent from the engine to a client.
@@ -153,6 +165,13 @@ pub enum Event {
     /// The library changed: scanning progress, or new contents (`revision`).
     Library {
         status: LibraryStatus,
+    },
+    /// Spectrum of what is playing, for visualisers: 32 log-spaced bands
+    /// from 40 Hz to 16 kHz, each `0` (60 dB down or silent) to `255` (full
+    /// scale), before the volume is applied. About 30 a second while playing,
+    /// only after [`ClientMessage::Subscribe`].
+    Bands {
+        bands: Vec<u8>,
     },
 }
 

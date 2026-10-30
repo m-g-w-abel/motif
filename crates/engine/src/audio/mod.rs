@@ -1,8 +1,11 @@
 //! Audio output. A decode thread runs decoders through the [`pipeline`] into a
 //! lock-free ring buffer, and the device callback only copies from it, so a
 //! slow disk or a busy CPU never blocks the audio device. Position comes from
-//! the frames the callback has actually played.
+//! the frames the callback has actually played. While a visualiser listens,
+//! the callback also copies what it plays into a second ring buffer for
+//! [`bands`].
 
+pub mod bands;
 pub mod decoder;
 pub mod pipeline;
 
@@ -24,6 +27,7 @@ use cpal::{
 use rtrb::{Consumer, Producer, RingBuffer};
 use tokio::sync::mpsc::UnboundedSender;
 
+use bands::Analyser;
 use decoder::{Decoder, Plugin};
 use pipeline::{Playhead, Stream, Timeline};
 
@@ -52,6 +56,8 @@ struct Shared {
     /// Set by the decode thread to have the callback discard buffered audio;
     /// the callback clears it once done.
     flush: AtomicBool,
+    /// The callback copies what it plays into the tap buffer.
+    tap: AtomicBool,
 }
 
 enum Command {
@@ -77,6 +83,9 @@ pub struct Audio {
     shared: Arc<Shared>,
     timeline: Arc<Mutex<Timeline>>,
     next_token: u64,
+    tap: Consumer<f32>,
+    channels: usize,
+    analyser: Analyser,
     /// Dropping this stops the output thread and closes the device.
     _stop: mpsc::Sender<()>,
 }
@@ -96,6 +105,7 @@ impl Audio {
             underruns: AtomicU64::new(0),
             armed: AtomicBool::new(false),
             flush: AtomicBool::new(false),
+            tap: AtomicBool::new(false),
         });
         let (ready_tx, ready_rx) = mpsc::channel();
         let (stop, stop_rx) = mpsc::channel::<()>();
@@ -106,8 +116,8 @@ impl Audio {
                 .name("audio-output".into())
                 .spawn(
                     move || match open_stream(device.as_deref(), shared, events) {
-                        Ok((stream, producer, rate, channels)) => {
-                            let _ = ready_tx.send(Ok((producer, rate, channels)));
+                        Ok((stream, producer, tap, rate, channels)) => {
+                            let _ = ready_tx.send(Ok((producer, tap, rate, channels)));
                             // Keep the stream alive until the handle is dropped.
                             let _ = stop_rx.recv();
                             drop(stream);
@@ -119,7 +129,7 @@ impl Audio {
                 )
                 .map_err(|e| e.to_string())?;
         }
-        let (producer, rate, channels) = ready_rx.recv().map_err(|e| e.to_string())??;
+        let (producer, tap, rate, channels) = ready_rx.recv().map_err(|e| e.to_string())??;
         tracing::info!(rate, channels, "audio output open");
 
         let timeline = Arc::new(Mutex::new(Timeline::new(rate)));
@@ -143,6 +153,9 @@ impl Audio {
             shared,
             timeline,
             next_token: 1,
+            tap,
+            channels,
+            analyser: Analyser::new(rate),
             _stop: stop,
         })
     }
@@ -203,13 +216,32 @@ impl Audio {
         self.timeline.lock().ok()?.playhead(played)
     }
 
+    /// Starts or stops copying played audio for [`Audio::bands`].
+    pub fn set_tap(&self, on: bool) {
+        self.shared.tap.store(on, Ordering::Relaxed);
+    }
+
+    /// Spectrum bands of what was played since the last call, or `None` if
+    /// nothing was (paused, stopped, or the tap is off).
+    pub fn bands(&mut self) -> Option<Vec<u8>> {
+        let chunk = self.tap.read_chunk(self.tap.slots()).ok()?;
+        if chunk.is_empty() {
+            return None;
+        }
+        let (a, b) = chunk.as_slices();
+        self.analyser.push(a, self.channels);
+        self.analyser.push(b, self.channels);
+        chunk.commit_all();
+        Some(self.analyser.bands())
+    }
+
     fn token(&mut self) -> u64 {
         self.next_token += 1;
         self.next_token
     }
 }
 
-type Opened = (cpal::Stream, Producer<f32>, u32, usize);
+type Opened = (cpal::Stream, Producer<f32>, Consumer<f32>, u32, usize);
 
 /// The output devices worth offering. ALSA lists every plugin and alias
 /// for every card; only the sound servers, the default and one entry per
@@ -262,22 +294,25 @@ fn open_stream(
     // Half a second: enough to ride out disk hiccups, short enough that
     // queue changes reach the speakers quickly.
     let (producer, consumer) = RingBuffer::new(rate as usize * channels / 2);
+    // A quarter second: the engine reads it 30 times a second.
+    let (tap, tapped) = RingBuffer::new(rate as usize * channels / 4);
     let config = supported.config();
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build::<f32>(&device, &config, consumer, shared, events),
-        SampleFormat::I16 => build::<i16>(&device, &config, consumer, shared, events),
-        SampleFormat::U16 => build::<u16>(&device, &config, consumer, shared, events),
-        SampleFormat::I32 => build::<i32>(&device, &config, consumer, shared, events),
+        SampleFormat::F32 => build::<f32>(&device, &config, consumer, tap, shared, events),
+        SampleFormat::I16 => build::<i16>(&device, &config, consumer, tap, shared, events),
+        SampleFormat::U16 => build::<u16>(&device, &config, consumer, tap, shared, events),
+        SampleFormat::I32 => build::<i32>(&device, &config, consumer, tap, shared, events),
         other => Err(format!("unsupported output sample format {other}")),
     }?;
     stream.play().map_err(|e| e.to_string())?;
-    Ok((stream, producer, rate, channels))
+    Ok((stream, producer, tapped, rate, channels))
 }
 
 fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     mut consumer: Consumer<f32>,
+    mut tap: Producer<f32>,
     shared: Arc<Shared>,
     events: UnboundedSender<AudioEvent>,
 ) -> Result<cpal::Stream, String> {
@@ -305,6 +340,14 @@ fn build<T: SizedSample + FromSample<f32>>(
                 let take = available.min(data.len());
                 if let Ok(chunk) = consumer.read_chunk(take) {
                     let (a, b) = chunk.as_slices();
+                    // Before the gain, so a visualiser still moves at volume 0.
+                    // Wait-free and allocation-free; whole frames, dropped if the engine falls behind.
+                    if shared.tap.load(Ordering::Relaxed) {
+                        let room = tap.slots() / channels * channels;
+                        if let Ok(copy) = tap.write_chunk_uninit(room.min(take)) {
+                            copy.fill_from_iter(a.iter().chain(b).copied());
+                        }
+                    }
                     for (i, (out, sample)) in data.iter_mut().zip(a.iter().chain(b)).enumerate() {
                         if i % channels == 0 {
                             gain += (target - gain).clamp(-ramp, ramp);

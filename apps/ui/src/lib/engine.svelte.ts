@@ -51,6 +51,8 @@ export class EngineClient {
   #queries = new Map<number, { resolve: (r: QueryResult) => void; reject: (e: Error) => void }>();
   #backoff = 250;
   #closed = false;
+  /** Visualisers listening for spectrum bands; the engine sends them only while there are any. */
+  #bands = new Set<(bands: number[]) => void>();
 
   constructor() {
     void this.#connect();
@@ -80,6 +82,26 @@ export class EngineClient {
     const message: ClientMessage = { id, query };
     socket.send(JSON.stringify(message));
     return new Promise((resolve, reject) => this.#queries.set(id, { resolve, reject }));
+  }
+
+  /**
+   * Calls `listener` with each spectrum frame (32 bands, 0–255, about 30 a
+   * second while playing). Returns the unsubscribe function; the engine stops
+   * analysing once nobody listens.
+   */
+  onBands(listener: (bands: number[]) => void): () => void {
+    this.#bands.add(listener);
+    if (this.#bands.size === 1) this.#subscribe(true);
+    return () => {
+      if (this.#bands.delete(listener) && this.#bands.size === 0) this.#subscribe(false);
+    };
+  }
+
+  /** Not awaited: a lost reply only means the connection dropped, and reconnecting subscribes again. */
+  #subscribe(bands: boolean) {
+    if (this.#socket?.readyState !== WebSocket.OPEN) return;
+    const message: ClientMessage = { id: this.#nextId++, bands };
+    this.#socket.send(JSON.stringify(message));
   }
 
   /** Like {@link send}, but shows failures in the UI instead of throwing. */
@@ -119,6 +141,7 @@ export class EngineClient {
       this.status = 'open';
       this.error = null;
       this.#backoff = 250;
+      if (this.#bands.size) this.#subscribe(true);
     };
     socket.onmessage = (e) => this.#handle(JSON.parse(e.data) as ServerMessage);
     socket.onclose = () => {
@@ -169,8 +192,10 @@ export class EngineClient {
           this.queue = message.event.items;
         } else if (message.event.type === 'context') {
           this.context = { offset: message.event.offset, items: message.event.items };
-        } else {
+        } else if (message.event.type === 'library') {
           this.library = message.event.status;
+        } else {
+          for (const listener of this.#bands) listener(message.event.bands);
         }
         break;
     }

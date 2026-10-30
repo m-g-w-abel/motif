@@ -35,6 +35,8 @@ pub struct Output {
     /// The player's seek count when the output last followed it.
     seeks: u64,
     underruns: u64,
+    /// Whether a visualiser wants [`Output::bands`].
+    tap: bool,
 }
 
 impl Output {
@@ -48,6 +50,7 @@ impl Output {
             preloaded: None,
             seeks: 0,
             underruns: 0,
+            tap: false,
         }
     }
 
@@ -84,6 +87,7 @@ impl Output {
             let device = player.output().map(str::to_string);
             match Audio::open(device.clone(), self.events.clone(), self.plugins.clone()) {
                 Ok(audio) => {
+                    audio.set_tap(self.tap);
                     self.audio = Some(audio);
                     self.device = device;
                 }
@@ -184,6 +188,19 @@ impl Output {
             return true;
         }
         false
+    }
+
+    /// Starts or stops collecting audio for [`Output::bands`].
+    pub fn set_tap(&mut self, on: bool) {
+        self.tap = on;
+        if let Some(audio) = &self.audio {
+            audio.set_tap(on);
+        }
+    }
+
+    /// Spectrum bands of the audio played since the last call, if any.
+    pub fn bands(&mut self) -> Option<Vec<u8>> {
+        self.audio.as_mut()?.bands()
     }
 
     pub fn handle(&mut self, event: AudioEvent, player: &mut Player, now: Instant) {

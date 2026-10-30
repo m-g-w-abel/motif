@@ -292,6 +292,8 @@ async fn session(socket: WebSocket, state: AppState) {
         }
     });
 
+    // Forwards visualiser bands while subscribed; dropping it unsubscribes.
+    let mut bands: Option<tokio::task::JoinHandle<()>> = None;
     while let Some(Ok(msg)) = stream.next().await {
         let text = match msg {
             Message::Text(text) => text,
@@ -317,6 +319,26 @@ async fn session(socket: WebSocket, state: AppState) {
                 });
                 continue;
             }
+            Ok(ClientMessage::Subscribe { id, bands: on }) => {
+                if let Some(task) = bands.take() {
+                    task.abort();
+                }
+                if on {
+                    let mut rx = engine.subscribe_bands();
+                    let out_tx = out_tx.clone();
+                    bands = Some(tokio::spawn(async move {
+                        while rx.changed().await.is_ok() {
+                            let event = Event::Bands {
+                                bands: rx.borrow_and_update().clone(),
+                            };
+                            if out_tx.send(ServerMessage::Event { event }).await.is_err() {
+                                break;
+                            }
+                        }
+                    }));
+                }
+                ServerMessage::Response { id, error: None }
+            }
             Err(err) => {
                 tracing::debug!(%err, "malformed client message");
                 ServerMessage::Response {
@@ -331,6 +353,9 @@ async fn session(socket: WebSocket, state: AppState) {
     }
 
     publisher.abort();
+    if let Some(task) = bands {
+        task.abort();
+    }
     drop(out_tx);
     let _ = writer.await;
 }
@@ -417,6 +442,31 @@ mod tests {
                     event: Event::Queue { .. } | Event::Context { .. },
                 } => {}
                 other => panic!("unexpected {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn subscribing_to_bands_is_acknowledged() {
+        let config = Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui_dir: None,
+            library: None,
+        };
+        let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
+            .await
+            .unwrap();
+        tokio::spawn(serve);
+        let (mut ws, _) = connect_async(format!("ws://{addr}/ws")).await.unwrap();
+        for (id, on) in [(1, true), (2, false)] {
+            let json = serde_json::to_string(&ClientMessage::Subscribe { id, bands: on }).unwrap();
+            assert_eq!(json, format!(r#"{{"id":{id},"bands":{on}}}"#));
+            ws.send(WsMessage::Text(json.into())).await.unwrap();
+            loop {
+                if let ServerMessage::Response { id: got, error } = next_message(&mut ws).await {
+                    assert_eq!((got, error), (id, None));
+                    break;
+                }
             }
         }
     }
