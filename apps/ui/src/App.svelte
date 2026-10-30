@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, tick, type Component } from 'svelte';
+  import { onDestroy, tick, untrack, type Component } from 'svelte';
   import { setApp } from './lib/context';
   import { demoLibrary } from './lib/demo';
   import { Drawer } from './lib/drawer.svelte';
@@ -83,6 +83,19 @@
   });
 
   $effect(() => void applyDecorations(settings.current.ownDecorations));
+
+  // Waveforms for the playing track and the next two, so the seek bar has them when they play (#16).
+  $effect(() => {
+    const current = engine.current;
+    if (settings.current.seekBar !== 'waveform' || !current) return;
+    const next = engine.player?.context?.next;
+    const upcoming = [
+      ...engine.queue,
+      ...(next == null ? [] : engine.context.items.slice(Math.max(0, next - engine.context.offset))),
+    ];
+    // Untracked: the waveforms arriving mustn't rerun this.
+    untrack(() => library.prefetchWaveforms([current, ...upcoming.slice(0, 2)].map((item) => item.track)));
+  });
 
   // The playing track's art: 16px of pixels sampled from the art once
   // per track (and cached per art id), never while idle. It asks for the

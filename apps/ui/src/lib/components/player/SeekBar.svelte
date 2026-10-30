@@ -6,8 +6,14 @@
   /** `strip`: an edge-to-edge bar with no times, for the player bar. */
   let { variant = 'full' }: { variant?: 'full' | 'strip' } = $props();
 
-  const { engine, position } = getApp();
+  const { engine, position, library, settings } = getApp();
   const duration = $derived(engine.current?.track.duration_ms ?? 0);
+  // The plain bar shows until the waveform arrives, and for tracks that have none.
+  const levels = $derived(
+    variant === 'full' && settings.current.seekBar === 'waveform'
+      ? (library.waveform(engine.current?.track) ?? undefined)
+      : undefined,
+  );
 
   /** Where the pointer is while dragging, shown in the times. */
   let scrubbing = $state<number | null>(null);
@@ -24,6 +30,8 @@
     disabled={!duration}
     variant={variant === 'strip' ? 'strip' : 'normal'}
     running={engine.player?.status === 'playing'}
+    {levels}
+    preview
     oninput={(v) => (scrubbing = v)}
     onchange={(v) => {
       scrubbing = null;

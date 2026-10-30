@@ -12,9 +12,42 @@ use crate::tags;
 /// `flac-md5:<hex>` from the FLAC stream's own MD5 when present (free to
 /// read), else `pcm-b3:<hex>`, a BLAKE3 hash of the decoded samples.
 pub fn audio_hash(path: &Path) -> Result<String, String> {
-    if let Some(md5) = tags::flac_md5(path) {
-        return Ok(format!("flac-md5:{md5:032x}"));
+    if let Some(hash) = flac_hash(path) {
+        return Ok(hash);
     }
+    let mut hash = PcmHash::default();
+    decode(path, |samples| hash.update(samples))?;
+    Ok(hash.finish())
+}
+
+/// The audio hash read from a FLAC stream's MD5, if it has one.
+pub fn flac_hash(path: &Path) -> Option<String> {
+    tags::flac_md5(path).map(|md5| format!("flac-md5:{md5:032x}"))
+}
+
+/// A `pcm-b3:` hash fed the decoded samples.
+#[derive(Default)]
+pub struct PcmHash {
+    hasher: blake3::Hasher,
+    bytes: Vec<u8>,
+}
+
+impl PcmHash {
+    pub fn update(&mut self, samples: &[f32]) {
+        self.bytes.clear();
+        self.bytes
+            .extend(samples.iter().flat_map(|s| s.to_le_bytes()));
+        self.hasher.update(&self.bytes);
+    }
+
+    pub fn finish(&self) -> String {
+        format!("pcm-b3:{}", &self.hasher.finalize().to_hex()[..32])
+    }
+}
+
+/// Decodes the file's default audio track, handing each packet's samples
+/// (interleaved) to `f`.
+pub fn decode(path: &Path, mut f: impl FnMut(&[f32])) -> Result<(), String> {
     let stream = MediaSourceStream::new(
         Box::new(File::open(path).map_err(|e| e.to_string())?),
         Default::default(),
@@ -37,8 +70,7 @@ pub fn audio_hash(path: &Path) -> Result<String, String> {
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(params, &Default::default())
         .map_err(|e| e.to_string())?;
-    let mut hasher = blake3::Hasher::new();
-    let (mut samples, mut bytes) = (Vec::<f32>::new(), Vec::<u8>::new());
+    let mut samples = Vec::<f32>::new();
     loop {
         let packet = match reader.next_packet() {
             Ok(Some(p)) => p,
@@ -54,9 +86,7 @@ pub fn audio_hash(path: &Path) -> Result<String, String> {
             Err(SymError::DecodeError(_)) => continue,
             Err(e) => return Err(e.to_string()),
         }
-        bytes.clear();
-        bytes.extend(samples.iter().flat_map(|s| s.to_le_bytes()));
-        hasher.update(&bytes);
+        f(&samples);
     }
-    Ok(format!("pcm-b3:{}", &hasher.finalize().to_hex()[..32]))
+    Ok(())
 }

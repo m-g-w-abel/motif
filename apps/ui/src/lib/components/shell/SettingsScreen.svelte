@@ -68,7 +68,8 @@
   const choices = [
     { key: 'density', label: 'Density', options: [['compact', 'Compact'], ['comfortable', 'Comfortable']] },
     { key: 'player', label: 'Player', options: [['bar', 'Bar'], ['floating', 'Floating']] },
-  ] as [Choice<'density'>, Choice<'player'>];
+    { key: 'seekBar', label: 'Seek bar', options: [['waveform', 'Waveform'], ['plain', 'Plain']] },
+  ] as [Choice<'density'>, Choice<'player'>, Choice<'seekBar'>];
 
   const snapScale = (v: number) => 90 + Math.round(v / 5) * 5;
   // The number follows the thumb; the layout is only redone on release.

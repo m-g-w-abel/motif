@@ -12,6 +12,8 @@
     disabled = false,
     variant = 'normal',
     running = false,
+    levels,
+    preview = false,
     oninput,
     onchange,
   }: {
@@ -25,6 +27,10 @@
     variant?: 'normal' | 'strip' | 'muted';
     /** The value is advancing by 1 per millisecond (playback), so keep moving between updates. */
     running?: boolean;
+    /** Loudness along the range (0–255), drawn as a waveform in place of the rail. */
+    levels?: number[];
+    /** While a mouse hovers ahead of the value, the stretch up to it is drawn pale (e.g. where a seek would jump). */
+    preview?: boolean;
     oninput?: (value: number) => void;
     onchange?: (value: number) => void;
   } = $props();
@@ -36,6 +42,8 @@
   let advance = $state(0);
   const shown = $derived(dragValue ?? Math.min(max, value + advance));
   const fraction = $derived(max > 0 ? Math.min(1, Math.max(0, shown / max)) : 0);
+  /** Where a hovering mouse points, 0 to 1; the played part covers it when it is behind the value. */
+  let hover = $state(0);
 
   // While running, advance one pixel at a time on a timer (a few times a
   // second for a track) rather than every frame. Plain main-thread updates:
@@ -54,6 +62,16 @@
     return () => clearTimeout(timer);
   });
 
+  /** The waveform as one filled outline, mirrored about the middle, in a box `levels.length` wide and 2 high. */
+  const wave = $derived.by(() => {
+    if (!levels?.length) return '';
+    // The quietest points keep a hairline, so silence still reads as part of the track.
+    const h = levels.map((l) => Math.max(0.06, l / 255).toFixed(3));
+    const top = h.map((v, i) => `${i} ${(1 - +v).toFixed(3)}`);
+    const bottom = h.map((v, i) => `${i} ${(1 + +v).toFixed(3)}`).reverse();
+    return `M${top.join('L')}L${bottom.join('L')}Z`;
+  });
+
   function valueAt(clientX: number): number {
     if (!track) return 0;
     const rect = track.getBoundingClientRect();
@@ -63,13 +81,17 @@
   function onPointerDown(e: PointerEvent) {
     if (disabled || e.button !== 0 || !track) return;
     e.preventDefault();
+    hover = 0;
     track.setPointerCapture(e.pointerId);
     dragValue = valueAt(e.clientX);
     oninput?.(dragValue);
   }
 
   function onPointerMove(e: PointerEvent) {
-    if (dragValue === null) return;
+    if (dragValue === null) {
+      if (preview && !disabled && e.pointerType === 'mouse' && max > 0) hover = valueAt(e.clientX) / max;
+      return;
+    }
     dragValue = valueAt(e.clientX);
     oninput?.(dragValue);
   }
@@ -106,6 +128,7 @@
   bind:this={track}
   class="slider {variant}"
   class:disabled
+  class:waveform={!!wave}
   class:dragging={dragValue !== null}
   role="slider"
   tabindex={disabled ? -1 : 0}
@@ -116,13 +139,33 @@
   aria-valuetext={valueText}
   aria-disabled={disabled}
   style:--fraction={fraction}
+  style:--hover={hover}
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={onPointerUp}
   onpointercancel={onPointerUp}
+  onpointerleave={() => (hover = 0)}
   onkeydown={onKey}
 >
-  <div class="rail"><div class="fill"></div></div>
+  {#if wave}
+    <!-- Drawn once per track; progress moves a clip over an accent copy with transforms only. -->
+    <div class="wave">
+      <svg viewBox="0 0 {levels!.length - 1} 2" preserveAspectRatio="none" aria-hidden="true"><path d={wave} /></svg>
+      {#if preview}
+        <div class="ahead">
+          <svg viewBox="0 0 {levels!.length - 1} 2" preserveAspectRatio="none" aria-hidden="true"><path d={wave} /></svg>
+        </div>
+      {/if}
+      <div class="played">
+        <svg viewBox="0 0 {levels!.length - 1} 2" preserveAspectRatio="none" aria-hidden="true"><path d={wave} /></svg>
+      </div>
+    </div>
+  {:else}
+    <div class="rail">
+      {#if preview}<div class="ahead"></div>{/if}
+      <div class="fill"></div>
+    </div>
+  {/if}
   <div class="thumbs"><div class="thumb-track"><div class="thumb"></div></div></div>
 </div>
 
@@ -154,14 +197,74 @@
   }
 
   .fill {
+    position: relative;
     height: 100%;
     transform: scaleX(var(--fraction));
     transform-origin: left;
     background: var(--accent);
   }
 
+  /* Under the fill, so only the stretch ahead of the value shows. */
+  .rail .ahead {
+    position: absolute;
+    inset: 0;
+    transform: scaleX(var(--hover));
+    transform-origin: left;
+    background: var(--accent);
+    opacity: 0.35;
+  }
+
   .muted .fill {
     background: var(--text-muted);
+  }
+
+  .slider.waveform {
+    height: 28px;
+  }
+
+  .wave {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .wave svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    fill: var(--text-muted);
+    opacity: 0.45;
+  }
+
+  /* Slides right to reveal the accent copy, which slides back by as much to stay put. */
+  .played,
+  .wave .ahead {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    transform: translateX(calc((var(--fraction) - 1) * 100%));
+  }
+
+  .played svg {
+    fill: var(--accent);
+    opacity: 1;
+    transform: translateX(calc((1 - var(--fraction)) * 100%));
+  }
+
+  /* The same clip up to the pointer, pale, under the played copy. */
+  .wave .ahead {
+    transform: translateX(calc((var(--hover) - 1) * 100%));
+  }
+
+  .wave .ahead svg {
+    fill: var(--accent);
+    opacity: 0.4;
+    transform: translateX(calc((1 - var(--hover)) * 100%));
+  }
+
+  .muted .played svg {
+    fill: var(--text-muted);
   }
 
   /* Clips the moved track below (transforms count as overflow and would
@@ -224,7 +327,9 @@
     height: 6px;
   }
 
-  .strip .thumb {
+  /* A waveform's played edge marks the position. */
+  .strip .thumb,
+  .waveform .thumb {
     display: none;
   }
 
@@ -232,7 +337,8 @@
     outline: none;
   }
 
-  .slider:focus-visible .rail {
+  .slider:focus-visible .rail,
+  .slider:focus-visible .wave {
     outline: 2px solid var(--text);
     outline-offset: 2px;
   }

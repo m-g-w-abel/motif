@@ -212,6 +212,9 @@ export class LibraryClient {
   /** Path → library details, or `null` if the file isn't in the library. */
   #details = new SvelteMap<string, LibraryTrack | null>();
   #wanted = new Set<string>();
+  /** Path → seek bar waveform, or `null` if there is none (not in the library, can't be decoded). */
+  #waveforms = new SvelteMap<string, number[] | null>();
+  #decoding = new Set<string>();
   #revision = -1;
   #refreshed = 0;
   private engine: EngineClient;
@@ -270,6 +273,37 @@ export class LibraryClient {
         for (const path of paths) this.#details.set(path, found.get(path) ?? null);
       })
       .catch(() => paths.forEach((path) => this.#details.get(path) === undefined && this.#details.set(path, null)));
+  }
+
+  /**
+   * The seek bar waveform of a library track; `undefined` until it arrives. The engine decodes a track the first
+   * time (a fraction of a second, about two for an hour-long file), so call {@link prefetchWaveforms} for what plays next.
+   */
+  waveform(track: TrackRef | undefined): number[] | null | undefined {
+    if (track?.source !== 'local' || !this.engine.library) return null;
+    // Deferred: this is asked for while rendering, which may not change state.
+    if (!this.#waveforms.has(track.id) && !this.#decoding.has(track.id)) queueMicrotask(() => this.prefetchWaveforms([track]));
+    return this.#waveforms.get(track.id);
+  }
+
+  /** Has the engine make (or recall) these tracks' waveforms, one at a time, so they show at once when played. */
+  async prefetchWaveforms(tracks: TrackRef[]) {
+    for (const { source, id } of tracks) {
+      if (source !== 'local' || this.#waveforms.has(id) || this.#decoding.has(id) || this.engine.status !== 'open') {
+        continue;
+      }
+      this.#decoding.add(id);
+      const levels = await this.engine
+        .query({ type: 'waveform', path: id })
+        .then((r) => (r.type === 'waveform' ? r.levels : null))
+        .catch(() => null);
+      this.#decoding.delete(id);
+      // Lost connection: ask again later rather than remember there is none.
+      if (levels === null && this.engine.status !== 'open') continue;
+      // A handful is plenty: the playing track and the next few.
+      if (this.#waveforms.size >= 20) this.#waveforms.delete(this.#waveforms.keys().next().value!);
+      this.#waveforms.set(id, levels);
+    }
   }
 
   /** URL of artwork `art` sharp at `size` pixels on this screen, or exactly `size` image pixels if `exact`. */

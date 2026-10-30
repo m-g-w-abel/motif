@@ -412,6 +412,11 @@ pub enum LibraryQuery {
     SetWatching {
         enabled: bool,
     },
+    /// The seek bar waveform of the library track at `path`. Decoded on first
+    /// request (up to a few seconds for a long file), then cached.
+    Waveform {
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -436,6 +441,11 @@ pub enum QueryResult {
     },
     Position {
         index: Option<u32>,
+    },
+    /// Loudness (0–255, the loudest point 255) at evenly spaced points
+    /// along the track.
+    Waveform {
+        levels: Vec<u8>,
     },
     Done,
 }

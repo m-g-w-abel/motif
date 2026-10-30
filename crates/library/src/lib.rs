@@ -3,11 +3,13 @@
 //!
 //! A scanner thread keeps the database in line with the library folders
 //! (watching them for changes) and fills in audio hashes in the background.
+//! Seek bar waveforms are decoded when asked for and cached by audio hash.
 
 mod db;
 mod hash;
 mod scan;
 mod tags;
+mod waveform;
 
 use std::{
     collections::HashMap,
@@ -44,6 +46,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 struct Shared {
     status: watch::Sender<LibraryStatus>,
     art_dir: PathBuf,
+    db_path: PathBuf,
     /// Images listed by [`Library::images`] (key → file), kept in memory so
     /// listing them never waits on the scanner's writes.
     extras: Mutex<HashMap<String, PathBuf>>,
@@ -83,6 +86,7 @@ impl Library {
         let shared = Arc::new(Shared {
             status: watch::channel(status).0,
             art_dir,
+            db_path: db_path.clone(),
             extras: Mutex::default(),
         });
         let (scanner, requests) = mpsc::channel();
@@ -115,6 +119,11 @@ impl Library {
     /// Answers a query. `Play` and `PlayAlbum` are answered by
     /// [`Self::selection`] instead, since they act on the engine.
     pub fn query(&self, query: LibraryQuery) -> Result<QueryResult> {
+        if let LibraryQuery::Waveform { path } = &query {
+            return Ok(QueryResult::Waveform {
+                levels: self.waveform(path)?,
+            });
+        }
         let conn = self.db();
         Ok(match query {
             LibraryQuery::Status => QueryResult::Status {
@@ -236,6 +245,7 @@ impl Library {
                     tracks,
                 }
             }
+            LibraryQuery::Waveform { .. } => unreachable!("answered above"),
             LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. } => {
                 return Err(Error::Other("play queries go through selection()".into()));
             }
@@ -385,6 +395,62 @@ impl Library {
             })?;
         let path = PathBuf::from(path);
         path.is_file().then_some(path)
+    }
+
+    /// The seek bar waveform of the track at `path` (see [`waveform::compute`]),
+    /// cached by audio hash or decoded now, which takes a moment for a long
+    /// file. The database isn't locked meanwhile.
+    pub fn waveform(&self, path: &str) -> Result<Vec<u8>> {
+        let known: Option<String> = self
+            .db()
+            .query_row(
+                "SELECT audio_hash FROM tracks WHERE path = ?1",
+                [path],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::Other("not in the library".into()))?;
+        if known.as_deref() == Some("") {
+            return Err(Error::Other("the file can't be decoded".into()));
+        }
+        // Not hashed yet: a FLAC's hash is free, others are hashed while decoding.
+        let hash = known.or_else(|| hash::flac_hash(Path::new(path)));
+        if let Some(hash) = &hash {
+            let cached = self
+                .db()
+                .query_row(
+                    "SELECT levels FROM waveforms WHERE hash = ?1",
+                    [hash],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(levels) = cached {
+                return Ok(levels);
+            }
+        }
+        let (levels, pcm_hash) =
+            waveform::compute(Path::new(path), hash.is_none()).map_err(Error::Other)?;
+        let Some(hash) = hash.or(pcm_hash) else {
+            return Ok(levels);
+        };
+        // On a connection and thread of its own: the scanner may hold the
+        // write lock for seconds, and neither queries nor this answer wait.
+        let (db_path, stored) = (self.shared.db_path.clone(), levels.clone());
+        std::thread::spawn(move || {
+            let store = || -> rusqlite::Result<()> {
+                let conn = Connection::open(db_path)?;
+                conn.busy_timeout(std::time::Duration::from_secs(30))?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO waveforms (hash, levels) VALUES (?1, ?2)",
+                    params![hash, stored],
+                )?;
+                Ok(())
+            };
+            if let Err(err) = store() {
+                tracing::warn!(%err, "can't cache waveform");
+            }
+        });
+        Ok(levels)
     }
 
     /// The image file for artwork `key`, scaled to fit `size` pixels (made
