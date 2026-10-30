@@ -31,6 +31,7 @@
     variant={variant === 'strip' ? 'strip' : 'normal'}
     running={engine.player?.status === 'playing'}
     {levels}
+    preview
     oninput={(v) => (scrubbing = v)}
     onchange={(v) => {
       scrubbing = null;
