@@ -25,7 +25,7 @@ use a plain list while the library shows a gallery).
 |---|---|
 | Tracks | Album-grouped track list |
 | Tracks + art | Track list with artwork and track details beside it |
-| Details | Columns, artwork and a full metadata table |
+| Details | Columns, artwork, a visualiser and a full metadata table |
 | Tracks + gallery | Track list beside a cover gallery |
 | Gallery | Album covers only |
 

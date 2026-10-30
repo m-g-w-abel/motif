@@ -1,4 +1,4 @@
-layout version=1 name=Details description="Columns, artwork and a full metadata table" icon=columns
+layout version=1 name=Details description="Columns, artwork, a visualiser and a full metadata table" icon=columns
 
 split row {
     tracklist {
@@ -6,6 +6,7 @@ split row {
     }
     split column size=300 {
         artwork
+        visualiser size=120
         track-info style=table
     }
 }

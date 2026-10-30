@@ -24,11 +24,14 @@
     ctx.clearRect(0, 0, width, height);
     if (!shown.length) return;
     ctx.fillStyle = getComputedStyle(c).getPropertyValue('--accent');
-    const step = width / shown.length;
-    const gap = Math.max(1, Math.round(step * 0.2));
+    // Whole device pixels for every bar and gap, so the spacing is even; the leftover is split either side.
+    const n = shown.length;
+    const gap = Math.max(1, Math.round((width / n) * 0.2));
+    const bar = Math.max(1, Math.floor((width - gap * (n - 1)) / n));
+    const left = Math.floor((width - bar * n - gap * (n - 1)) / 2);
     shown.forEach((level, i) => {
       const h = Math.round((level / 255) * height);
-      if (h) ctx.fillRect(Math.round(i * step), height - h, Math.round(step) - gap, h);
+      if (h) ctx.fillRect(left + i * (bar + gap), height - h, bar, h);
     });
   }
 
