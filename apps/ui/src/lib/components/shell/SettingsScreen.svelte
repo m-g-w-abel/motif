@@ -444,7 +444,7 @@
                 <button role="radio" aria-checked={integrations.discord === value} class:active={integrations.discord === value} onclick={() => engine.setIntegrations({ ...integrations, discord: value })}>{text}</button>
               {/each}
             </div>
-            <p class="status">Shows what plays as "Listening to Motif" on your Discord profile while Discord runs on the computer playing. Cover art comes from the Cover Art Archive for tracks tagged with a MusicBrainz release.</p>
+            <p class="status">Shows what plays on your Discord profile, as "Listening to" the artist, while Discord runs on the computer playing. Cover art comes from the Cover Art Archive for tracks tagged with a MusicBrainz release.</p>
           </div>
           {#if integrations.secrets_unencrypted}
             <p class="status">No system keyring found: sign-ins are stored unencrypted, readable only by your user.</p>

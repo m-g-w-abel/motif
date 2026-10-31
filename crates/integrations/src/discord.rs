@@ -1,4 +1,4 @@
-//! Discord Rich Presence: "Listening to Motif" with what plays, through the
+//! Discord Rich Presence: "Listening to <artist>" with what plays, through the
 //! local Discord client's IPC socket (a named pipe on Windows). Opt-in; shown
 //! only while playing, so pausing or stopping clears it.
 
@@ -10,7 +10,7 @@ use std::{
 
 use discord_rich_presence::{
     DiscordIpc, DiscordIpcClient,
-    activity::{Activity, ActivityType, Assets, Timestamps},
+    activity::{Activity, ActivityType, Assets, StatusDisplayType, Timestamps},
     error::Error,
 };
 use engine::Engine;
@@ -111,30 +111,36 @@ fn presence_thread(updates: mpsc::Receiver<Option<Presence>>) {
 }
 
 fn show(client: &mut DiscordIpcClient, presence: &Presence) -> Result<(), Error> {
-    let album = presence.album.as_deref().map(fit);
-    let mut assets = Assets::new().large_image(presence.image.as_str());
-    if let Some(album) = &album {
-        assets = assets.large_text(album.as_str());
-    }
-    let mut timestamps = Timestamps::new().start(presence.start_ms);
-    if let Some(end) = presence.end_ms {
-        timestamps = timestamps.end(end);
-    }
-    let mut activity = Activity::new()
-        .activity_type(ActivityType::Listening)
-        .details(fit(&presence.title))
-        .assets(assets)
-        .timestamps(timestamps);
-    if let Some(artist) = &presence.artist {
-        activity = activity.state(fit(artist));
-    }
-    client.set_activity(activity)?;
+    client.set_activity(activity(presence))?;
     // Reading the reply keeps the socket drained and notices Discord quitting.
     let (_, reply) = client.recv()?;
     if reply["evt"] == "ERROR" {
         tracing::debug!(%reply, "Discord rejected the presence");
     }
     Ok(())
+}
+
+/// "Listening to <artist>", or "Listening to Motif" without one.
+fn activity(presence: &Presence) -> Activity<'_> {
+    let mut assets = Assets::new().large_image(presence.image.as_str());
+    if let Some(album) = &presence.album {
+        assets = assets.large_text(fit(album));
+    }
+    let mut timestamps = Timestamps::new().start(presence.start_ms);
+    if let Some(end) = presence.end_ms {
+        timestamps = timestamps.end(end);
+    }
+    let activity = Activity::new()
+        .activity_type(ActivityType::Listening)
+        .details(fit(&presence.title))
+        .assets(assets)
+        .timestamps(timestamps);
+    match &presence.artist {
+        Some(artist) => activity
+            .state(fit(artist))
+            .status_display_type(StatusDisplayType::State),
+        None => activity.status_display_type(StatusDisplayType::Name),
+    }
 }
 
 /// Sends the presence thread what to show whenever the engine or the
@@ -250,6 +256,29 @@ mod tests {
         assert_eq!(long.chars().count(), 128);
         assert!(long.ends_with('…'));
         assert_eq!(fit(&"a".repeat(128)), "a".repeat(128));
+    }
+
+    #[test]
+    fn status_names_the_artist_when_there_is_one() {
+        let mut presence = Presence {
+            title: "Song".into(),
+            artist: Some("Someone".into()),
+            album: Some("Record".into()),
+            image: FALLBACK_ART.into(),
+            start_ms: 1_000,
+            end_ms: Some(61_000),
+        };
+        let json = |p: &Presence| serde_json::to_value(activity(p)).unwrap();
+        let shown = json(&presence);
+        assert_eq!(shown["type"], 2);
+        assert_eq!(shown["state"], "Someone");
+        assert_eq!(shown["status_display_type"], 1, "State");
+        assert_eq!(shown["assets"]["large_text"], "Record");
+        assert_eq!(shown["timestamps"]["end"], 61_000);
+        presence.artist = None;
+        let shown = json(&presence);
+        assert!(shown.get("state").is_none());
+        assert_eq!(shown["status_display_type"], 0, "Name: Motif");
     }
 
     #[test]
