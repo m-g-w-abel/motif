@@ -196,38 +196,33 @@ fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
                 shared.update(|s| s.scanned = scanned);
             }
             match known.get(&path_str) {
+                Some(k) if (k.size, k.mtime) == (size, mtime) && !k.missing => continue,
                 Some(k) if (k.size, k.mtime) == (size, mtime) => {
-                    if k.missing {
-                        batch.execute(
-                            "UPDATE tracks SET missing = 0 WHERE path = ?1",
-                            [&path_str],
-                        )?;
-                        changes += 1;
-                    }
-                    continue;
+                    batch.execute("UPDATE tracks SET missing = 0 WHERE path = ?1", [&path_str])?;
                 }
-                _ => {}
+                _ => store(
+                    &batch,
+                    shared,
+                    path,
+                    &path_str,
+                    size,
+                    mtime,
+                    &mut folder_art,
+                )?,
             }
-            store(
-                &batch,
-                shared,
-                path,
-                &path_str,
-                size,
-                mtime,
-                &mut folder_art,
-            )?;
             changes += 1;
-            // Commit in batches so others see progress and a crash loses little.
+            // Commit every file (cheap in WAL mode): the write lock mustn't stay
+            // held while the next files' tags are read off a slow disk, since
+            // loudness measurements (which a starting track waits on) need it.
+            batch.commit()?;
             if changes % 200 == 0 {
-                batch.commit()?;
                 let tracks = db::track_count(conn)?;
                 shared.update(|s| {
                     s.revision += 1;
                     s.tracks = tracks;
                 });
-                batch = conn.transaction()?;
             }
+            batch = conn.transaction()?;
         }
         for (path, _) in known
             .iter()
