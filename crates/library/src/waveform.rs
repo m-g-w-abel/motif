@@ -21,7 +21,7 @@ pub fn compute(path: &Path, hash: bool) -> Result<(Vec<u8>, Option<String>), Str
     // Mean square of each block of samples.
     let mut blocks = Vec::new();
     let (mut sum, mut n) = (0f64, 0usize);
-    hash::decode(path, |samples| {
+    hash::decode(path, |samples, _, _| {
         if let Some(pcm) = &mut pcm {
             pcm.update(samples);
         }
