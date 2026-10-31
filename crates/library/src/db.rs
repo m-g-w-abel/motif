@@ -91,6 +91,9 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
          CREATE TABLE IF NOT EXISTS art (key TEXT PRIMARY KEY, path TEXT NOT NULL);
          -- Seek bar waveforms by audio hash (waveform.rs), made when first asked for.
          CREATE TABLE IF NOT EXISTS waveforms (hash TEXT PRIMARY KEY, levels BLOB NOT NULL);
+         -- Loudness of files without ReplayGain tags by audio hash (loudness.rs),
+         -- measured when about to play: integrated LUFS (NULL if silent), sample peak.
+         CREATE TABLE IF NOT EXISTS loudness (hash TEXT PRIMARY KEY, lufs REAL, peak REAL NOT NULL);
          CREATE TABLE IF NOT EXISTS tracks (
              id INTEGER PRIMARY KEY,
              path TEXT NOT NULL UNIQUE,

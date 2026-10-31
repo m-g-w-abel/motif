@@ -134,6 +134,10 @@ impl Output {
             .upcoming()
             .and_then(|next| match resolver.resolve(&next.track) {
                 Ok(Playable::File(path, tags)) => {
+                    if player.measures() && tags.track_gain.is_none() {
+                        // Measured before it starts; the engine re-resolves once it is.
+                        resolver.measure(std::slice::from_ref(&next.track), false);
+                    }
                     Some((next.id, path, tags, factor(player.gain_db(&tags, true))))
                 }
                 _ => None,

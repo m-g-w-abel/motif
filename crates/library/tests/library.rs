@@ -470,3 +470,65 @@ fn waveforms_are_decoded_then_cached() {
             .is_err()
     );
 }
+
+/// Writes a WAV of `seconds` of a 1 kHz sine at `level` (full scale 1).
+fn write_sine(path: &Path, seconds: u32, level: f32) {
+    let (rate, frames) = (44_100u32, 44_100 * seconds);
+    let mut bytes = b"RIFF".to_vec();
+    bytes.extend((36 + frames * 2).to_le_bytes());
+    bytes.extend(b"WAVEfmt ");
+    // 16-byte PCM header: mono, 16-bit.
+    for v in [16u32, 1 | 1 << 16, rate, rate * 2, 2 | 16 << 16] {
+        bytes.extend(v.to_le_bytes());
+    }
+    bytes.extend(b"data");
+    bytes.extend((frames * 2).to_le_bytes());
+    for i in 0..frames {
+        let s = level * (i as f32 * 1000.0 * std::f32::consts::TAU / rate as f32).sin();
+        bytes.extend(((s * 32767.0) as i16).to_le_bytes());
+    }
+    fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn loudness_is_measured_for_untagged_files_then_gives_album_gain() {
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    // One untagged album: a loud track and a quiet one.
+    let (loud, quiet) = (music.join("loud.wav"), music.join("quiet.wav"));
+    write_sine(&loud, 2, 0.5);
+    write_sine(&quiet, 2, 0.05);
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 2 && !s.scanning);
+    assert_eq!(library.replay_gain(&loud), Default::default(), "untagged");
+
+    library.measure(vec![loud.clone()], true);
+    assert!(library.take_measured());
+    let gain = library.replay_gain(&loud);
+    // A 0.5 sine is -6 dBFS RMS, -9 LUFS with K-weighting at 1 kHz: about -9 dB.
+    let track_gain = gain.track_gain.unwrap();
+    assert!((track_gain + 9.0).abs() < 1.0, "{gain:?}");
+    assert!((gain.track_peak.unwrap() - 0.5).abs() < 0.01, "{gain:?}");
+    assert_eq!(gain.album_gain, None, "the quiet track isn't measured yet");
+
+    library.measure(vec![quiet.clone()], false);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !library.take_measured() {
+        assert!(Instant::now() < deadline, "never measured");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let gain = library.replay_gain(&loud);
+    let album_gain = gain.album_gain.unwrap();
+    assert!(
+        album_gain > track_gain && album_gain < track_gain + 3.1,
+        "{gain:?}"
+    );
+    assert_eq!(library.replay_gain(&quiet).album_gain, Some(album_gain));
+    // Cached: nothing to measure again.
+    library.measure(vec![loud], true);
+    assert!(!library.take_measured());
+}

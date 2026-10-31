@@ -16,7 +16,7 @@ pub fn audio_hash(path: &Path) -> Result<String, String> {
         return Ok(hash);
     }
     let mut hash = PcmHash::default();
-    decode(path, |samples| hash.update(samples))?;
+    decode(path, |samples, _, _| hash.update(samples))?;
     Ok(hash.finish())
 }
 
@@ -46,8 +46,8 @@ impl PcmHash {
 }
 
 /// Decodes the file's default audio track, handing each packet's samples
-/// (interleaved) to `f`.
-pub fn decode(path: &Path, mut f: impl FnMut(&[f32])) -> Result<(), String> {
+/// (interleaved) to `f` with the sample rate and channel count.
+pub fn decode(path: &Path, mut f: impl FnMut(&[f32], u32, usize)) -> Result<(), String> {
     let stream = MediaSourceStream::new(
         Box::new(File::open(path).map_err(|e| e.to_string())?),
         Default::default(),
@@ -67,6 +67,8 @@ pub fn decode(path: &Path, mut f: impl FnMut(&[f32])) -> Result<(), String> {
         return Err("no audio parameters".into());
     };
     let track_id = track.id;
+    let rate = params.sample_rate.unwrap_or(0);
+    let channels = params.channels.as_ref().map_or(0, |c| c.count());
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(params, &Default::default())
         .map_err(|e| e.to_string())?;
@@ -86,7 +88,7 @@ pub fn decode(path: &Path, mut f: impl FnMut(&[f32])) -> Result<(), String> {
             Err(SymError::DecodeError(_)) => continue,
             Err(e) => return Err(e.to_string()),
         }
-        f(&samples);
+        f(&samples, rate, channels);
     }
     Ok(())
 }

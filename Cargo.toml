@@ -36,7 +36,13 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
+# Line tables keep file:line in backtraces; full debug info doubled the build
+# output and slowed linking.
+[profile.dev]
+debug = "line-tables-only"
+
 # Image decoding and resizing are many times slower unoptimised (#59), so dev
 # builds optimise dependencies; workspace crates stay quick to rebuild.
 [profile.dev.package."*"]
 opt-level = 3
+debug = false
