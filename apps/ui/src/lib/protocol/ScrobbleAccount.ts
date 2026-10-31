@@ -13,7 +13,13 @@ user: string | null,
  */
 error: string | null, 
 /**
+ * Set by the host while signing in through the browser (Last.fm): the
+ * page where the user allows Motif.
+ */
+auth_url: string | null, 
+/**
  * From clients only, never sent out or saved: a credential to sign in
- * with (the ListenBrainz user token), or empty to sign out.
+ * with (the ListenBrainz user token; anything for Last.fm, which signs
+ * in through the browser), or empty to sign out or stop signing in.
  */
 sign_in?: string | null, };

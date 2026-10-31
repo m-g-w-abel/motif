@@ -5,7 +5,7 @@ use protocol::{IntegrationSettings, ScrobbleAccount};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-use super::{Error, Listen, Scrobbler};
+use super::{Error, Listen, Scrobbler, is_uuid};
 
 const API: &str = "https://api.listenbrainz.org";
 
@@ -68,7 +68,11 @@ impl Scrobbler for ListenBrainz {
         &mut settings.listenbrainz
     }
 
-    async fn sign_in(&self, token: &str) -> Result<(String, String), Error> {
+    async fn sign_in(
+        &self,
+        token: &str,
+        _: &(dyn Fn(&str) + Sync),
+    ) -> Result<(String, String), Error> {
         let body = self.call(token, "validate-token", None).await;
         match body
             .as_ref()
@@ -78,7 +82,7 @@ impl Scrobbler for ListenBrainz {
             Ok(_) | Err(Error::Rejected(_)) => Err(Error::Rejected(
                 "ListenBrainz doesn't know that token".into(),
             )),
-            Err(Error::Retry(err)) => Err(Error::Retry(err.clone())),
+            Err(Error::Retry(err) | Error::SignedOut(err)) => Err(Error::Retry(err.clone())),
         }
     }
 
@@ -127,14 +131,6 @@ fn payload(listen: &Listen, timed: bool) -> Value {
         listen_json["listened_at"] = listen.listened_at.into();
     }
     listen_json
-}
-
-fn is_uuid(id: &str) -> bool {
-    id.len() == 36
-        && id.char_indices().all(|(i, c)| match i {
-            8 | 13 | 18 | 23 => c == '-',
-            _ => c.is_ascii_hexdigit(),
-        })
 }
 
 #[cfg(test)]
@@ -206,9 +202,12 @@ mod tests {
     #[tokio::test]
     async fn signs_in_with_a_valid_token_only() {
         let (lb, _) = mock().await;
-        let (user, secret) = lb.sign_in("good").await.unwrap();
+        let (user, secret) = lb.sign_in("good", &|_| {}).await.unwrap();
         assert_eq!((user.as_str(), secret.as_str()), ("rob", "good"));
-        assert!(matches!(lb.sign_in("bad").await, Err(Error::Rejected(_))));
+        assert!(matches!(
+            lb.sign_in("bad", &|_| {}).await,
+            Err(Error::Rejected(_))
+        ));
     }
 
     #[tokio::test]

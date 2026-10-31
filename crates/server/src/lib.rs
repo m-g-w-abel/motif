@@ -360,8 +360,14 @@ async fn session(socket: WebSocket, state: AppState) {
             }) => {
                 state.integrations.send_if_modified(|settings| {
                     new.secrets_unencrypted = settings.secrets_unencrypted;
-                    new.listenbrainz.user = settings.listenbrainz.user.clone();
-                    new.listenbrainz.error = settings.listenbrainz.error.clone();
+                    for (new, old) in [
+                        (&mut new.listenbrainz, &settings.listenbrainz),
+                        (&mut new.lastfm, &settings.lastfm),
+                    ] {
+                        new.user = old.user.clone();
+                        new.error = old.error.clone();
+                        new.auth_url = old.auth_url.clone();
+                    }
                     let changed = *settings != new;
                     *settings = new;
                     changed
@@ -540,6 +546,7 @@ mod tests {
                 user: Some("mallory".into()),
                 ..Default::default()
             },
+            lastfm: Default::default(),
             secrets_unencrypted: true,
             discord: false,
         };

@@ -16,6 +16,10 @@ lrclib: boolean,
  */
 listenbrainz: ScrobbleAccount, 
 /**
+ * Scrobble to Last.fm.
+ */
+lastfm: ScrobbleAccount, 
+/**
  * Set by the host, ignored from clients: no OS keyring was found, so
  * secrets are kept unencrypted in a file only this user can read.
  */

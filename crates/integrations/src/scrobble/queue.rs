@@ -93,7 +93,11 @@ mod tests {
         fn account(settings: &mut IntegrationSettings) -> &mut ScrobbleAccount {
             &mut settings.listenbrainz
         }
-        async fn sign_in(&self, _: &str) -> Result<(String, String), Error> {
+        async fn sign_in(
+            &self,
+            _: &str,
+            _: &(dyn Fn(&str) + Sync),
+        ) -> Result<(String, String), Error> {
             unreachable!()
         }
         async fn now_playing(&self, _: &str, _: &Listen) -> Result<(), Error> {
