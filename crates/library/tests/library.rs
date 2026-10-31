@@ -4,6 +4,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -561,4 +562,182 @@ fn musicbrainz_release_ids_are_read() {
     assert_eq!(library.musicbrainz_album(&path).as_deref(), Some(id));
     let other = track(&library, "Closing").track.id;
     assert_eq!(library.musicbrainz_album(&other), None);
+}
+
+/// A stand-in for LRCLIB answering requests in turn with `answers` (status,
+/// JSON body). Returns its URL and each request's first line.
+fn fake_lrclib(answers: Vec<(u16, &'static str)>) -> (String, Arc<Mutex<Vec<String>>>) {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for (stream, (status, body)) in listener.incoming().zip(answers) {
+            let mut stream = stream.unwrap();
+            let mut lines = BufReader::new(&stream).lines();
+            log.lock().unwrap().push(lines.next().unwrap().unwrap());
+            for line in lines.by_ref() {
+                if line.unwrap().is_empty() {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    (url, seen)
+}
+
+#[test]
+fn lyrics_come_from_tags_then_sidecars_then_lrclib() {
+    use lofty::{
+        TextEncoding,
+        config::WriteOptions,
+        file::TaggedFileExt,
+        id3::v2::{
+            BinaryFrame, Frame, FrameId, Id3v2Tag, SyncTextContentType, SynchronizedTextFrame,
+            TimestampFormat,
+        },
+        prelude::ItemKey,
+        tag::TagExt,
+    };
+    use protocol::{Lyrics, LyricsLine, LyricsSource};
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &music,
+    );
+    let (album_a, album_b) = (
+        music.join("Artist A/First Album"),
+        music.join("Artist B/Second Album"),
+    );
+    // Embedded: Vorbis comments with both kinds, an MP3 with a SYLT frame.
+    let ogg = album_b.join("02 Ending.ogg");
+    let mut tag = lofty::read_from_path(&ogg)
+        .unwrap()
+        .primary_tag()
+        .unwrap()
+        .clone();
+    tag.insert_text(ItemKey::UnsyncLyrics, "Plain words".into());
+    tag.insert_text(ItemKey::Lyrics, "[00:01.00]Ogg line".into());
+    tag.save_to_path(&ogg, WriteOptions::default()).unwrap();
+    let sylt = SynchronizedTextFrame::new(
+        TextEncoding::UTF8,
+        *b"eng",
+        TimestampFormat::MS,
+        SyncTextContentType::Lyrics,
+        None,
+        vec![(2500, "Second".into()), (500, "First".into())],
+    );
+    let mut id3 = Id3v2Tag::new();
+    id3.insert(Frame::Binary(BinaryFrame::new(
+        FrameId::Valid("SYLT".into()),
+        sylt.as_bytes(WriteOptions::default()).unwrap(),
+    )));
+    id3.save_to_path(album_b.join("01 Beginning.mp3"), WriteOptions::default())
+        .unwrap();
+    // Sidecar: the synced .lrc beats the plain .txt.
+    fs::write(album_a.join("01 Opening.txt"), "Sidecar words\n").unwrap();
+    fs::write(
+        album_a.join("01 Opening.lrc"),
+        "[ti:Opening]\n[00:03.00]Sidecar line\n",
+    )
+    .unwrap();
+
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 4 && !s.scanning);
+    let line = |ms, text: &str| LyricsLine {
+        time_ms: Some(ms),
+        text: text.into(),
+    };
+    let found = |source, lines| Some(Lyrics { source, lines });
+    let (lrclib, seen) = fake_lrclib(vec![
+        (404, r#"{"code":404}"#),
+        (
+            200,
+            r#"{"plainLyrics":"Plain","syncedLyrics":"[00:04.00]Fetched","instrumental":false}"#,
+        ),
+    ]);
+    let lyrics = |title: &str, lrclib: Option<&str>| {
+        library
+            .lyrics(&track(&library, title).track.id, lrclib)
+            .unwrap()
+    };
+    assert_eq!(
+        lyrics("Ending", Some(&lrclib)),
+        found(LyricsSource::Embedded, vec![line(1000, "Ogg line")])
+    );
+    assert_eq!(
+        lyrics("Beginning", Some(&lrclib)),
+        found(
+            LyricsSource::Embedded,
+            vec![line(500, "First"), line(2500, "Second")]
+        )
+    );
+    assert_eq!(
+        lyrics("Opening", Some(&lrclib)),
+        found(LyricsSource::Sidecar, vec![line(3000, "Sidecar line")])
+    );
+    // Nothing local: LRCLIB, never asked while it is off.
+    assert_eq!(lyrics("Closing", None), None);
+    assert!(seen.lock().unwrap().is_empty());
+    // A miss is cached, and asked again once it is old.
+    assert_eq!(lyrics("Closing", Some(&lrclib)), None);
+    let request = seen.lock().unwrap()[0].clone();
+    assert!(
+        request.starts_with(
+            "GET /api/get?artist_name=Artist+A&track_name=Closing&album_name=First+Album&duration="
+        ),
+        "{request}"
+    );
+    let db = rusqlite::Connection::open(data.join("library.db")).unwrap();
+    let cached = || {
+        db.query_row("SELECT count(*) FROM lyrics WHERE fetched > 0", [], |r| {
+            r.get::<_, u32>(0)
+        })
+        .unwrap()
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while cached() == 0 {
+        assert!(Instant::now() < deadline, "never cached");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(lyrics("Closing", Some(&lrclib)), None);
+    assert_eq!(seen.lock().unwrap().len(), 1, "the miss was cached");
+    db.execute("UPDATE lyrics SET fetched = 0", []).unwrap();
+    let fetched = found(LyricsSource::Lrclib, vec![line(4000, "Fetched")]);
+    assert_eq!(lyrics("Closing", Some(&lrclib)), fetched);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while cached() == 0 {
+        assert!(Instant::now() < deadline, "never cached");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Cached now, so even with LRCLIB gone it answers; saving bakes in the offset.
+    assert_eq!(lyrics("Closing", Some("http://127.0.0.1:9")), fetched);
+    let closing = track(&library, "Closing").track.id;
+    library.save_lyrics(&closing, -1500, Some(&lrclib)).unwrap();
+    assert_eq!(
+        fs::read_to_string(album_a.join("02 Closing.lrc")).unwrap(),
+        "[00:02.50]Fetched\n"
+    );
+    assert_eq!(
+        lyrics("Closing", None),
+        found(LyricsSource::Sidecar, vec![line(2500, "Fetched")])
+    );
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert!(
+        library
+            .save_lyrics("/not/in/the/library.flac", 0, None)
+            .is_err()
+    );
 }

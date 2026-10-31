@@ -94,6 +94,9 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
          -- Loudness of files without ReplayGain tags by audio hash (loudness.rs),
          -- measured when about to play: integrated LUFS (NULL if silent), sample peak.
          CREATE TABLE IF NOT EXISTS loudness (hash TEXT PRIMARY KEY, lufs REAL, peak REAL NOT NULL);
+         -- LRCLIB answers by audio hash (lyrics.rs): LRC and plain text, both
+         -- NULL for a miss, and when it was asked (Unix seconds).
+         CREATE TABLE IF NOT EXISTS lyrics (hash TEXT PRIMARY KEY, synced TEXT, plain TEXT, fetched INTEGER NOT NULL);
          CREATE TABLE IF NOT EXISTS tracks (
              id INTEGER PRIMARY KEY,
              path TEXT NOT NULL UNIQUE,
