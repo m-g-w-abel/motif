@@ -360,6 +360,8 @@ async fn session(socket: WebSocket, state: AppState) {
             }) => {
                 state.integrations.send_if_modified(|settings| {
                     new.secrets_unencrypted = settings.secrets_unencrypted;
+                    new.listenbrainz.user = settings.listenbrainz.user.clone();
+                    new.listenbrainz.error = settings.listenbrainz.error.clone();
                     let changed = *settings != new;
                     *settings = new;
                     changed
@@ -534,6 +536,10 @@ mod tests {
         assert!(settings(&mut b).await.lrclib);
         let new = IntegrationSettings {
             lrclib: false,
+            listenbrainz: protocol::ScrobbleAccount {
+                user: Some("mallory".into()),
+                ..Default::default()
+            },
             secrets_unencrypted: true,
         };
         let json = serde_json::to_string(&ClientMessage::SetIntegrations {
@@ -548,6 +554,7 @@ mod tests {
             !got.secrets_unencrypted,
             "only the host says where secrets are"
         );
+        assert_eq!(got.listenbrainz.user, None, "only the host signs in");
     }
 
     #[test]
