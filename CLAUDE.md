@@ -55,6 +55,9 @@ cargo test --workspace
 script). Run all of these before saying work is done; GitHub CI is disabled
 for now, so these local runs are the only check. If no Rust changed (no
 `*.rs` or `Cargo.*` files), `cargo clippy` and `cargo test` can be skipped.
+In a new git worktree, run `scripts/seed-build.sh` before the first build: it
+copies the main checkout's compiled dependencies (never share one build folder
+between checkouts; cargo would mix their workspace crates).
 
 ## Testing the UI
 
