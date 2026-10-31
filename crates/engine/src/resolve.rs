@@ -17,6 +17,17 @@ pub enum Playable {
 pub trait Resolver: Send + 'static {
     /// The playable form of `track`, or why there is none (shown to the user).
     fn resolve(&self, track: &TrackRef) -> Result<Playable, String>;
+
+    /// Measures loudness for ReplayGain where `tracks` have no gain tags or
+    /// measurement yet, in order in the background. With `wait`, the first
+    /// is about to play: return once it is measured (within reason).
+    fn measure(&self, _tracks: &[TrackRef], _wait: bool) {}
+
+    /// Whether measurements finished since the last call, changing what
+    /// [`Self::resolve`] returns.
+    fn measured(&self) -> bool {
+        false
+    }
 }
 
 /// Plays local files by path, until the library resolver (milestone 5)

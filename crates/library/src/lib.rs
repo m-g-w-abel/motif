@@ -3,22 +3,24 @@
 //!
 //! A scanner thread keeps the database in line with the library folders
 //! (watching them for changes) and fills in audio hashes in the background.
-//! Seek bar waveforms are decoded when asked for and cached by audio hash.
+//! Seek bar waveforms are decoded when asked for and cached by audio hash,
+//! and so is the loudness of files without ReplayGain tags.
 
 mod db;
 mod hash;
+mod loudness;
 mod scan;
 mod tags;
 mod waveform;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     io::Write,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
 };
@@ -50,6 +52,11 @@ struct Shared {
     /// Images listed by [`Library::images`] (key → file), kept in memory so
     /// listing them never waits on the scanner's writes.
     extras: Mutex<HashMap<String, PathBuf>>,
+    /// Files waiting for their loudness to be measured, and whether a
+    /// thread is measuring them (see [`loudness::request`]).
+    measuring: Mutex<(VecDeque<PathBuf>, bool)>,
+    /// Set when a measurement is cached, until [`Library::take_measured`].
+    measured: AtomicBool,
 }
 
 impl Shared {
@@ -88,6 +95,8 @@ impl Library {
             art_dir,
             db_path: db_path.clone(),
             extras: Mutex::default(),
+            measuring: Mutex::default(),
+            measured: AtomicBool::new(false),
         });
         let (scanner, requests) = mpsc::channel();
         let scanner_conn = db::open(&db_path)?;
@@ -397,28 +406,91 @@ impl Library {
         path.is_file().then_some(path)
     }
 
-    /// The ReplayGain values stored for the file at `path` (all `None` if
-    /// it isn't in the library or has no gain tags).
-    // #84: coalesce measured loudness here for files without tags.
+    /// The ReplayGain values for the file at `path`: its tags, else its
+    /// measured loudness (album gain once every track of its album is
+    /// measured or tagged). All `None` if it isn't in the library or has
+    /// neither.
     pub fn replay_gain(&self, path: &Path) -> protocol::ReplayGain {
         let Some(path) = path.to_str() else {
             return Default::default();
         };
-        self.db()
-            .query_row(
-                "SELECT rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak
-                 FROM tracks WHERE path = ?1",
-                [path],
-                |r| {
-                    Ok(protocol::ReplayGain {
-                        track_gain: r.get(0)?,
-                        track_peak: r.get(1)?,
-                        album_gain: r.get(2)?,
-                        album_peak: r.get(3)?,
+        let conn = self.db();
+        // Each track's tags, measurement and duration.
+        let row = |r: &Row| -> rusqlite::Result<_> {
+            let tags: (Option<f64>, Option<f64>, Option<f64>, Option<f64>) =
+                (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
+            let measured: Option<(Option<f64>, f64)> = r
+                .get::<_, Option<f64>>(5)?
+                .map(|peak| (r.get(4).ok().flatten(), peak));
+            Ok((tags, measured, r.get::<_, Option<f64>>(6)?.unwrap_or(0.0)))
+        };
+        let select = format!(
+            "SELECT rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak,
+                    l.lufs, l.peak, duration_ms, {} FROM tracks
+             LEFT JOIN loudness l ON l.hash = audio_hash",
+            db::ALBUM_KEY
+        );
+        let Ok((tags, measured, _, album)) =
+            conn.query_row(&format!("{select} WHERE path = ?1"), [path], |r| {
+                let (tags, measured, ms) = row(r)?;
+                Ok((tags, measured, ms, r.get::<_, String>(7)?))
+            })
+        else {
+            return Default::default();
+        };
+        let f32s = |v: Option<f64>| v.map(|v| v as f32);
+        if tags.0.is_some() || measured.is_none() {
+            return protocol::ReplayGain {
+                track_gain: f32s(tags.0),
+                track_peak: f32s(tags.1),
+                album_gain: f32s(tags.2),
+                album_peak: f32s(tags.3),
+            };
+        }
+        let (lufs, peak) = measured.unwrap_or_default();
+        // Every track's loudness, from its tag or measurement, or None if one is unknown.
+        let tracks: Option<Vec<_>> = conn
+            .prepare(&format!(
+                "{select} WHERE missing = 0 AND {} = ?1",
+                db::ALBUM_KEY
+            ))
+            .and_then(|mut stmt| {
+                stmt.query_map([&album], |r| {
+                    let ((gain, tag_peak, ..), measured, ms) = row(r)?;
+                    Ok(match (gain, measured) {
+                        (Some(gain), _) => Some((
+                            Some(loudness::REFERENCE - gain),
+                            tag_peak.unwrap_or(0.0),
+                            ms,
+                        )),
+                        (None, Some((lufs, peak))) => Some((lufs, peak, ms)),
+                        (None, None) => None,
                     })
-                },
-            )
-            .unwrap_or_default()
+                })?
+                .collect::<rusqlite::Result<_>>()
+            })
+            .unwrap_or_default();
+        let album = tracks.as_deref().and_then(loudness::album);
+        protocol::ReplayGain {
+            track_gain: f32s(lufs.map(|l| loudness::REFERENCE - l)),
+            track_peak: Some(peak as f32),
+            album_gain: f32s(album.map(|a| a.0)),
+            album_peak: f32s(album.map(|a| a.1)),
+        }
+    }
+
+    /// Measures the loudness of the library files at `paths` that have no
+    /// ReplayGain tags or cached measurement, in order on a background
+    /// thread. With `wait`, the first is measured before this returns (up to
+    /// a few seconds), for a track about to play.
+    pub fn measure(&self, paths: Vec<PathBuf>, wait: bool) {
+        loudness::request(&self.shared, paths, wait);
+    }
+
+    /// Whether a measurement was cached since the last call, which can
+    /// change what [`Self::replay_gain`] returns.
+    pub fn take_measured(&self) -> bool {
+        self.shared.measured.swap(false, Ordering::Relaxed)
     }
 
     /// The seek bar waveform of the track at `path` (see [`waveform::compute`]),
