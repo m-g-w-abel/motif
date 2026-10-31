@@ -14,4 +14,8 @@ lrclib: boolean,
  * Set by the host, ignored from clients: no OS keyring was found, so
  * secrets are kept unencrypted in a file only this user can read.
  */
-secrets_unencrypted: boolean, };
+secrets_unencrypted: boolean, 
+/**
+ * Show what plays as Discord Rich Presence (desktop hosts).
+ */
+discord: boolean, };

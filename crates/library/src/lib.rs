@@ -421,6 +421,18 @@ impl Library {
             .unwrap_or_default()
     }
 
+    /// The MusicBrainz release (album) ID tagged on the track at `path`.
+    pub fn musicbrainz_album(&self, path: &str) -> Option<String> {
+        self.db()
+            .query_row(
+                "SELECT musicbrainz_album FROM tracks WHERE path = ?1",
+                [path],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten()
+    }
+
     /// The seek bar waveform of the track at `path` (see [`waveform::compute`]),
     /// cached by audio hash or decoded now, which takes a moment for a long
     /// file. The database isn't locked meanwhile.

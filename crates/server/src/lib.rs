@@ -535,6 +535,7 @@ mod tests {
         let new = IntegrationSettings {
             lrclib: false,
             secrets_unencrypted: true,
+            discord: false,
         };
         let json = serde_json::to_string(&ClientMessage::SetIntegrations {
             id: 1,

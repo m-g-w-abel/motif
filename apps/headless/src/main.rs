@@ -20,8 +20,12 @@ const DEFAULT_UI_DIR: &str = "apps/ui/dist";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The Discord crate warns on every retry while Discord isn't running.
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,discord_rich_presence=error".into()),
+        )
         .init();
 
     let addr: SocketAddr = std::env::var("MOTIF_ADDR")
@@ -57,6 +61,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // shortcut: no window handle, so no media controls on Windows (SMTC needs one); fine for a NAS or Pi.
     integrations::media_controls::start(engine.clone(), Some(library.clone()), None);
     let integrations = integrations::settings::keep(&data_dir);
+    integrations::discord::start(
+        engine.clone(),
+        Some(library.clone()),
+        integrations.subscribe(),
+    );
     let config = server::Config {
         addr,
         ui_dir: ui_dir.clone(),
