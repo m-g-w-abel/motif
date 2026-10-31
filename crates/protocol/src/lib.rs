@@ -527,6 +527,20 @@ pub enum LibraryQuery {
     Waveform {
         path: String,
     },
+    /// The lyrics of the library track at `path`: embedded in the file, else
+    /// a sidecar `.lrc` or `.txt`, else LRCLIB when that setting is on
+    /// (fetched once, then cached). Synced beats plain within each source.
+    Lyrics {
+        path: String,
+    },
+    /// Writes the lyrics [`LibraryQuery::Lyrics`] finds as `<track>.lrc`
+    /// next to the file, every time moved by `offset_ms` (positive shows
+    /// lines later). Never touches the audio file.
+    SaveLyrics {
+        path: String,
+        #[serde(default)]
+        offset_ms: i32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -557,7 +571,41 @@ pub enum QueryResult {
     Waveform {
         levels: Vec<u8>,
     },
+    /// `None` when no source has lyrics for the track.
+    Lyrics {
+        lyrics: Option<Lyrics>,
+    },
     Done,
+}
+
+/// A track's lyrics. Synced lyrics have a time on every line, in order;
+/// plain lyrics have none.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Lyrics {
+    pub source: LyricsSource,
+    pub lines: Vec<LyricsLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LyricsLine {
+    /// When the line starts, from the start of the track.
+    #[ts(type = "number | null")]
+    pub time_ms: Option<u64>,
+    pub text: String,
+}
+
+/// Where lyrics came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum LyricsSource {
+    /// Tags in the audio file.
+    Embedded,
+    /// A `.lrc` or `.txt` file next to it.
+    Sidecar,
+    Lrclib,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]

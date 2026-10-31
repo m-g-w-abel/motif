@@ -225,10 +225,23 @@ async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, Str
             .map_err(|e| e.to_string())?;
         return Ok(QueryResult::Done);
     }
-    tokio::task::spawn_blocking(move || library.query(query))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    let lrclib = state
+        .integrations
+        .borrow()
+        .lrclib
+        .then_some(library::LRCLIB);
+    tokio::task::spawn_blocking(move || match query {
+        LibraryQuery::Lyrics { path } => library
+            .lyrics(&path, lrclib)
+            .map(|lyrics| QueryResult::Lyrics { lyrics }),
+        LibraryQuery::SaveLyrics { path, offset_ms } => library
+            .save_lyrics(&path, offset_ms, lrclib)
+            .map(|()| QueryResult::Done),
+        query => library.query(query),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 /// Browsers let any website open a WebSocket to localhost, so a page must come

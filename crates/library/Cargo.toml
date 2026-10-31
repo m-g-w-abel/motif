@@ -14,7 +14,11 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 lofty = "=0.25.4"
 notify = "=8.2.0"
 protocol.workspace = true
+# Same as the integrations crate's, blocking for LRCLIB lookups (lyrics.rs).
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-no-provider", "json", "blocking"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde_json.workspace = true
 symphonia = { version = "0.6.1", features = ["all"] }
 thiserror.workspace = true
 tokio.workspace = true

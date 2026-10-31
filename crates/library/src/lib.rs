@@ -4,11 +4,13 @@
 //! A scanner thread keeps the database in line with the library folders
 //! (watching them for changes) and fills in audio hashes in the background.
 //! Seek bar waveforms are decoded when asked for and cached by audio hash,
-//! and so is the loudness of files without ReplayGain tags.
+//! and so is the loudness of files without ReplayGain tags. Lyrics are read
+//! when asked for, LRCLIB's cached by audio hash.
 
 mod db;
 mod hash;
 mod loudness;
+mod lyrics;
 mod scan;
 mod tags;
 mod waveform;
@@ -27,10 +29,12 @@ use std::{
 
 use protocol::{
     Command, ContextKind, ImageKind, LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack,
-    QueryResult, SortRule, TrackGroup, TrackImage, TrackKeys, TrackRef,
+    Lyrics, LyricsSource, QueryResult, SortRule, TrackGroup, TrackImage, TrackKeys, TrackRef,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
+
+pub use lyrics::LRCLIB;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -257,6 +261,11 @@ impl Library {
             LibraryQuery::Waveform { .. } => unreachable!("answered above"),
             LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. } => {
                 return Err(Error::Other("play queries go through selection()".into()));
+            }
+            LibraryQuery::Lyrics { .. } | LibraryQuery::SaveLyrics { .. } => {
+                return Err(Error::Other(
+                    "lyrics queries go through lyrics() and save_lyrics()".into(),
+                ));
             }
             LibraryQuery::AddRoot { path } => {
                 let path =
@@ -541,24 +550,138 @@ impl Library {
         let Some(hash) = hash.or(pcm_hash) else {
             return Ok(levels);
         };
-        // On a connection and thread of its own: the scanner may hold the
-        // write lock for seconds, and neither queries nor this answer wait.
-        let (db_path, stored) = (self.shared.db_path.clone(), levels.clone());
+        let stored = levels.clone();
+        self.write_aside("waveform", move |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO waveforms (hash, levels) VALUES (?1, ?2)",
+                params![hash, stored],
+            )
+        });
+        Ok(levels)
+    }
+
+    /// Runs `write` on a connection and thread of its own: the scanner may
+    /// hold the write lock for seconds, and neither queries nor the answer
+    /// that made `what` wait.
+    fn write_aside(
+        &self,
+        what: &'static str,
+        write: impl FnOnce(&Connection) -> rusqlite::Result<usize> + Send + 'static,
+    ) {
+        let db_path = self.shared.db_path.clone();
         std::thread::spawn(move || {
             let store = || -> rusqlite::Result<()> {
                 let conn = Connection::open(db_path)?;
                 conn.busy_timeout(std::time::Duration::from_secs(30))?;
-                conn.execute(
-                    "INSERT OR REPLACE INTO waveforms (hash, levels) VALUES (?1, ?2)",
-                    params![hash, stored],
-                )?;
+                write(&conn)?;
                 Ok(())
             };
             if let Err(err) = store() {
-                tracing::warn!(%err, "can't cache waveform");
+                tracing::warn!(%err, "can't cache {what}");
             }
         });
-        Ok(levels)
+    }
+
+    /// The lyrics of the track at `path` (see [`LibraryQuery::Lyrics`]), from
+    /// the LRCLIB server at `lrclib` if it is on and nothing local has them.
+    /// The database isn't locked while LRCLIB answers.
+    pub fn lyrics(&self, path: &str, lrclib: Option<&str>) -> Result<Option<Lyrics>> {
+        type Row = (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+        );
+        let (title, artist, album, duration_ms, hash): Row = self
+            .db()
+            .query_row(
+                "SELECT title, coalesce(artist, album_artist), album, duration_ms, audio_hash
+                 FROM tracks WHERE path = ?1",
+                [path],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?
+            .ok_or_else(|| Error::Other("not in the library".into()))?;
+        let file = Path::new(path);
+        let local = [
+            (LyricsSource::Embedded, lyrics::embedded as fn(&Path) -> _),
+            (LyricsSource::Sidecar, lyrics::sidecars),
+        ];
+        for (source, read) in local {
+            if let Some(lines) = lyrics::best(read(file)) {
+                return Ok(Some(Lyrics { source, lines }));
+            }
+        }
+        let (Some(base), Some(title), Some(artist)) = (lrclib, title, artist) else {
+            return Ok(None);
+        };
+        // Not hashed yet: a FLAC's hash is free; others are asked for uncached
+        // until the scanner hashes them.
+        let hash = hash
+            .filter(|h| !h.is_empty())
+            .or_else(|| hash::flac_hash(file));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let cached: Option<(Option<String>, Option<String>, i64)> = match &hash {
+            Some(hash) => self
+                .db()
+                .query_row(
+                    "SELECT synced, plain, fetched FROM lyrics WHERE hash = ?1",
+                    [hash],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?,
+            None => None,
+        };
+        let (synced, plain) = match cached {
+            Some((synced, plain, fetched))
+                if synced.is_some() || plain.is_some() || now - fetched < lyrics::RETRY_SECS =>
+            {
+                (synced, plain)
+            }
+            _ => {
+                let duration = duration_ms.map(|d| d.max(0) as u64);
+                let fetched = match lyrics::fetch(base, &artist, &title, album.as_deref(), duration)
+                {
+                    Ok(fetched) => fetched.unwrap_or_default(),
+                    Err(err) => {
+                        tracing::warn!(path, %err, "can't ask LRCLIB for lyrics");
+                        return Ok(None);
+                    }
+                };
+                if let Some(hash) = hash {
+                    let stored = fetched.clone();
+                    self.write_aside("lyrics", move |conn| {
+                        conn.execute(
+                            "INSERT OR REPLACE INTO lyrics (hash, synced, plain, fetched)
+                             VALUES (?1, ?2, ?3, ?4)",
+                            params![hash, stored.0, stored.1, now],
+                        )
+                    });
+                }
+                fetched
+            }
+        };
+        let candidates = [synced, plain].into_iter().flatten();
+        Ok(
+            lyrics::best(candidates.map(|text| lyrics::parse(&text))).map(|lines| Lyrics {
+                source: LyricsSource::Lrclib,
+                lines,
+            }),
+        )
+    }
+
+    /// Writes the lyrics [`Self::lyrics`] finds as `<track>.lrc` next to the
+    /// file, every time moved by `offset_ms` (positive is later).
+    pub fn save_lyrics(&self, path: &str, offset_ms: i32, lrclib: Option<&str>) -> Result<()> {
+        let lyrics = self
+            .lyrics(path, lrclib)?
+            .ok_or_else(|| Error::Other("no lyrics to save".into()))?;
+        let file = Path::new(path).with_extension("lrc");
+        fs::write(&file, lyrics::to_lrc(&lyrics.lines, offset_ms))
+            .map_err(|e| Error::Other(format!("can't save {}: {e}", file.display())))
     }
 
     /// The image file for artwork `key`, scaled to fit `size` pixels (made
