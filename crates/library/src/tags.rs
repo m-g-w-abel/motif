@@ -12,7 +12,7 @@ use lofty::{
     picture::PictureType,
     prelude::{Accessor, AudioFile, ItemKey},
 };
-use protocol::ImageKind;
+use protocol::{ImageKind, ReplayGain};
 
 /// File extensions the scanner looks at.
 pub const AUDIO_EXTENSIONS: &[&str] = &[
@@ -44,6 +44,7 @@ pub struct Tags {
     pub bitrate: Option<u32>,
     pub musicbrainz_recording: Option<String>,
     pub isrc: Option<String>,
+    pub replay_gain: ReplayGain,
     /// Embedded front cover (or first picture), with a file extension.
     pub picture: Option<(Vec<u8>, &'static str)>,
 }
@@ -89,6 +90,14 @@ pub fn read(path: &Path) -> Tags {
     tags.year = tag.date().map(|d| u32::from(d.year)).filter(|&y| y > 0);
     tags.musicbrainz_recording = item(ItemKey::MusicBrainzRecordingId);
     tags.isrc = item(ItemKey::Isrc);
+    let number = |key: ItemKey| item(key).and_then(|s| parse_number(&s));
+    let r128 = |key: ItemKey| item(key).and_then(|s| r128_to_rg(&s));
+    tags.replay_gain = ReplayGain {
+        track_gain: number(ItemKey::ReplayGainTrackGain).or_else(|| r128(ItemKey::R128TrackGain)),
+        track_peak: number(ItemKey::ReplayGainTrackPeak),
+        album_gain: number(ItemKey::ReplayGainAlbumGain).or_else(|| r128(ItemKey::R128AlbumGain)),
+        album_peak: number(ItemKey::ReplayGainAlbumPeak),
+    };
     let pictures = tag.pictures();
     tags.picture = pictures
         .iter()
@@ -96,6 +105,36 @@ pub fn read(path: &Path) -> Tags {
         .or(pictures.first())
         .map(|p| (p.data().to_vec(), image_ext(p.data())));
     tags
+}
+
+/// The number a gain or peak tag starts with (`-6.54 dB`, `0.988`).
+fn parse_number(s: &str) -> Option<f32> {
+    let end = s
+        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '-' | '+' | '.')))
+        .unwrap_or(s.len());
+    s[..end].parse().ok().filter(|v: &f32| v.is_finite())
+}
+
+/// Opus `R128_*_GAIN` (Q7.8 dB relative to -23 LUFS) as a ReplayGain gain
+/// (relative to -18 LUFS, so 5 dB louder).
+fn r128_to_rg(s: &str) -> Option<f32> {
+    s.trim()
+        .parse::<i16>()
+        .ok()
+        .map(|q| f32::from(q) / 256.0 + 5.0)
+}
+
+#[cfg(test)]
+#[test]
+fn gain_tags_parse() {
+    assert_eq!(parse_number("-6.54 dB"), Some(-6.54));
+    assert_eq!(parse_number("+2.10dB"), Some(2.1));
+    assert_eq!(parse_number("0.988312"), Some(0.988312));
+    assert_eq!(parse_number("loud"), None);
+    // -1.5 dB below -23 LUFS is 3.5 dB above the ReplayGain reference.
+    assert_eq!(r128_to_rg("-384"), Some(3.5));
+    assert_eq!(r128_to_rg("0"), Some(5.0));
+    assert_eq!(r128_to_rg("x"), None);
 }
 
 fn image_ext(bytes: &[u8]) -> &'static str {

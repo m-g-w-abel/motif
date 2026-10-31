@@ -4,6 +4,7 @@ import type { PlayContext } from "./PlayContext";
 import type { PlaybackStatus } from "./PlaybackStatus";
 import type { QueueItem } from "./QueueItem";
 import type { RepeatMode } from "./RepeatMode";
+import type { ReplayGainSettings } from "./ReplayGainSettings";
 
 /**
  * Snapshot of the transport. The queue and context entries come separately
@@ -42,4 +43,9 @@ output: string | null,
 /**
  * Output devices found at the last [`Command::ListOutputs`].
  */
-outputs: Array<OutputDevice>, };
+outputs: Array<OutputDevice>, replay_gain: ReplayGainSettings, 
+/**
+ * The ReplayGain adjustment applied to the current track, in dB
+ * (`None` when off or nothing is loaded).
+ */
+gain_db: number | null, };

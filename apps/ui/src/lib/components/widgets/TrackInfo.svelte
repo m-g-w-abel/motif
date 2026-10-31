@@ -15,6 +15,8 @@
   const context = $derived(engine.player?.context);
   /** Format details from the library, when the file is in it. */
   const details = $derived(library.details(track));
+  /** The ReplayGain adjustment the engine applies to what is playing. */
+  const gain = $derived(engine.player?.gain_db);
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
 
   const rows = $derived<[string, string][]>(
@@ -32,6 +34,7 @@
             ['Sample rate', details?.sample_rate ? `${details.sample_rate / 1000} kHz` : ''],
             ['Bit depth', details?.bit_depth ? `${details.bit_depth}-bit` : ''],
             ['Bitrate', details?.bitrate ? `${details.bitrate} kbps` : ''],
+            ['ReplayGain', playing && gain != null ? `${gain > 0 ? '+' : ''}${gain.toFixed(2)} dB` : ''],
             ['File', track.source === 'local' ? track.id : ''],
           ] as [string, string][]
         ).filter(([, value]) => value)

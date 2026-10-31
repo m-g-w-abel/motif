@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use protocol::PlaybackStatus;
+use protocol::{PlaybackStatus, ReplayGain};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
@@ -28,15 +28,28 @@ pub struct Output {
     events: UnboundedSender<AudioEvent>,
     /// Shared with the decode thread, which reads it for every file it opens.
     plugins: Arc<Mutex<Vec<&'static Plugin>>>,
-    /// Token and queue item of what is loaded.
-    loaded: Option<(u64, u64)>,
-    /// Token, queue item and file of what is preloaded to follow it.
-    preloaded: Option<(u64, u64, PathBuf)>,
+    /// Token, queue item and ReplayGain factor of what is loaded.
+    loaded: Option<(u64, u64, f32)>,
+    /// What is preloaded to follow it.
+    preloaded: Option<Preloaded>,
     /// The player's seek count when the output last followed it.
     seeks: u64,
     underruns: u64,
     /// Whether a visualiser wants [`Output::bands`].
     tap: bool,
+}
+
+struct Preloaded {
+    token: u64,
+    item: u64,
+    path: PathBuf,
+    tags: ReplayGain,
+    gain: f32,
+}
+
+/// A ReplayGain adjustment as a linear factor.
+fn factor(db: Option<f32>) -> f32 {
+    db.map_or(1.0, |db| 10f32.powf(db / 20.0))
 }
 
 impl Output {
@@ -66,14 +79,14 @@ impl Output {
             self.preloaded = None;
         }
         let wanted = match (player.current_item(), player.playable()) {
-            (Some(item), Some(Playable::File(path)))
+            (Some(item), Some(Playable::File(path, tags)))
                 if player.status() != PlaybackStatus::Stopped =>
             {
-                Some((item.id, path.clone()))
+                Some((item.id, path.clone(), factor(player.gain_db(tags, false))))
             }
             _ => None,
         };
-        let Some((item, path)) = wanted else {
+        let Some((item, path, gain)) = wanted else {
             if self.loaded.take().is_some()
                 && let Some(audio) = &self.audio
             {
@@ -99,14 +112,20 @@ impl Output {
         }
         let Some(audio) = &mut self.audio else { return };
 
-        if self.loaded.map(|(_, i)| i) != Some(item) {
-            let token = audio.load(item, path, player.position(now));
-            self.loaded = Some((token, item));
+        if self.loaded.map(|(_, i, _)| i) != Some(item) {
+            let token = audio.load(item, path, player.position(now), gain);
+            self.loaded = Some((token, item, gain));
             self.preloaded = None;
             self.seeks = player.seeks();
         } else if self.seeks != player.seeks() {
             audio.seek(player.position(now));
             self.seeks = player.seeks();
+        }
+        if let Some((token, _, sent)) = &mut self.loaded
+            && *sent != gain
+        {
+            audio.set_gain(*token, gain);
+            *sent = gain;
         }
         audio.set_playing(player.status() == PlaybackStatus::Playing);
         audio.set_volume(player.volume());
@@ -114,20 +133,30 @@ impl Output {
         let upcoming = player
             .upcoming()
             .and_then(|next| match resolver.resolve(&next.track) {
-                Ok(Playable::File(path)) => Some((next.id, path)),
+                Ok(Playable::File(path, tags)) => {
+                    Some((next.id, path, tags, factor(player.gain_db(&tags, true))))
+                }
                 _ => None,
             });
         match upcoming {
-            Some((next, path)) => {
-                if self
-                    .preloaded
-                    .as_ref()
-                    .is_none_or(|(_, item, p)| *item != next || *p != path)
-                {
-                    let token = audio.preload(next, path.clone());
-                    self.preloaded = Some((token, next, path));
+            Some((item, path, tags, gain)) => match &mut self.preloaded {
+                Some(next) if next.item == item && next.path == path => {
+                    if next.gain != gain {
+                        audio.set_gain(next.token, gain);
+                        next.gain = gain;
+                    }
                 }
-            }
+                _ => {
+                    let token = audio.preload(item, path.clone(), gain);
+                    self.preloaded = Some(Preloaded {
+                        token,
+                        item,
+                        path,
+                        tags,
+                        gain,
+                    });
+                }
+            },
             None => {
                 if self.preloaded.take().is_some() {
                     audio.clear_preload();
@@ -139,7 +168,7 @@ impl Output {
     /// Follows what the listener hears: gapless moves to the next track, the
     /// end of the queue, and clock drift. Returns whether the player changed.
     pub fn poll(&mut self, player: &mut Player, now: Instant) -> bool {
-        let (Some(audio), Some((token, _))) = (&self.audio, self.loaded) else {
+        let (Some(audio), Some((token, _, _))) = (&self.audio, self.loaded) else {
             return false;
         };
         let Some(head) = audio.playhead() else {
@@ -156,16 +185,16 @@ impl Output {
         match heard(
             head.token,
             token,
-            self.preloaded.as_ref().map(|(t, _, _)| *t),
+            self.preloaded.as_ref().map(|next| next.token),
         ) {
             Heard::Loaded => {}
             Heard::Draining => return false,
             Heard::Preloaded => {
-                let Some((next_token, next_item, path)) = self.preloaded.take() else {
+                let Some(next) = self.preloaded.take() else {
                     return false;
                 };
-                self.loaded = Some((next_token, next_item));
-                if player.moved_to(next_item, Playable::File(path), now) {
+                self.loaded = Some((next.token, next.item, next.gain));
+                if player.moved_to(next.item, Playable::File(next.path, next.tags), now) {
                     player.sync_position(head.position, now);
                 }
                 return true;
@@ -206,10 +235,14 @@ impl Output {
     pub fn handle(&mut self, event: AudioEvent, player: &mut Player, now: Instant) {
         match event {
             AudioEvent::Failed { item, reason } => {
-                if self.loaded.is_some_and(|(_, i)| i == item) {
+                if self.loaded.is_some_and(|(_, i, _)| i == item) {
                     self.loaded = None;
                 }
-                if self.preloaded.as_ref().is_some_and(|(_, i, _)| *i == item) {
+                if self
+                    .preloaded
+                    .as_ref()
+                    .is_some_and(|next| next.item == item)
+                {
                     self.preloaded = None;
                 }
                 player.fail(item, reason, now);

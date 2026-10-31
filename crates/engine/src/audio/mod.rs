@@ -3,7 +3,8 @@
 //! slow disk or a busy CPU never blocks the audio device. Position comes from
 //! the frames the callback has actually played. While a visualiser listens,
 //! the callback also copies what it plays into a second ring buffer for
-//! [`bands`].
+//! [`bands`]. Each track's ReplayGain factor is applied as it enters the
+//! ring buffer, so it changes at the exact sample a gapless track starts.
 
 pub mod bands;
 pub mod decoder;
@@ -66,11 +67,18 @@ enum Command {
         item: u64,
         path: PathBuf,
         start: Duration,
+        gain: f32,
     },
     Preload {
         token: u64,
         item: u64,
         path: PathBuf,
+        gain: f32,
+    },
+    /// Changes the ReplayGain factor of the loaded or preloaded `token`.
+    Gain {
+        token: u64,
+        gain: f32,
     },
     ClearPreload,
     Seek(Duration),
@@ -161,24 +169,36 @@ impl Audio {
     }
 
     /// Starts decoding queue item `item` from `start`, replacing whatever was
-    /// playing. Returns the token that [`Playhead::token`] reports while it is
-    /// audible.
-    pub fn load(&mut self, item: u64, path: PathBuf, start: Duration) -> u64 {
+    /// playing, at ReplayGain factor `gain`. Returns the token that
+    /// [`Playhead::token`] reports while it is audible.
+    pub fn load(&mut self, item: u64, path: PathBuf, start: Duration, gain: f32) -> u64 {
         let token = self.token();
         let _ = self.commands.send(Command::Load {
             token,
             item,
             path,
             start,
+            gain,
         });
         token
     }
 
     /// Prepares `item` to follow the current track without a gap.
-    pub fn preload(&mut self, item: u64, path: PathBuf) -> u64 {
+    pub fn preload(&mut self, item: u64, path: PathBuf, gain: f32) -> u64 {
         let token = self.token();
-        let _ = self.commands.send(Command::Preload { token, item, path });
+        let _ = self.commands.send(Command::Preload {
+            token,
+            item,
+            path,
+            gain,
+        });
         token
+    }
+
+    /// Changes the ReplayGain factor of a loaded or preloaded track. It is
+    /// heard once the buffered audio has played.
+    pub fn set_gain(&self, token: u64, gain: f32) {
+        let _ = self.commands.send(Command::Gain { token, gain });
     }
 
     pub fn clear_preload(&self) {
@@ -396,6 +416,7 @@ struct Feeder {
 struct Loaded {
     token: u64,
     item: u64,
+    gain: f32,
     decoder: Box<dyn Decoder>,
 }
 
@@ -405,21 +426,24 @@ impl Feeder {
         let mut next: Option<Loaded> = None;
         // A preload waits to be opened until the buffer is full, so opening a
         // file (slow on a busy disk) never starves the current track.
-        let mut next_request: Option<(u64, u64, PathBuf)> = None;
+        let mut next_request: Option<(u64, u64, PathBuf, f32)> = None;
         let mut stream = Stream::new(self.rate, self.channels);
         stream.reset(self.shared.played.load(Ordering::Acquire));
         let mut decoded = Vec::new();
         // Converted audio not yet in the ring buffer.
         let mut pending: Vec<f32> = Vec::new();
         let mut sent = 0;
+        // The ReplayGain factor last applied, ramped to each track's over ~10 ms.
+        let mut applied = 1.0f32;
+        let ramp = 1.0 / (self.rate as f32 * 0.01);
 
         loop {
             let full = self.producer.slots() < self.channels * 256;
             if full {
                 // Filled since the last flush: from now on running dry is an underrun.
                 self.shared.armed.store(true, Ordering::Relaxed);
-                if let Some((token, item, path)) = next_request.take() {
-                    next = self.open(token, item, &path);
+                if let Some((token, item, path, gain)) = next_request.take() {
+                    next = self.open(token, item, &path, gain);
                 }
             }
             let busy = current.is_some() || sent < pending.len();
@@ -448,11 +472,13 @@ impl Feeder {
                     item,
                     path,
                     start,
+                    gain,
                 }) => {
                     self.flush(&mut stream, &mut pending, &mut sent);
                     next = None;
                     next_request = None;
-                    current = self.open(token, item, &path).and_then(|mut loaded| {
+                    applied = gain;
+                    current = self.open(token, item, &path, gain).and_then(|mut loaded| {
                         let reached = if start.is_zero() {
                             Duration::ZERO
                         } else {
@@ -466,9 +492,26 @@ impl Feeder {
                         Some(loaded)
                     });
                 }
-                Some(Command::Preload { token, item, path }) => {
+                Some(Command::Preload {
+                    token,
+                    item,
+                    path,
+                    gain,
+                }) => {
                     next = None;
-                    next_request = Some((token, item, path));
+                    next_request = Some((token, item, path, gain));
+                }
+                Some(Command::Gain { token, gain }) => {
+                    for loaded in [&mut current, &mut next].into_iter().flatten() {
+                        if loaded.token == token {
+                            loaded.gain = gain;
+                        }
+                    }
+                    if let Some(request) = &mut next_request
+                        && request.0 == token
+                    {
+                        request.3 = gain;
+                    }
                 }
                 Some(Command::ClearPreload) => {
                     next = None;
@@ -507,6 +550,7 @@ impl Feeder {
                 pending.clear();
                 sent = 0;
                 decoded.clear();
+                let gain = loaded.gain;
                 let result = loaded.decoder.decode(&mut decoded).and_then(|more| {
                     let (rate, channels) =
                         (loaded.decoder.sample_rate(), loaded.decoder.channels());
@@ -518,8 +562,8 @@ impl Feeder {
                     Ok(true) => {}
                     Ok(false) => {
                         // Track done: the preloaded one starts on the very next frame.
-                        if let Some((token, item, path)) = next_request.take() {
-                            next = self.open(token, item, &path);
+                        if let Some((token, item, path, gain)) = next_request.take() {
+                            next = self.open(token, item, &path, gain);
                         }
                         current = next.take();
                         match &current {
@@ -543,6 +587,7 @@ impl Feeder {
                         current = None;
                     }
                 }
+                apply_gain(&mut pending, self.channels, &mut applied, gain, ramp);
             }
 
             // Move pending audio into the ring buffer, whole frames at a time.
@@ -560,12 +605,13 @@ impl Feeder {
         }
     }
 
-    fn open(&self, token: u64, item: u64, path: &std::path::Path) -> Option<Loaded> {
+    fn open(&self, token: u64, item: u64, path: &std::path::Path, gain: f32) -> Option<Loaded> {
         let plugins = self.plugins.lock().map(|p| p.clone()).unwrap_or_default();
         decoder::open(path, &plugins)
             .map(|decoder| Loaded {
                 token,
                 item,
+                gain,
                 decoder,
             })
             .map_err(|reason| self.fail(item, reason))
@@ -599,4 +645,33 @@ impl Feeder {
         self.lock().clear();
         stream.reset(self.shared.played.load(Ordering::Acquire));
     }
+}
+
+/// Scales `samples` by `target`, moving `applied` towards it by at most
+/// `step` per frame so a change of gain doesn't click.
+fn apply_gain(samples: &mut [f32], channels: usize, applied: &mut f32, target: f32, step: f32) {
+    if *applied == target && target == 1.0 {
+        return;
+    }
+    for frame in samples.chunks_mut(channels) {
+        *applied += (target - *applied).clamp(-step, step);
+        for sample in frame {
+            *sample *= *applied;
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn gain_changes_ramp() {
+    let mut samples = vec![1.0; 8];
+    let mut applied = 1.0;
+    apply_gain(&mut samples, 2, &mut applied, 0.5, 0.2);
+    assert_eq!(applied, 0.5);
+    let left: Vec<f32> = samples
+        .iter()
+        .step_by(2)
+        .map(|s| (s * 10.0).round() / 10.0)
+        .collect();
+    assert_eq!(left, [0.8, 0.6, 0.5, 0.5]);
 }

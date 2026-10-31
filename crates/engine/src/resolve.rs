@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-use protocol::TrackRef;
+use protocol::{ReplayGain, TrackRef};
 
 /// Something this device can play.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Playable {
-    File(PathBuf),
+    /// A file and its ReplayGain values.
+    File(PathBuf, ReplayGain),
     /// The UI's demo library, which has no audio; playback is simulated.
     // shortcut: goes with the demo library in phase 1 milestone 6.
     Simulated,
@@ -28,7 +29,7 @@ impl Resolver for LocalFiles {
             "local" => {
                 let path = PathBuf::from(&track.id);
                 if path.is_file() {
-                    Ok(Playable::File(path))
+                    Ok(Playable::File(path, ReplayGain::default()))
                 } else {
                     Err(format!("file not found: {}", track.id))
                 }

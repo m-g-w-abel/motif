@@ -102,6 +102,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              channels INTEGER, bitrate INTEGER,
              musicbrainz_recording TEXT, isrc TEXT, audio_hash TEXT,
              art TEXT,
+             rg_track_gain REAL, rg_track_peak REAL, rg_album_gain REAL, rg_album_peak REAL,
              missing INTEGER NOT NULL DEFAULT 0,
              problem TEXT,
              added INTEGER
@@ -140,7 +141,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 6;
+const VERSION: i32 = 7;
 
 fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -184,6 +185,20 @@ fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
         // Version 6 gives ties to embedded art again. A folder image can
         // share its key with an embedded copy, so re-read every track with art.
         conn.execute("UPDATE tracks SET mtime = -1 WHERE art IS NOT NULL", [])?;
+    }
+    if version < 7 {
+        // Version 7 reads ReplayGain tags: add the columns and re-read every file.
+        for column in [
+            "rg_track_gain",
+            "rg_track_peak",
+            "rg_album_gain",
+            "rg_album_peak",
+        ] {
+            if !has(column)? {
+                conn.execute(&format!("ALTER TABLE tracks ADD COLUMN {column} REAL"), [])?;
+            }
+        }
+        conn.execute("UPDATE tracks SET mtime = -1", [])?;
     }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
