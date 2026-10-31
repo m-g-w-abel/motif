@@ -245,6 +245,8 @@ pub struct IntegrationSettings {
     pub lrclib: bool,
     /// Scrobble to ListenBrainz.
     pub listenbrainz: ScrobbleAccount,
+    /// Scrobble to Last.fm.
+    pub lastfm: ScrobbleAccount,
     /// Set by the host, ignored from clients: no OS keyring was found, so
     /// secrets are kept unencrypted in a file only this user can read.
     pub secrets_unencrypted: bool,
@@ -257,6 +259,7 @@ impl Default for IntegrationSettings {
         Self {
             lrclib: true,
             listenbrainz: ScrobbleAccount::default(),
+            lastfm: ScrobbleAccount::default(),
             secrets_unencrypted: false,
             discord: false,
         }
@@ -273,8 +276,12 @@ pub struct ScrobbleAccount {
     pub user: Option<String>,
     /// Set by the host: why signing in or the last submission failed.
     pub error: Option<String>,
+    /// Set by the host while signing in through the browser (Last.fm): the
+    /// page where the user allows Motif.
+    pub auth_url: Option<String>,
     /// From clients only, never sent out or saved: a credential to sign in
-    /// with (the ListenBrainz user token), or empty to sign out.
+    /// with (the ListenBrainz user token; anything for Last.fm, which signs
+    /// in through the browser), or empty to sign out or stop signing in.
     #[serde(skip_serializing, default)]
     pub sign_in: Option<String>,
 }

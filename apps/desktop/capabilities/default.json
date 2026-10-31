@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    "opener:allow-open-url",
     "core:window:allow-set-decorations",
     "core:window:allow-set-title-bar-style",
     "core:window:allow-minimize",

@@ -50,7 +50,13 @@ pub struct Secrets {
 impl Secrets {
     pub fn new(dir: &Path) -> Self {
         Self {
-            service: KEYRING_SERVICE.into(),
+            // Tests keep out of the real sign-ins.
+            service: if cfg!(test) {
+                "motif-test"
+            } else {
+                KEYRING_SERVICE
+            }
+            .into(),
             file: dir.join(SECRETS_FILE),
         }
     }

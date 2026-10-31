@@ -3,6 +3,7 @@
 //! however many windows are open. Scrobbles wait in a queue on disk until
 //! the service takes them.
 
+mod lastfm;
 mod listenbrainz;
 mod queue;
 mod tracker;
@@ -20,6 +21,7 @@ use tokio::{
     time::Instant,
 };
 
+pub use lastfm::LastFm;
 pub use listenbrainz::ListenBrainz;
 pub use queue::Queue;
 pub use tracker::{Action, Tracker};
@@ -64,12 +66,16 @@ pub enum Error {
     Retry(String),
     /// The service refuses these listens; retrying won't help.
     Rejected(String),
+    /// The service no longer takes the secret (a revoked session): sign in again.
+    SignedOut(String),
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Retry(message) | Self::Rejected(message) => f.write_str(message),
+            Self::Retry(message) | Self::Rejected(message) | Self::SignedOut(message) => {
+                f.write_str(message)
+            }
         }
     }
 }
@@ -82,11 +88,13 @@ pub trait Scrobbler: Clone + Send + Sync + 'static {
     const BATCH: usize;
     /// Its part of the integration settings.
     fn account(settings: &mut IntegrationSettings) -> &mut ScrobbleAccount;
-    /// Checks a credential the user pasted. Returns the account name and the
+    /// Checks a credential the user pasted, or signs in through the browser,
+    /// giving `show` the page to open. Returns the account name and the
     /// secret to keep for submitting.
     fn sign_in(
         &self,
         credential: &str,
+        show: &(dyn Fn(&str) + Sync),
     ) -> impl Future<Output = Result<(String, String), Error>> + Send;
     fn now_playing(
         &self,
@@ -113,7 +121,13 @@ pub fn start(engine: Engine, settings: watch::Sender<IntegrationSettings>, dir: 
     };
     let (actions, _) = broadcast::channel(64);
     tokio::spawn(run(
-        ListenBrainz::new(http),
+        ListenBrainz::new(http.clone()),
+        actions.subscribe(),
+        settings.clone(),
+        dir.to_owned(),
+    ));
+    tokio::spawn(run(
+        LastFm::new(http),
         actions.subscribe(),
         settings,
         dir.to_owned(),
@@ -154,6 +168,15 @@ async fn follow(engine: Engine, actions: broadcast::Sender<Action>) {
     }
 }
 
+/// Whether `id` looks like a MusicBrainz ID; services refuse malformed ones.
+fn is_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
 /// Signs in and out of one service and submits to it.
 async fn run<S: Scrobbler>(
     service: S,
@@ -174,8 +197,11 @@ async fn run<S: Scrobbler>(
             *S::account(s) != before
         })
     };
-    // Saved errors are from the last run.
-    set(&|a| a.error = None);
+    // Saved errors and sign-ins are from the last run.
+    set(&|a| {
+        a.error = None;
+        a.auth_url = None;
+    });
     loop {
         let account = S::account(&mut changes.borrow_and_update().clone()).clone();
         if let Some(credential) = account.sign_in {
@@ -189,7 +215,33 @@ async fn run<S: Scrobbler>(
                 set(&|a| *a = ScrobbleAccount::default());
                 continue;
             }
-            match service.sign_in(credential).await {
+            let show = |url: &str| {
+                tracing::info!(url, "{} sign-in: allow Motif on this page", S::NAME);
+                set(&|a| a.auth_url = Some(url.into()));
+            };
+            let signed_in = {
+                // A new request (signing out, or in again) stops this one.
+                let asked_again = async {
+                    while changes.changed().await.is_ok() {
+                        if S::account(&mut changes.borrow_and_update().clone())
+                            .sign_in
+                            .is_some()
+                        {
+                            return;
+                        }
+                    }
+                    std::future::pending().await
+                };
+                tokio::select! {
+                    signed_in = service.sign_in(credential, &show) => signed_in,
+                    () = asked_again => {
+                        set(&|a| a.auth_url = None);
+                        continue;
+                    }
+                }
+            };
+            set(&|a| a.auth_url = None);
+            match signed_in {
                 Ok((user, new)) => {
                     let kept = secrets.set(S::NAME, Some(&new));
                     let error = kept.err().map(|e| format!("Can't keep the sign-in: {e}"));
@@ -210,12 +262,26 @@ async fn run<S: Scrobbler>(
         if active
             && !queue.is_empty()
             && retry.is_none_or(|(at, _)| at <= Instant::now())
-            && let Some(secret) = &secret
+            && let Some(current) = &secret
         {
-            match queue.flush(&service, secret).await {
+            match queue.flush(&service, current).await {
                 Ok(()) => {
                     retry = None;
                     set(&|a| a.error = None);
+                }
+                // Keeps the queue for signing in again.
+                Err(Error::SignedOut(err)) => {
+                    if let Err(err) = secrets.set(S::NAME, None) {
+                        tracing::warn!(%err, "can't forget the {} secret", S::NAME);
+                    }
+                    secret = None;
+                    retry = None;
+                    set(&|a| {
+                        *a = ScrobbleAccount {
+                            error: Some(format!("{err}. Sign in again.")),
+                            ..Default::default()
+                        }
+                    });
                 }
                 Err(err) => {
                     let wait = retry.map_or(FIRST_RETRY, |(_, wait)| (wait * 2).min(LAST_RETRY));
@@ -259,5 +325,95 @@ async fn run<S: Scrobbler>(
             }
             _ = tokio::time::sleep_until(retry_at.unwrap_or_else(Instant::now)), if retry_at.is_some() => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Signs in through a page unless asked to "wait" there forever; every
+    /// session it gives is revoked by the time it scrobbles.
+    #[derive(Clone)]
+    struct Fake;
+
+    impl Scrobbler for Fake {
+        const NAME: &str = "fake-run";
+        const BATCH: usize = 1;
+        fn account(settings: &mut IntegrationSettings) -> &mut ScrobbleAccount {
+            &mut settings.lastfm
+        }
+        async fn sign_in(
+            &self,
+            credential: &str,
+            show: &(dyn Fn(&str) + Sync),
+        ) -> Result<(String, String), Error> {
+            show("http://allow");
+            if credential == "wait" {
+                std::future::pending::<()>().await;
+            }
+            Ok(("rob".into(), "s3cret".into()))
+        }
+        async fn now_playing(&self, _: &str, _: &Listen) -> Result<(), Error> {
+            Ok(())
+        }
+        async fn scrobble(&self, _: &str, _: &[Listen]) -> Result<(), Error> {
+            Err(Error::SignedOut("revoked".into()))
+        }
+    }
+
+    async fn until(
+        seen: &mut watch::Receiver<IntegrationSettings>,
+        what: &str,
+        done: fn(&ScrobbleAccount) -> bool,
+    ) {
+        let waited =
+            tokio::time::timeout(Duration::from_secs(5), seen.wait_for(|s| done(&s.lastfm)));
+        assert!(waited.await.is_ok(), "{what}: {:?}", seen.borrow().lastfm);
+    }
+
+    #[tokio::test]
+    async fn sign_in_can_be_stopped_and_a_revoked_session_signs_out() {
+        let dir = std::env::temp_dir().join(format!("motif-run-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (settings, mut seen) = watch::channel(IntegrationSettings::default());
+        let (actions, _) = broadcast::channel(8);
+        tokio::spawn(run(
+            Fake,
+            actions.subscribe(),
+            settings.clone(),
+            dir.clone(),
+        ));
+        let ask =
+            |credential: &str| settings.send_modify(|s| s.lastfm.sign_in = Some(credential.into()));
+
+        ask("wait");
+        until(&mut seen, "page shown", |a| {
+            a.auth_url.as_deref() == Some("http://allow")
+        })
+        .await;
+        ask("");
+        until(&mut seen, "stopped", |a| {
+            a.auth_url.is_none() && a.sign_in.is_none()
+        })
+        .await;
+        assert_eq!(seen.borrow().lastfm.user, None);
+
+        ask("go");
+        until(&mut seen, "signed in", |a| a.user.is_some() && a.enabled).await;
+        let listen = Listen::of(&TrackRef {
+            artist: Some("Band".into()),
+            title: Some("Song".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        actions.send(Action::Scrobble(listen)).unwrap();
+        until(&mut seen, "signed out", |a| {
+            a.user.is_none() && a.error.is_some()
+        })
+        .await;
+        assert!(!seen.borrow().lastfm.enabled);
+        assert_eq!(Secrets::new(&dir).get(Fake::NAME), None);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
