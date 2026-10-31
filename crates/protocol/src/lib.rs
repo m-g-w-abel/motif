@@ -243,6 +243,8 @@ pub enum Event {
 pub struct IntegrationSettings {
     /// Look up lyrics on LRCLIB.
     pub lrclib: bool,
+    /// Scrobble to ListenBrainz.
+    pub listenbrainz: ScrobbleAccount,
     /// Set by the host, ignored from clients: no OS keyring was found, so
     /// secrets are kept unencrypted in a file only this user can read.
     pub secrets_unencrypted: bool,
@@ -252,9 +254,26 @@ impl Default for IntegrationSettings {
     fn default() -> Self {
         Self {
             lrclib: true,
+            listenbrainz: ScrobbleAccount::default(),
             secrets_unencrypted: false,
         }
     }
+}
+
+/// A scrobbling service in [`IntegrationSettings`].
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ScrobbleAccount {
+    pub enabled: bool,
+    /// Set by the host: the signed-in account.
+    pub user: Option<String>,
+    /// Set by the host: why signing in or the last submission failed.
+    pub error: Option<String>,
+    /// From clients only, never sent out or saved: a credential to sign in
+    /// with (the ListenBrainz user token), or empty to sign out.
+    #[serde(skip_serializing, default)]
+    pub sign_in: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -670,5 +689,15 @@ mod tests {
             json,
             serde_json::json!({"type": "response", "id": 3, "error": null})
         );
+    }
+
+    #[test]
+    fn sign_in_credentials_are_never_sent_out() {
+        let settings: IntegrationSettings =
+            serde_json::from_str(r#"{"listenbrainz":{"sign_in":"t0ken"}}"#).unwrap();
+        assert_eq!(settings.listenbrainz.sign_in.as_deref(), Some("t0ken"));
+        assert!(settings.lrclib, "missing fields keep their defaults");
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("t0ken"));
     }
 }

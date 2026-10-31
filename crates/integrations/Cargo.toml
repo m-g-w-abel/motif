@@ -1,6 +1,6 @@
 [package]
 name = "integrations"
-description = "Integrations with the OS and outside services: media controls (later scrobbling, Discord, lyrics)"
+description = "Integrations with the OS and outside services: media controls, scrobbling (later Discord, lyrics)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,12 +10,19 @@ license.workspace = true
 engine.workspace = true
 library.workspace = true
 protocol.workspace = true
+# rustls with ring rather than reqwest's default aws-lc, which is harder to cross-build.
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-no-provider", "json"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+serde.workspace = true
 serde_json.workspace = true
 # Without a native store (Android) it falls back to a mock, which `settings` never uses there.
 keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 souvlaki = "0.8.3"
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
 
 [lints]
 workspace = true
