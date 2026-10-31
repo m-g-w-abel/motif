@@ -282,6 +282,11 @@ impl Player {
         gain_db(&self.replay_gain, tags, album)
     }
 
+    /// Whether ReplayGain is on, so untagged files are worth measuring.
+    pub fn measures(&self) -> bool {
+        self.replay_gain.mode != ReplayGainMode::Off
+    }
+
     pub fn seeks(&self) -> u64 {
         self.seeks
     }
@@ -367,7 +372,29 @@ impl Player {
             if self.resolved.as_ref().is_some_and(|(r, _)| *r == id) {
                 return changed;
             }
-            let result = resolver.resolve(&item.track);
+            let track = item.track.clone();
+            let mut result = resolver.resolve(&track);
+            if self.measures()
+                && matches!(&result, Ok(Playable::File(_, tags)) if tags.track_gain.is_none())
+            {
+                // Untagged and unmeasured: wait rather than change level mid-track.
+                resolver.measure(std::slice::from_ref(&track), true);
+                result = resolver.resolve(&track);
+            }
+            if let Some(Current::Context(i)) = self.current
+                && matches!(self.context_meta, Some((ContextKind::Album, _)))
+                && matches!(
+                    self.replay_gain.mode,
+                    ReplayGainMode::Album | ReplayGainMode::Auto
+                )
+            {
+                // Album gain needs every track: measure the rest, in play order.
+                let rest: Vec<_> = (self.context[i + 1..].iter())
+                    .chain(&self.context[..i])
+                    .map(|item| item.track.clone())
+                    .collect();
+                resolver.measure(&rest, false);
+            }
             let Some(item) = self.current_item_mut() else {
                 break;
             };
@@ -1215,6 +1242,71 @@ mod tests {
         let x = p.upcoming().unwrap().id;
         p.moved_to(x, Playable::Simulated, t0);
         assert_eq!(p.gain_db(&TAGS, false), Some(-6.0));
+    }
+
+    /// Untagged files that get [`TAGS`] once measured, recording requests.
+    #[derive(Default)]
+    struct Measuring(std::sync::Mutex<Vec<(Vec<String>, bool)>>);
+    impl Resolver for Measuring {
+        fn resolve(&self, track: &TrackRef) -> Result<Playable, String> {
+            let measured = self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(ids, wait)| *wait && ids[0] == track.id);
+            let tags = if measured {
+                TAGS
+            } else {
+                ReplayGain::default()
+            };
+            Ok(Playable::File(track.id.clone().into(), tags))
+        }
+        fn measure(&self, tracks: &[TrackRef], wait: bool) {
+            let ids = tracks.iter().map(|t| t.id.clone()).collect();
+            self.0.lock().unwrap().push((ids, wait));
+        }
+    }
+
+    #[test]
+    fn an_untagged_track_waits_for_its_measurement_and_an_album_measures_the_rest() {
+        let t0 = Instant::now();
+        let mut p = Player::default();
+        let tracks = vec![track("a", 1000), track("b", 1000), track("c", 1000)];
+        let album = Command::SetContext {
+            tracks,
+            start: Some(1),
+            kind: ContextKind::Album,
+            label: None,
+        };
+        p.apply(album, t0).unwrap();
+        let resolver = Measuring::default();
+        p.resolve_current(&resolver, t0);
+        assert_eq!(p.playable(), Some(&Playable::File("/b.flac".into(), TAGS)));
+        let ids = |v: &[&str]| v.iter().map(|s| format!("/{s}.flac")).collect::<Vec<_>>();
+        assert_eq!(
+            *resolver.0.lock().unwrap(),
+            [(ids(&["b"]), true), (ids(&["c", "a"]), false)],
+            "waits for b, then measures the rest of the album in play order"
+        );
+
+        let mut p = playing(&["a"], t0);
+        p.apply(
+            Command::SetReplayGain {
+                settings: ReplayGainSettings {
+                    mode: ReplayGainMode::Off,
+                    ..Default::default()
+                },
+            },
+            t0,
+        )
+        .unwrap();
+        let resolver = Measuring::default();
+        p.resolve_current(&resolver, t0);
+        assert!(
+            resolver.0.lock().unwrap().is_empty(),
+            "nothing is measured with ReplayGain off"
+        );
     }
 
     #[test]

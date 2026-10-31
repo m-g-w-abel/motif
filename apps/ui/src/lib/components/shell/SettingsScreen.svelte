@@ -97,6 +97,12 @@
   let fontOther = $state(!FONTS.some(([v]) => v === settings.current.font));
 
   let themeInput = $state<HTMLInputElement>();
+  let listenBrainzToken = $state('');
+  /** Signs the host in to ListenBrainz with a user token, or out with ''. */
+  function signInListenBrainz(token: string) {
+    const integrations = engine.integrations;
+    if (integrations) engine.setIntegrations({ ...integrations, listenbrainz: { ...integrations.listenbrainz, sign_in: token } });
+  }
   const activeUserTheme = $derived(themes.byId(settings.current.theme));
 
   async function pickThemes(files: FileList | null) {
@@ -437,6 +443,36 @@
             </div>
             <p class="status">Looks up lyrics for what plays on lrclib.net. Applies to every window and device using this engine.</p>
           </div>
+          {@const lb = integrations.listenbrainz}
+          <div class="row">
+            <span class="label">ListenBrainz</span>
+            {#if lb.user}
+              <div class="segmented" role="radiogroup" aria-label="Scrobble to ListenBrainz">
+                {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
+                  <button role="radio" aria-checked={lb.enabled === value} class:active={lb.enabled === value} onclick={() => engine.setIntegrations({ ...integrations, listenbrainz: { ...lb, enabled: value } })}>{text}</button>
+                {/each}
+              </div>
+              <div class="actions">
+                <p class="status">Signed in as {lb.user}.</p>
+                <button class="button" onclick={() => signInListenBrainz('')}>Sign out</button>
+              </div>
+            {:else}
+              <form
+                class="actions token"
+                onsubmit={(e) => {
+                  e.preventDefault();
+                  signInListenBrainz(listenBrainzToken.trim());
+                  listenBrainzToken = '';
+                }}
+              >
+                <input class="select" type="password" autocomplete="off" placeholder="User token" aria-label="ListenBrainz user token" bind:value={listenBrainzToken} />
+                <button class="button" disabled={!listenBrainzToken.trim()}>Sign in</button>
+              </form>
+              <p class="status">Paste the user token from your settings page on listenbrainz.org.</p>
+            {/if}
+            {#if lb.error}<p class="status error selectable">{lb.error}</p>{/if}
+            <p class="status">Scrobbles what this engine plays, from any window or none.</p>
+          </div>
           <div class="row">
             <span class="label">Discord status</span>
             <div class="segmented" role="radiogroup" aria-label="Discord status">
@@ -614,6 +650,10 @@
   .actions {
     display: flex;
     gap: var(--space-2);
+  }
+
+  .token .button {
+    flex: none;
   }
 
   .status {

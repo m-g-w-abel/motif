@@ -62,13 +62,15 @@ pub struct ContextWindow {
 
 /// How often the engine follows the audio output (track changes, drift).
 const TICK: Duration = Duration::from_millis(100);
+/// Resolving longer than this means it waited for a loudness measurement.
+const WAITED: Duration = Duration::from_millis(50);
 /// How often visualiser bands are published while anyone subscribes.
 const BANDS_TICK: Duration = Duration::from_millis(33);
 
 impl Engine {
     /// Starts the engine on the current Tokio runtime. `resolver` decides what
     /// on this device plays each queue entry.
-    // shortcut: resolving runs on the engine task, fine for local files; streaming sources (phase 8) need it async.
+    // shortcut: resolving runs on the engine task, fine for local files (it can wait a few seconds for a loudness measurement, #84); streaming sources (phase 8) need it async.
     pub fn spawn(resolver: impl Resolver) -> Self {
         let (requests, mut rx) = mpsc::channel::<Request>(64);
         let mut player = Player::default();
@@ -88,7 +90,7 @@ impl Engine {
             bands_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut tapping = false;
             loop {
-                let now = Instant::now();
+                let mut now = Instant::now();
                 let changed = tokio::select! {
                     request = rx.recv() => {
                         let Some(Request { command, reply }) = request else { break };
@@ -110,7 +112,7 @@ impl Engine {
                             output.set_tap(wanted);
                             bands_tick.reset();
                         }
-                        player.tick(now) | output.poll(&mut player, now)
+                        player.tick(now) | output.poll(&mut player, now) | resolver.measured()
                     }
                     _ = bands_tick.tick(), if tapping => {
                         if let Some(bands) = output.bands() {
@@ -123,7 +125,17 @@ impl Engine {
                     // Repeat while a failure moves playback on to another entry;
                     // `fail` stops once every entry has failed.
                     loop {
+                        let started = Instant::now();
+                        let position = player.position(started);
+                        let current = player.current_item().map(|item| item.id);
                         player.resolve_current(&resolver, now);
+                        // Time spent waiting for a measurement isn't played.
+                        if player.current_item().map(|item| item.id) == current
+                            && started.elapsed() > WAITED
+                        {
+                            now = Instant::now();
+                            player.sync_position(position, now);
+                        }
                         let current = player.current_item().map(|item| item.id);
                         output.reconcile(&mut player, &resolver, now);
                         if player.current_item().map(|item| item.id) == current {

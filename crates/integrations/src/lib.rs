@@ -3,4 +3,5 @@
 
 pub mod discord;
 pub mod media_controls;
+pub mod scrobble;
 pub mod settings;

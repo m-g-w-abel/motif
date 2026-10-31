@@ -139,8 +139,12 @@ async fn start_engine(
         hwnd,
     );
     let integrations = match library.is_some().then(library::data_dir).flatten() {
-        Some(dir) => integrations::settings::keep(&dir),
-        // No data directory: the settings last until the app quits.
+        Some(dir) => {
+            let settings = integrations::settings::keep(&dir);
+            integrations::scrobble::start(engine.clone(), settings.clone(), &dir);
+            settings
+        }
+        // No data directory: the settings last until the app quits, and no scrobbling.
         None => tokio::sync::watch::channel(Default::default()).0,
     };
     integrations::discord::start(
