@@ -49,8 +49,12 @@ fn show_in_folder(path: String) -> Result<(), String> {
 pub fn run() {
     #[cfg(target_os = "linux")]
     keep_gpu_rendering_on_nvidia();
+    // The Discord crate warns on every retry while Discord isn't running.
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,discord_rich_presence=error".into()),
+        )
         .init();
 
     tauri::Builder::default()
@@ -143,6 +147,11 @@ async fn start_engine(
         // No data directory: the settings last until the app quits, and no scrobbling.
         None => tokio::sync::watch::channel(Default::default()).0,
     };
+    integrations::discord::start(
+        engine.clone(),
+        library.as_ref().map(|(library, _)| library.clone()),
+        integrations.subscribe(),
+    );
     let config = server::Config {
         // Loopback only until pairing exists (phase 4).
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),

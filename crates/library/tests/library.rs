@@ -532,3 +532,33 @@ fn loudness_is_measured_for_untagged_files_then_gives_album_gain() {
     library.measure(vec![loud], true);
     assert!(!library.take_measured());
 }
+
+#[test]
+fn musicbrainz_release_ids_are_read() {
+    use lofty::{config::WriteOptions, file::TaggedFileExt, prelude::ItemKey, tag::TagExt};
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &music,
+    );
+    let file = music.join("Artist A/First Album/01 Opening.flac");
+    let mut tag = lofty::read_from_path(&file)
+        .unwrap()
+        .primary_tag()
+        .unwrap()
+        .clone();
+    let id = "b84ee12a-09ef-421b-82de-0441a926375b";
+    tag.insert_text(ItemKey::MusicBrainzReleaseId, id.into());
+    tag.save_to_path(&file, WriteOptions::default()).unwrap();
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 4 && !s.scanning);
+    let path = track(&library, "Opening").track.id;
+    assert_eq!(library.musicbrainz_album(&path).as_deref(), Some(id));
+    let other = track(&library, "Closing").track.id;
+    assert_eq!(library.musicbrainz_album(&other), None);
+}

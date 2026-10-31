@@ -473,6 +473,15 @@
             {#if lb.error}<p class="status error selectable">{lb.error}</p>{/if}
             <p class="status">Scrobbles what this engine plays, from any window or none.</p>
           </div>
+          <div class="row">
+            <span class="label">Discord status</span>
+            <div class="segmented" role="radiogroup" aria-label="Discord status">
+              {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
+                <button role="radio" aria-checked={integrations.discord === value} class:active={integrations.discord === value} onclick={() => engine.setIntegrations({ ...integrations, discord: value })}>{text}</button>
+              {/each}
+            </div>
+            <p class="status">Shows what plays on your Discord profile, as "Listening to" the artist, while Discord runs on the computer playing. Cover art comes from the Cover Art Archive for tracks tagged with a MusicBrainz release.</p>
+          </div>
           {#if integrations.secrets_unencrypted}
             <p class="status">No system keyring found: sign-ins are stored unencrypted, readable only by your user.</p>
           {/if}

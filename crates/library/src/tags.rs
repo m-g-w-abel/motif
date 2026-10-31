@@ -44,6 +44,7 @@ pub struct Tags {
     pub bitrate: Option<u32>,
     pub musicbrainz_recording: Option<String>,
     pub isrc: Option<String>,
+    pub musicbrainz_album: Option<String>,
     pub replay_gain: ReplayGain,
     /// Embedded front cover (or first picture), with a file extension.
     pub picture: Option<(Vec<u8>, &'static str)>,
@@ -90,6 +91,7 @@ pub fn read(path: &Path) -> Tags {
     tags.year = tag.date().map(|d| u32::from(d.year)).filter(|&y| y > 0);
     tags.musicbrainz_recording = item(ItemKey::MusicBrainzRecordingId);
     tags.isrc = item(ItemKey::Isrc);
+    tags.musicbrainz_album = item(ItemKey::MusicBrainzReleaseId);
     let number = |key: ItemKey| item(key).and_then(|s| parse_number(&s));
     let r128 = |key: ItemKey| item(key).and_then(|s| r128_to_rg(&s));
     tags.replay_gain = ReplayGain {
@@ -254,6 +256,7 @@ fn read_with_symphonia(path: &Path) -> Option<Tags> {
             Some(T::Genre(s)) => tags.genre = text(s),
             Some(T::IdentIsrc(s)) => tags.isrc = text(s),
             Some(T::MusicBrainzRecordingId(s)) => tags.musicbrainz_recording = text(s),
+            Some(T::MusicBrainzAlbumId(s)) => tags.musicbrainz_album = text(s),
             Some(T::TrackNumber(n)) => tags.track_no = u32::try_from(*n).ok(),
             Some(T::DiscNumber(n)) => tags.disc_no = u32::try_from(*n).ok(),
             Some(T::ReleaseDate(s) | T::RecordingDate(s)) if tags.year.is_none() => {

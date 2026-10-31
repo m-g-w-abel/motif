@@ -541,6 +541,7 @@ mod tests {
                 ..Default::default()
             },
             secrets_unencrypted: true,
+            discord: false,
         };
         let json = serde_json::to_string(&ClientMessage::SetIntegrations {
             id: 1,

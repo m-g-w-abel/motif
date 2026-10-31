@@ -248,6 +248,8 @@ pub struct IntegrationSettings {
     /// Set by the host, ignored from clients: no OS keyring was found, so
     /// secrets are kept unencrypted in a file only this user can read.
     pub secrets_unencrypted: bool,
+    /// Show what plays as Discord Rich Presence (desktop hosts).
+    pub discord: bool,
 }
 
 impl Default for IntegrationSettings {
@@ -256,6 +258,7 @@ impl Default for IntegrationSettings {
             lrclib: true,
             listenbrainz: ScrobbleAccount::default(),
             secrets_unencrypted: false,
+            discord: false,
         }
     }
 }
