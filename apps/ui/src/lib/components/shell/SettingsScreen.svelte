@@ -99,17 +99,17 @@
 
   let themeInput = $state<HTMLInputElement>();
   let listenBrainzToken = $state('');
-  /** Signs the host in to a scrobbling service (a ListenBrainz user token; anything for Last.fm), or out with ''. */
-  function signIn(service: 'listenbrainz' | 'lastfm', credential: string) {
+  /** Signs the host in to a scrobbling service (a ListenBrainz user token; anything for Last.fm and Libre.fm), or out with ''. */
+  function signIn(service: 'listenbrainz' | 'lastfm' | 'librefm', credential: string) {
     const integrations = engine.integrations;
     if (integrations) engine.setIntegrations({ ...integrations, [service]: { ...integrations[service], sign_in: credential } });
   }
-  // Opens the Last.fm page once the host has one, in the window that asked only.
-  let lastFmAsked = $state(false);
+  // Opens a service's sign-in page once the host has one, in the window that asked only.
+  let browserSignIn = $state<'lastfm' | 'librefm' | null>(null);
   $effect(() => {
-    const url = engine.integrations?.lastfm.auth_url;
-    if (lastFmAsked && url) {
-      lastFmAsked = false;
+    const url = browserSignIn && engine.integrations?.[browserSignIn].auth_url;
+    if (url) {
+      browserSignIn = null;
       void openUrl(url);
     }
   });
@@ -483,40 +483,42 @@
             {#if lb.error}<p class="status error selectable">{lb.error}</p>{/if}
             <p class="status">Scrobbles what this engine plays, from any window or none.</p>
           </div>
-          {@const fm = integrations.lastfm}
+          {#each [['lastfm', 'Last.fm'], ['librefm', 'Libre.fm']] as const as [service, name] (service)}
+          {@const fm = integrations[service]}
           <div class="row">
-            <span class="label">Last.fm</span>
+            <span class="label">{name}</span>
             {#if fm.user}
-              <div class="segmented" role="radiogroup" aria-label="Scrobble to Last.fm">
+              <div class="segmented" role="radiogroup" aria-label="Scrobble to {name}">
                 {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
-                  <button role="radio" aria-checked={fm.enabled === value} class:active={fm.enabled === value} onclick={() => engine.setIntegrations({ ...integrations, lastfm: { ...fm, enabled: value } })}>{text}</button>
+                  <button role="radio" aria-checked={fm.enabled === value} class:active={fm.enabled === value} onclick={() => engine.setIntegrations({ ...integrations, [service]: { ...fm, enabled: value } })}>{text}</button>
                 {/each}
               </div>
               <div class="actions">
                 <p class="status">Signed in as {fm.user}.</p>
-                <button class="button" onclick={() => signIn('lastfm', '')}>Sign out</button>
+                <button class="button" onclick={() => signIn(service, '')}>Sign out</button>
               </div>
             {:else if fm.auth_url}
               {@const url = fm.auth_url}
               <div class="actions">
-                <p class="status">Allow Motif on the Last.fm page in your browser.</p>
+                <p class="status">Allow Motif on the {name} page in your browser.</p>
                 <button class="button" onclick={() => openUrl(url)}>Open it again</button>
-                <button class="button" onclick={() => signIn('lastfm', '')}>Cancel</button>
+                <button class="button" onclick={() => signIn(service, '')}>Cancel</button>
               </div>
             {:else}
               <div class="actions">
                 <button
                   class="button"
                   onclick={() => {
-                    lastFmAsked = true;
-                    signIn('lastfm', 'browser');
-                  }}>Sign in with Last.fm</button
+                    browserSignIn = service;
+                    signIn(service, 'browser');
+                  }}>Sign in with {name}</button
                 >
               </div>
             {/if}
             {#if fm.error}<p class="status error selectable">{fm.error}</p>{/if}
             <p class="status">Scrobbles what this engine plays, from any window or none.</p>
           </div>
+          {/each}
           <div class="row">
             <span class="label">Discord status</span>
             <div class="segmented" role="radiogroup" aria-label="Discord status">

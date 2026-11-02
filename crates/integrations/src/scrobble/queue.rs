@@ -51,7 +51,7 @@ impl Queue {
                     continue;
                 }
                 Err(Error::Rejected(err)) => {
-                    tracing::warn!(%err, listen = ?self.listens[0], "{} rejected a scrobble", S::NAME);
+                    tracing::warn!(%err, listen = ?self.listens[0], "{} rejected a scrobble", service.name());
                 }
                 Err(err) => return Err(err),
             }
@@ -88,9 +88,11 @@ mod tests {
     }
 
     impl Scrobbler for Fake {
-        const NAME: &str = "fake";
         const BATCH: usize = 2;
-        fn account(settings: &mut IntegrationSettings) -> &mut ScrobbleAccount {
+        fn name(&self) -> &'static str {
+            "fake"
+        }
+        fn account<'a>(&self, settings: &'a mut IntegrationSettings) -> &'a mut ScrobbleAccount {
             &mut settings.listenbrainz
         }
         async fn sign_in(

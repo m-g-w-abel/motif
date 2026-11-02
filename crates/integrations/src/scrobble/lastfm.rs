@@ -1,5 +1,5 @@
-//! Last.fm, signed in through the browser with desktop auth: Motif gets a
-//! token, the user allows it on last.fm, and the token buys a session key.
+//! Last.fm and Libre.fm (which speaks the same API), signed in through the browser with desktop auth: Motif gets a
+//! token, the user allows it on the site, and the token buys a session key.
 //! API: https://www.last.fm/api
 
 use std::time::Duration;
@@ -12,6 +12,9 @@ use super::{Error, Listen, Scrobbler, is_uuid};
 
 const API: &str = "https://ws.audioscrobbler.com/2.0/";
 const AUTH: &str = "https://www.last.fm/api/auth/";
+/// Libre.fm takes any key and secret.
+const LIBRE_API: &str = "https://libre.fm/2.0/";
+const LIBRE_AUTH: &str = "https://libre.fm/api/auth/";
 /// Motif's API account, in the source so every build (self-built, distro
 /// packages) can scrobble. `MOTIF_LASTFM_API_KEY` and
 /// `MOTIF_LASTFM_SHARED_SECRET` override it.
@@ -25,6 +28,10 @@ type Params = Vec<(String, String)>;
 #[derive(Clone)]
 pub struct LastFm {
     http: reqwest::Client,
+    /// "lastfm" or "librefm": names the secret, queue and settings.
+    name: &'static str,
+    /// For messages.
+    label: &'static str,
     base: String,
     auth: String,
     key: String,
@@ -36,6 +43,8 @@ impl LastFm {
         let env = |name, default: &str| std::env::var(name).unwrap_or_else(|_| default.into());
         Self {
             http,
+            name: "lastfm",
+            label: "Last.fm",
             base: API.into(),
             auth: AUTH.into(),
             key: env("MOTIF_LASTFM_API_KEY", API_KEY),
@@ -43,7 +52,19 @@ impl LastFm {
         }
     }
 
-    /// Calls a signed method. Fails only if Last.fm can't be reached; its
+    pub fn libre_fm(http: reqwest::Client) -> Self {
+        Self {
+            http,
+            name: "librefm",
+            label: "Libre.fm",
+            base: LIBRE_API.into(),
+            auth: LIBRE_AUTH.into(),
+            key: "motif".into(),
+            secret: "motif".into(),
+        }
+    }
+
+    /// Calls a signed method. Fails only if the service can't be reached; its
     /// own errors come back in the body for [`check`].
     async fn send(&self, method: &str, mut params: Params) -> Result<Value, Error> {
         params.push(("method".into(), method.into()));
@@ -56,36 +77,39 @@ impl LastFm {
             .form(&params)
             .send()
             .await
-            .map_err(|e| Error::Retry(format!("Can't reach Last.fm: {e}")))?;
+            .map_err(|e| Error::Retry(format!("Can't reach {}: {e}", self.label)))?;
         let status = response.status();
         let body: Value = response.json().await.unwrap_or_default();
         if body.get("error").is_none() && !status.is_success() {
-            return Err(Error::Retry(format!("Last.fm: {status}")));
+            return Err(Error::Retry(format!("{}: {status}", self.label)));
         }
         Ok(body)
     }
 
     async fn call(&self, method: &str, params: Params) -> Result<Value, Error> {
-        check(self.send(method, params).await?)
+        self.check(self.send(method, params).await?)
     }
 }
 
-/// Turns the error in a Last.fm reply into ours.
-fn check(body: Value) -> Result<Value, Error> {
-    let Some(code) = body["error"].as_u64() else {
-        return Ok(body);
-    };
-    let message = match body["message"].as_str() {
-        Some(message) => format!("Last.fm: {message}"),
-        None => format!("Last.fm: error {code}"),
-    };
-    // https://www.last.fm/api/errorcodes
-    Err(match code {
-        9 => Error::SignedOut(message),
-        // Down, rate limited or the API key suspended: the listens may go later.
-        8 | 10 | 11 | 16 | 26 | 29 => Error::Retry(message),
-        _ => Error::Rejected(message),
-    })
+impl LastFm {
+    /// Turns the error in a reply into ours.
+    fn check(&self, body: Value) -> Result<Value, Error> {
+        let Some(code) = body["error"].as_u64() else {
+            return Ok(body);
+        };
+        let label = self.label;
+        let message = match body["message"].as_str() {
+            Some(message) => format!("{label}: {message}"),
+            None => format!("{label}: error {code}"),
+        };
+        // https://www.last.fm/api/errorcodes
+        Err(match code {
+            9 => Error::SignedOut(message),
+            // Down, rate limited or the API key suspended: the listens may go later.
+            8 | 10 | 11 | 16 | 26 | 29 => Error::Retry(message),
+            _ => Error::Rejected(message),
+        })
+    }
 }
 
 /// `api_sig`: the MD5 of every parameter's name and value, sorted by name,
@@ -119,11 +143,17 @@ fn track(params: &mut Params, listen: &Listen, suffix: &str) {
 }
 
 impl Scrobbler for LastFm {
-    const NAME: &str = "lastfm";
     const BATCH: usize = 50;
 
-    fn account(settings: &mut IntegrationSettings) -> &mut ScrobbleAccount {
-        &mut settings.lastfm
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn account<'a>(&self, settings: &'a mut IntegrationSettings) -> &'a mut ScrobbleAccount {
+        match self.name {
+            "librefm" => &mut settings.librefm,
+            _ => &mut settings.lastfm,
+        }
     }
 
     async fn sign_in(
@@ -133,7 +163,10 @@ impl Scrobbler for LastFm {
     ) -> Result<(String, String), Error> {
         let body = self.call("auth.getToken", Vec::new()).await?;
         let Some(token) = body["token"].as_str() else {
-            return Err(Error::Retry("Last.fm sent no sign-in token".into()));
+            return Err(Error::Retry(format!(
+                "{} sent no sign-in token",
+                self.label
+            )));
         };
         show(&format!("{}?api_key={}&token={token}", self.auth, self.key));
         // Until the user allows Motif, or the token expires after an hour.
@@ -145,10 +178,10 @@ impl Scrobbler for LastFm {
             if body["error"] == 14 {
                 continue;
             }
-            let session = &check(body)?["session"];
+            let session = &self.check(body)?["session"];
             return match (session["name"].as_str(), session["key"].as_str()) {
                 (Some(user), Some(key)) => Ok((user.into(), key.into())),
-                _ => Err(Error::Retry("Last.fm sent no session".into())),
+                _ => Err(Error::Retry(format!("{} sent no session", self.label))),
             };
         }
     }
@@ -247,6 +280,8 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await });
         let service = LastFm {
             http: super::super::client().unwrap(),
+            name: "lastfm",
+            label: "Last.fm",
             base: format!("{base}/2.0/"),
             auth: format!("{base}/auth/"),
             key: "key".into(),
@@ -305,6 +340,19 @@ mod tests {
         assert_eq!(batch["timestamp[1]"], "1700000000");
         assert_eq!(batch["mbid[0]"], "6f9a2a5e-7e1e-4e2b-9b0a-2c5d1f3e4a5b");
         assert!(!batch.contains_key("mbid[1]"), "malformed IDs left out");
+    }
+
+    #[test]
+    fn libre_fm_is_its_own_account() {
+        let http = super::super::client().unwrap();
+        let (last, libre) = (LastFm::new(http.clone()), LastFm::libre_fm(http));
+        assert_ne!(last.name(), libre.name(), "separate secrets and queues");
+        assert_eq!(libre.base, "https://libre.fm/2.0/");
+        let mut settings = IntegrationSettings::default();
+        libre.account(&mut settings).enabled = true;
+        assert!(settings.librefm.enabled && !settings.lastfm.enabled);
+        last.account(&mut settings).user = Some("rj".into());
+        assert!(settings.lastfm.user.is_some() && settings.librefm.user.is_none());
     }
 
     #[tokio::test]

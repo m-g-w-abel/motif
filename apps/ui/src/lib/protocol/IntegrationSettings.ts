@@ -20,6 +20,10 @@ listenbrainz: ScrobbleAccount,
  */
 lastfm: ScrobbleAccount, 
 /**
+ * Scrobble to Libre.fm.
+ */
+librefm: ScrobbleAccount, 
+/**
  * Set by the host, ignored from clients: no OS keyring was found, so
  * secrets are kept unencrypted in a file only this user can read.
  */

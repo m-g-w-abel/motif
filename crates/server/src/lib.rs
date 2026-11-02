@@ -376,13 +376,14 @@ async fn session(socket: WebSocket, state: AppState) {
                     for (new, old) in [
                         (&mut new.listenbrainz, &settings.listenbrainz),
                         (&mut new.lastfm, &settings.lastfm),
+                        (&mut new.librefm, &settings.librefm),
                     ] {
                         new.user = old.user.clone();
                         new.error = old.error.clone();
                         new.auth_url = old.auth_url.clone();
                     }
-                    let changed = *settings != new;
-                    *settings = new;
+                    let changed = *settings != *new;
+                    *settings = *new;
                     changed
                 });
                 ServerMessage::Response { id, error: None }
@@ -560,12 +561,13 @@ mod tests {
                 ..Default::default()
             },
             lastfm: Default::default(),
+            librefm: Default::default(),
             secrets_unencrypted: true,
             discord: false,
         };
         let json = serde_json::to_string(&ClientMessage::SetIntegrations {
             id: 1,
-            integrations: new,
+            integrations: new.into(),
         })
         .unwrap();
         a.send(WsMessage::Text(json.into())).await.unwrap();
