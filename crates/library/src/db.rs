@@ -29,7 +29,7 @@ fn sort_expr(key: SortKey) -> &'static str {
         SortKey::AlbumArtist => "lower(coalesce(album_artist, artist, ''))",
         SortKey::Artist => "lower(coalesce(artist, ''))",
         SortKey::Album => "lower(coalesce(album, ''))",
-        SortKey::Year => "year",
+        SortKey::Year => "coalesce(original_year, year)",
         SortKey::Added => "added",
         SortKey::Title => "lower(title)",
         SortKey::Genre => "lower(genre)",
@@ -103,7 +103,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              size INTEGER NOT NULL,
              mtime INTEGER NOT NULL,
              title TEXT, artist TEXT, album TEXT, album_artist TEXT,
-             track_no INTEGER, disc_no INTEGER, year INTEGER, genre TEXT,
+             track_no INTEGER, disc_no INTEGER, year INTEGER, original_year INTEGER, genre TEXT,
              duration_ms INTEGER, codec TEXT, sample_rate INTEGER, bit_depth INTEGER,
              channels INTEGER, bitrate INTEGER,
              musicbrainz_recording TEXT, isrc TEXT, audio_hash TEXT,
@@ -148,7 +148,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 8;
+const VERSION: i32 = 9;
 
 fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -212,6 +212,14 @@ fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
         // art): add the column and re-read every file.
         if !has("musicbrainz_album")? {
             conn.execute("ALTER TABLE tracks ADD COLUMN musicbrainz_album TEXT", [])?;
+        }
+        conn.execute("UPDATE tracks SET mtime = -1", [])?;
+    }
+    if version < 9 {
+        // Version 9 reads the original release year: add the column and
+        // re-read every file.
+        if !has("original_year")? {
+            conn.execute("ALTER TABLE tracks ADD COLUMN original_year INTEGER", [])?;
         }
         conn.execute("UPDATE tracks SET mtime = -1", [])?;
     }
@@ -288,10 +296,13 @@ mod tests {
     #[test]
     fn rules_become_tiers_in_order() {
         let rules = [rule(SortKey::Year, true), rule(SortKey::Title, false)];
-        assert_eq!(order(&rules), "ORDER BY year DESC, lower(title), path");
+        assert_eq!(
+            order(&rules),
+            "ORDER BY coalesce(original_year, year) DESC, lower(title), path"
+        );
         assert_eq!(
             album_order(&rules),
-            "ORDER BY max(year) DESC, min(lower(title)), k"
+            "ORDER BY max(coalesce(original_year, year)) DESC, min(lower(title)), k"
         );
         assert_eq!(
             album_order(&[]),

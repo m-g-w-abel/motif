@@ -74,6 +74,7 @@ describe('sortLabel', () => {
     expect(sortLabel('title', { title: '99 Problems' })).toBe('#');
     expect(sortLabel('genre', { genre: null })).toBe('–');
     expect(sortLabel('year', { year: 1997 })).toBe('1997');
+    expect(sortLabel('year', { year: 2011, original_year: 1977 })).toBe('1977');
     expect(sortLabel('duration', { duration_ms: 185_000 })).toBe('3 min');
     expect(sortLabel('added', {})).toBeUndefined();
   });
