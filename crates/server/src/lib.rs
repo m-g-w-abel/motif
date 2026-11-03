@@ -239,7 +239,10 @@ async fn art(
                     header::CONTENT_TYPE,
                     if png { "image/png" } else { "image/jpeg" },
                 ),
-                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
                 (header::VARY, "origin"),
             ];
             let mut response = (headers, bytes).into_response();
