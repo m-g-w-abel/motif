@@ -15,6 +15,7 @@ engine.workspace = true
 library.workspace = true
 integrations.workspace = true
 mimalloc.workspace = true
+qrcode = { version = "=0.14.1", default-features = false }
 server.workspace = true
 tokio.workspace = true
 tracing.workspace = true

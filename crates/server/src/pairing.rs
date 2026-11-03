@@ -14,8 +14,8 @@ use std::{
 use axum::http::StatusCode;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use protocol::{
-    Connection, PairRequest, Paired, PairedDevice, PairingAction, PairingCode, PairingCommand,
-    PairingLogEntry, PairingState, PendingDevice, Preset, Scope,
+    Connection, LanState, PairRequest, Paired, PairedDevice, PairingAction, PairingCode,
+    PairingCommand, PairingLogEntry, PairingState, PendingDevice, Preset, Scope,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, oneshot, watch};
@@ -53,6 +53,9 @@ struct Saved {
     auto_approve: Option<Preset>,
     devices: Vec<Stored>,
     log: Vec<PairingLogEntry>,
+    /// The LAN switch, [`LanState::allowed`].
+    #[serde(default)]
+    lan: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -69,6 +72,8 @@ struct Inner {
     pending: Vec<(PendingDevice, oneshot::Sender<Option<Preset>>)>,
     connections: Vec<(Connection, Arc<Notify>)>,
     next_id: u32,
+    /// Where the server listens on the LAN; `None` while it doesn't.
+    lan: Option<Vec<SocketAddr>>,
 }
 
 impl Pairing {
@@ -118,6 +123,7 @@ impl Pairing {
                 pending: Vec::new(),
                 connections: Vec::new(),
                 next_id: 1,
+                lan: None,
             }),
             state: watch::Sender::new(PairingState::default()),
         }));
@@ -134,12 +140,56 @@ impl Pairing {
         self.0.state.subscribe()
     }
 
-    /// Makes a one-time code, replacing any earlier one.
+    /// Makes a one-time code, replacing any earlier one, and opens the LAN.
     pub fn start(&self) -> PairingCode {
         let mut inner = self.lock();
         let code = new_code(&mut inner);
+        self.save(&inner);
         self.publish(&inner);
         code
+    }
+
+    /// Sets the LAN switch ([`LanState::allowed`]).
+    pub fn allow_lan(&self, allowed: bool) {
+        self.command(PairingCommand::SetLan { allowed })
+            .expect("SetLan can't fail");
+    }
+
+    /// Whether the server should listen on the LAN, and when to ask again
+    /// (the live code's expiry) if nothing else changes.
+    pub(crate) fn lan_wanted(&self) -> (bool, Option<u64>) {
+        let inner = self.lock();
+        let expires = inner
+            .code
+            .as_ref()
+            .map(|c| c.expires_at_ms)
+            .filter(|&at| at > engine::wall_clock_ms());
+        let wanted = inner.saved.lan
+            && (expires.is_some() || !inner.pending.is_empty() || !inner.saved.devices.is_empty());
+        (wanted, expires)
+    }
+
+    pub(crate) fn lan_open(&self) -> bool {
+        self.lock().lan.is_some()
+    }
+
+    /// Says where the server listens on the LAN now (`None`: it doesn't),
+    /// and closes the connections from other machines when it stops.
+    pub(crate) fn set_lan(&self, addresses: Option<Vec<SocketAddr>>) {
+        let mut inner = self.lock();
+        if addresses.is_none() {
+            for (connection, close) in &inner.connections {
+                let remote = connection
+                    .address
+                    .parse::<SocketAddr>()
+                    .is_ok_and(|a| !a.ip().to_canonical().is_loopback());
+                if remote {
+                    close.notify_one();
+                }
+            }
+        }
+        inner.lan = addresses;
+        self.publish(&inner);
     }
 
     /// The paired device holding `token`.
@@ -316,6 +366,7 @@ impl Pairing {
                 }
                 log(inner, now, PairingAction::Revoked, stored.device.name);
             }
+            PairingCommand::SetLan { allowed } => inner.saved.lan = allowed,
             PairingCommand::Disconnect { connection } => {
                 let (_, close) = inner
                     .connections
@@ -383,6 +434,7 @@ impl Pairing {
     }
 
     fn publish(&self, inner: &Inner) {
+        let addresses = inner.lan.as_deref().unwrap_or_default();
         self.0.state.send_replace(PairingState {
             engine_key: self.0.engine_key.clone(),
             code: inner.code.clone(),
@@ -396,10 +448,29 @@ impl Pairing {
                 .collect(),
             connected: inner.connections.iter().map(|(c, _)| c.clone()).collect(),
             log: inner.saved.log.clone(),
+            lan: LanState {
+                allowed: inner.saved.lan,
+                open: inner.lan.is_some(),
+                addresses: addresses.iter().map(|a| a.to_string()).collect(),
+                pair_urls: match &inner.code {
+                    Some(code) => addresses
+                        .iter()
+                        .map(|a| pair_url(*a, &code.code, &self.0.engine_key))
+                        .collect(),
+                    None => Vec::new(),
+                },
+            },
         });
     }
 }
 
+/// What a pairing QR code holds: a phone's camera opens it in a browser, and
+/// Motif apps read the code and engine key from it.
+pub fn pair_url(address: SocketAddr, code: &str, engine_key: &str) -> String {
+    format!("http://{address}/pair?code={code}&id={engine_key}")
+}
+
+/// Also opens the LAN: that is what a code is for.
 fn new_code(inner: &mut Inner) -> PairingCode {
     let code = PairingCode {
         code: random::<8>()
@@ -409,6 +480,7 @@ fn new_code(inner: &mut Inner) -> PairingCode {
         expires_at_ms: engine::wall_clock_ms() + inner.code_ttl_ms,
     };
     inner.code = Some(code.clone());
+    inner.saved.lan = true;
     code
 }
 
@@ -634,6 +706,25 @@ mod tests {
         assert_eq!(again.authenticate(&paired.token), Some(paired.device));
         let saved = std::fs::read_to_string(dir.join("pairing.json")).unwrap();
         assert!(!saved.contains(&paired.token), "only the hash is kept");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_lan_switch_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("motif-lan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let allowed = |p: &Pairing| p.subscribe().borrow().lan.allowed;
+        assert!(
+            !allowed(&Pairing::open(&dir).unwrap()),
+            "loopback only at first"
+        );
+        Pairing::open(&dir).unwrap().start();
+        let pairing = Pairing::open(&dir).unwrap();
+        assert!(allowed(&pairing), "starting a pairing opens it");
+        // The code is gone after a restart, and nobody is paired.
+        assert_eq!(pairing.lan_wanted(), (false, None));
+        pairing.allow_lan(false);
+        assert!(!allowed(&Pairing::open(&dir).unwrap()));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
