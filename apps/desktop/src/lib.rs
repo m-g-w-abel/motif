@@ -154,7 +154,7 @@ async fn start_engine(
         integrations.subscribe(),
     );
     let config = server::Config {
-        // Loopback only until LAN exposure exists (#105).
+        // Loopback; pairing opens the LAN on the same port (server::bind).
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         ui_dir: None,
         library: library.as_ref().map(|(library, _)| library.clone()),

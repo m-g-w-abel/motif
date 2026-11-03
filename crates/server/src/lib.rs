@@ -4,8 +4,11 @@
 //!
 //! Clients on this machine (loopback peers, from pages served by this
 //! machine) need no token; anyone else needs a paired device's token, got by
-//! redeeming a one-time code at `POST /pair` (see [`Pairing`]).
+//! redeeming a one-time code at `POST /pair` (see [`Pairing`]). Other
+//! machines reach the engine only while the LAN is open (see [`Pairing`]'s
+//! [`protocol::LanState`]): the server then listens on every interface.
 
+mod lan;
 mod pairing;
 mod resolver;
 pub mod settings;
@@ -29,14 +32,11 @@ use protocol::{
     ClientMessage, Command, Event, IntegrationSettings, LibraryQuery, PROTOCOL_VERSION,
     PairRequest, QueryResult, Scope, ServerMessage,
 };
-use tokio::{
-    net::TcpListener,
-    sync::{Semaphore, mpsc, watch},
-};
+use tokio::sync::{Semaphore, mpsc, watch};
 use tower_http::services::{ServeDir, ServeFile};
 
-pub use pairing::Pairing;
 use pairing::Who;
+pub use pairing::{Pairing, pair_url};
 pub use resolver::LibraryResolver;
 
 pub struct Config {
@@ -65,13 +65,16 @@ struct AppState {
 const ART_SLOTS: usize = 50;
 
 /// Binds the listener and returns its address plus a future that serves it.
-/// Binding first lets callers use port 0 and learn the real port.
+/// Binding first lets callers use port 0 and learn the real port. While the
+/// LAN is open the server listens on every interface on that port.
 pub async fn bind(
     engine: Engine,
     config: Config,
 ) -> std::io::Result<(SocketAddr, impl Future<Output = std::io::Result<()>>)> {
-    let listener = TcpListener::bind(config.addr).await?;
-    let addr = listener.local_addr()?;
+    let listener = lan::LanListener::bind(config.addr, config.pairing.clone()).await?;
+    let addr = listener.local_addr();
+    // Tapping is a no-op; axum knows the peer address of tapped listeners.
+    let listener = axum::serve::ListenerExt::tap_io(listener, |_| {});
     let app = router(engine, config).into_make_service_with_connect_info::<SocketAddr>();
     Ok((addr, async move { axum::serve(listener, app).await }))
 }
@@ -79,11 +82,20 @@ pub async fn bind(
 /// The routes; serve them with `ConnectInfo<SocketAddr>`, which says who is
 /// local. `config.addr` is unused.
 pub fn router(engine: Engine, config: Config) -> Router {
+    // A phone opening a pairing QR code GETs /pair: the UI answers it.
+    let index = config
+        .ui_dir
+        .as_ref()
+        .map(|dir| ServeFile::new(dir.join("index.html")));
+    let pair_route = match index {
+        Some(index) => post(pair).get_service(index),
+        None => post(pair),
+    };
     let router = Router::new()
         .route("/ws", get(upgrade))
         .route("/art/{key}", get(art))
         .route("/images", get(images))
-        .route("/pair", post(pair))
+        .route("/pair", pair_route)
         .with_state(AppState {
             engine,
             library: config.library,
@@ -129,6 +141,9 @@ fn authorise(
     headers: &HeaderMap,
     token: Option<&str>,
 ) -> Option<Who> {
+    if !reachable(state, peer) {
+        return None;
+    }
     let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -142,6 +157,12 @@ fn authorise(
     (peer.ip().to_canonical().is_loopback() && origin_allowed(origin)).then_some(Who::Local)
 }
 
+/// Whether `peer` may talk to this engine at all: other machines only while
+/// the LAN is open, which also cuts off their kept-alive connections.
+fn reachable(state: &AppState, peer: SocketAddr) -> bool {
+    peer.ip().to_canonical().is_loopback() || state.pairing.lan_open()
+}
+
 /// A new device redeems a pairing code; the answer may wait for the host's
 /// approval.
 async fn pair(
@@ -149,6 +170,9 @@ async fn pair(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(request): Json<PairRequest>,
 ) -> Response {
+    if !reachable(&state, peer) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     match state.pairing.redeem(request, peer).await {
         Ok(paired) => Json(paired).into_response(),
         Err(refusal) => refusal.into_response(),
@@ -559,6 +583,7 @@ async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr)
 mod tests {
     use super::*;
     use protocol::{Command, PlaybackStatus, TrackRef};
+    use tokio::net::TcpListener;
     use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
     async fn next_message(
@@ -735,8 +760,10 @@ mod tests {
         assert!(got.lastfm.enabled && !got.lrclib, "the rest is kept");
     }
 
-    /// Serves to clients that all appear to come from another machine.
+    /// Serves to clients that all appear to come from another machine, with
+    /// the LAN open.
     async fn lan_server(pairing: Pairing) -> SocketAddr {
+        pairing.set_lan(Some(Vec::new()));
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
             ui_dir: None,
@@ -783,6 +810,103 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    /// Waits until the LAN is `open` or not.
+    async fn lan_open(pairing: &Pairing, open: bool) -> protocol::LanState {
+        let mut states = pairing.subscribe();
+        let state = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            states.wait_for(|s| s.lan.open == open),
+        );
+        state.await.unwrap().unwrap().lan.clone()
+    }
+
+    // 127.0.0.2 is loopback too, but a socket bound to 127.0.0.1 doesn't
+    // answer it: only one on every interface does (on Linux).
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn the_lan_opens_and_closes_at_runtime() {
+        let pairing = Pairing::in_memory();
+        let config = Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui_dir: None,
+            library: None,
+            integrations: watch::channel(Default::default()).0,
+            pairing: pairing.clone(),
+        };
+        let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
+            .await
+            .unwrap();
+        tokio::spawn(serve);
+        let other = SocketAddr::from(([127, 0, 0, 2], addr.port()));
+        let reachable = || async move { tokio::net::TcpStream::connect(other).await.is_ok() };
+        assert!(!reachable().await, "loopback only at first");
+
+        let code = pairing.start().code;
+        let lan = lan_open(&pairing, true).await;
+        assert!(reachable().await);
+        assert!(lan.allowed);
+        for (address, url) in lan.addresses.iter().zip(&lan.pair_urls) {
+            assert!(url.starts_with(&format!("http://{address}/pair?code={code}&id=")));
+        }
+
+        // Nothing left to pair: the LAN closes, the switch stays on.
+        pairing.command(protocol::PairingCommand::Cancel).unwrap();
+        assert!(lan_open(&pairing, false).await.allowed);
+        assert!(!reachable().await);
+        let (mut ws, _) = connect_async(format!("ws://{addr}/ws")).await.unwrap();
+        assert!(matches!(
+            next_message(&mut ws).await,
+            ServerMessage::Hello { .. }
+        ));
+
+        // A paired device keeps it open until the switch closes it.
+        token(&pairing, protocol::Preset::Full).await;
+        lan_open(&pairing, true).await;
+        pairing.command(protocol::PairingCommand::Cancel).unwrap();
+        assert!(reachable().await, "a device is paired");
+        pairing.allow_lan(false);
+        let lan = lan_open(&pairing, false).await;
+        assert!(!lan.allowed && lan.addresses.is_empty());
+        assert!(!reachable().await);
+        assert_eq!(
+            pairing.subscribe().borrow().devices.len(),
+            1,
+            "nobody is revoked"
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_the_lan_cuts_other_machines_off() {
+        let pairing = Pairing::in_memory();
+        let addr = lan_server(pairing.clone()).await;
+        let token = token(&pairing, protocol::Preset::Full).await;
+        pairing.set_lan(None);
+        assert_eq!(
+            http_status(addr, &format!("/images?track=a&token={token}")).await,
+            401
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pairing_link_opens_the_ui() {
+        let dir = std::env::temp_dir().join(format!("motif-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.html"), "<p>Motif</p>").unwrap();
+        let config = Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui_dir: Some(dir.clone()),
+            library: None,
+            integrations: watch::channel(Default::default()).0,
+            pairing: Pairing::in_memory(),
+        };
+        let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
+            .await
+            .unwrap();
+        tokio::spawn(serve);
+        assert_eq!(http_status(addr, "/pair?code=ABCD&id=00").await, 200);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]

@@ -834,6 +834,11 @@ pub enum PairingCommand {
     Disconnect {
         connection: u32,
     },
+    /// The LAN switch ([`LanState::allowed`]). Off closes the LAN to every
+    /// device without revoking any; starting a pairing turns it on.
+    SetLan {
+        allowed: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
@@ -849,6 +854,24 @@ pub struct PairingState {
     pub connected: Vec<Connection>,
     /// Newest last, capped.
     pub log: Vec<PairingLogEntry>,
+    pub lan: LanState,
+}
+
+/// Whether other machines can reach this engine.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LanState {
+    /// The switch, kept across restarts.
+    pub allowed: bool,
+    /// Listening on every interface and advertised over mDNS: allowed, and
+    /// a code is live, a device waits for approval or one is paired.
+    pub open: bool,
+    /// This machine's LAN addresses with the port (`192.168.1.5:7700`), the
+    /// likeliest first. Empty while closed.
+    pub addresses: Vec<String>,
+    /// While open and a code is live: a URL per address
+    /// (`http://<address>/pair?code=<code>&id=<engine key>`) for a QR code.
+    pub pair_urls: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

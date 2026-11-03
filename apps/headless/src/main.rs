@@ -5,6 +5,13 @@
 //! - `MOTIF_UI_DIR`: built web UI to serve, default `apps/ui/dist` if present
 //! - `MOTIF_DATA_DIR`: library database and caches, default the OS data
 //!   directory (shared with the desktop app; only one engine may own it)
+//! - `MOTIF_LAN`: `on` or `off` sets the LAN switch, which is kept across
+//!   restarts. While on, other machines reach the engine (on every interface,
+//!   same port, advertised as `_motif._tcp` over mDNS) when a pairing code is
+//!   live or a device is paired; `off` closes it without unpairing anyone.
+//!   Starting a pairing turns it on.
+//! - `MOTIF_PAIR`: `1` starts pairing a new device. The QR code, code and URL
+//!   are printed here, also when a client starts a pairing.
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -64,14 +71,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(library.clone()),
         integrations.subscribe(),
     );
+    let pairing = server::Pairing::open(&data_dir)?;
+    match std::env::var("MOTIF_LAN").as_deref() {
+        Ok("on") => pairing.allow_lan(true),
+        Ok("off") => pairing.allow_lan(false),
+        Ok(other) => return Err(format!("MOTIF_LAN is on or off, not {other:?}").into()),
+        Err(_) => {}
+    }
+    let mut states = pairing.subscribe();
+    tokio::spawn(async move {
+        let mut shown = None;
+        while states.changed().await.is_ok() {
+            let state = states.borrow_and_update().clone();
+            let (Some(code), Some(url)) = (state.code, state.lan.pair_urls.first()) else {
+                continue;
+            };
+            if shown.replace(code.code.clone()).as_ref() != Some(&code.code) {
+                print_pairing(url, &code.code, &state.lan.pair_urls[1..]);
+            }
+        }
+    });
     let config = server::Config {
         addr,
         ui_dir: ui_dir.clone(),
         library: Some(library),
         integrations,
-        pairing: server::Pairing::open(&data_dir)?,
+        pairing: pairing.clone(),
     };
     let (addr, serve) = server::bind(engine, config).await?;
+    if std::env::var("MOTIF_PAIR").is_ok_and(|v| v == "1") {
+        pairing.start();
+    }
     claim.publish(&format!("ws://{addr}/ws"))?;
     match ui_dir {
         Some(dir) => tracing::info!("serving {} at http://{addr}", dir.display()),
@@ -83,4 +113,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ = tokio::signal::ctrl_c() => tracing::info!("shutting down"),
     }
     Ok(())
+}
+
+/// A pairing code for the terminal: a QR code to scan with a phone, and the
+/// code and URL to type.
+fn print_pairing(url: &str, code: &str, others: &[String]) {
+    use qrcode::render::unicode::Dense1x2;
+    let qr = match qrcode::QrCode::new(url) {
+        // Light on dark: terminals are mostly dark, and scanners need the
+        // quiet zone around the code to be light.
+        Ok(qr) => qr
+            .render::<Dense1x2>()
+            .dark_color(Dense1x2::Light)
+            .light_color(Dense1x2::Dark)
+            .build(),
+        Err(err) => format!("(no QR code: {err})"),
+    };
+    println!("\n{qr}\nPair a device: scan this, or open {url}\nCode: {code}");
+    for other in others {
+        println!("Or on another network: {other}");
+    }
+    println!();
 }
