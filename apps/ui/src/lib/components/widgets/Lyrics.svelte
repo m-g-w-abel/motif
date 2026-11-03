@@ -5,8 +5,10 @@
 </script>
 
 <script lang="ts">
+  import { tick } from 'svelte';
   import { getApp } from '../../context';
   import { isDemo } from '../../demo';
+  import { formatTime } from '../../format';
   import { fetchLyrics, lineAt, lyricsOffsets, nextStart } from '../../lyrics.svelte';
   import type { Lyrics } from '../../protocol/Lyrics';
   import Scrollbar from '../Scrollbar.svelte';
@@ -52,13 +54,27 @@
   let rows = $state<HTMLElement[]>([]);
   let height = $state(0);
   let width = $state(0);
-  /** Moves the list so the current line sits in the middle. */
-  const scroll = $derived.by(() => {
+  let syncedBox = $state<HTMLElement>();
+  let plainBox = $state<HTMLElement>();
+  /** When the reader last scrolled; following waits until the first line change 4 s after. */
+  let held = 0;
+  /** The lines the view last followed: new ones (or a remount) jump there instead of scrolling. */
+  let followed: unknown = null;
+  const hold = () => (held = Date.now());
+
+  // Keeps the current line in the middle, on line changes only.
+  $effect(() => {
     void width;
     const row = rows[Math.max(current, 0)];
-    return row ? height / 2 - row.offsetTop - row.offsetHeight / 2 : 0;
+    const box = syncedBox;
+    const lines = synced;
+    if (!box || !row || !height || Date.now() - held < 4000) return;
+    // After the padding that lets the first and last lines reach the middle is drawn.
+    void tick().then(() => {
+      box.scrollTo({ top: row.offsetTop + row.offsetHeight / 2 - height / 2, behavior: followed === lines ? 'smooth' : 'instant' });
+      followed = lines;
+    });
   });
-  let plainBox = $state<HTMLElement>();
 
   function nudge(by: number) {
     if (path) lyricsOffsets.set(path, Math.round((offset + by) / 100) * 100);
@@ -80,22 +96,31 @@
 
 <section class="lyrics">
   {#if synced}
-    <div class="view synced" bind:clientHeight={height} bind:clientWidth={width}>
-      <ol style:transform="translateY({scroll}px)">
+    <!-- Wheel, touch and keys (from the focused line) count as the reader scrolling. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="view synced custom-scrollbar"
+      bind:this={syncedBox}
+      bind:clientHeight={height}
+      bind:clientWidth={width}
+      onwheel={hold}
+      ontouchmove={hold}
+      onkeydown={hold}
+    >
+      <ol style:padding-block="{height / 2}px">
         {#each synced as line, i (i)}
+          {@const at = Math.max(0, (line.time_ms ?? 0) + offset)}
           <li bind:this={rows[i]}>
-            <button
-              class:current={i === current}
-              class:past={i < current}
-              title="Play from here"
-              onclick={() => engine.run({ type: 'seek', position_ms: Math.max(0, (line.time_ms ?? 0) + offset) })}
-            >
+            <button class:current={i === current} class:past={i < current} title="Play from here" onclick={() => engine.run({ type: 'seek', position_ms: at })}>
               {line.text || '♪'}
+              <span class="stamp">{formatTime(at)}</span>
             </button>
           </li>
         {/each}
       </ol>
     </div>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="bar" onpointerdown={hold}><Scrollbar target={syncedBox} /></div>
   {:else if lyrics}
     <div class="view plain custom-scrollbar selectable" bind:this={plainBox}>
       {#each lyrics.lines as line, i (i)}
@@ -138,20 +163,27 @@
   }
 
   .synced {
-    overflow: hidden;
+    position: relative;
+    overflow-y: auto;
+  }
+
+  /* Only catches the bar's events; the bar places itself over the view. */
+  .bar {
+    display: contents;
   }
 
   ol {
     margin: 0;
-    padding: 0 var(--space-4);
+    padding-inline: var(--space-4);
     list-style: none;
-    transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
   li button {
+    position: relative;
     display: block;
     width: 100%;
-    padding: var(--space-1) 0;
+    /* Room for the time shown on hover, so lines don't rewrap. */
+    padding: var(--space-1) 4em var(--space-1) 0;
     border: 0;
     background: none;
     color: var(--text-muted);
@@ -178,6 +210,22 @@
 
   li button:hover {
     opacity: 1;
+  }
+
+  .stamp {
+    display: none;
+    position: absolute;
+    top: 50%;
+    right: 0;
+    transform: translateY(-50%);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+
+  li button:hover .stamp {
+    display: block;
   }
 
   .plain {
