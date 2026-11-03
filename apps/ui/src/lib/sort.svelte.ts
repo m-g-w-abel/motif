@@ -96,6 +96,7 @@ export interface SortFields {
   album_artist?: string | null;
   album?: string | null;
   year?: number | null;
+  original_year?: number | null;
   genre?: string | null;
   disc_no?: number | null;
   track_no?: number | null;
@@ -122,7 +123,7 @@ export function sortLabel(key: SortKey, row: SortFields): string | undefined {
     case 'genre':
       return initial(row[key]);
     case 'year':
-      return row.year ? String(row.year) : '–';
+      return row.original_year ?? row.year ? String(row.original_year ?? row.year) : '–';
     case 'disc':
       return `Disc ${row.disc_no ?? 1}`;
     case 'track':

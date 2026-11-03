@@ -645,7 +645,10 @@ pub struct LibraryTrack {
     pub album_artist: Option<String>,
     pub track_no: Option<u32>,
     pub disc_no: Option<u32>,
+    /// This release's year; see `original_year`.
     pub year: Option<u32>,
+    /// When the music first came out, if the file says. Lists show this, falling back to `year`.
+    pub original_year: Option<u32>,
     pub genre: Option<String>,
     /// Codec or container, e.g. `FLAC`, `MP3`.
     pub codec: Option<String>,

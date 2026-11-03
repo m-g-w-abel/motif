@@ -188,7 +188,7 @@ impl Library {
                     |r| r.get(0),
                 )?;
                 let mut stmt = conn.prepare(&format!(
-                    "SELECT {key} AS k, coalesce(album, ''), coalesce(album_artist, artist, ''), min(year),
+                    "SELECT {key} AS k, coalesce(album, ''), coalesce(album_artist, artist, ''), min(coalesce(original_year, year)),
                             count(*), sum(coalesce(duration_ms, 0)), max(art)
                      FROM tracks WHERE {search} GROUP BY k {order} LIMIT ?2 OFFSET ?3",
                     key = db::ALBUM_KEY,
@@ -827,7 +827,7 @@ fn thumbnail(shared: &Shared, key: &str, source: &Path, size: u32) -> Result<Pat
 
 const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track_no, disc_no, year, genre, \
      duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, audio_hash, art, \
-     missing, problem";
+     missing, problem, original_year";
 
 fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
     Ok(LibraryTrack {
@@ -858,6 +858,7 @@ fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
         art: r.get(19)?,
         missing: r.get(20)?,
         problem: r.get(21)?,
+        original_year: r.get(22)?,
     })
 }
 

@@ -35,6 +35,8 @@ pub struct Tags {
     pub track_no: Option<u32>,
     pub disc_no: Option<u32>,
     pub year: Option<u32>,
+    /// When the music first came out; `year` is this release's.
+    pub original_year: Option<u32>,
     pub genre: Option<String>,
     pub duration_ms: Option<u64>,
     pub codec: Option<String>,
@@ -89,6 +91,9 @@ pub fn read(path: &Path) -> Tags {
     tags.track_no = tag.track();
     tags.disc_no = tag.disk();
     tags.year = tag.date().map(|d| u32::from(d.year)).filter(|&y| y > 0);
+    tags.original_year = item(ItemKey::OriginalReleaseDate)
+        .and_then(|s| s.get(..4).and_then(|y| y.parse().ok()))
+        .filter(|&y| y > 0);
     tags.musicbrainz_recording = item(ItemKey::MusicBrainzRecordingId);
     tags.isrc = item(ItemKey::Isrc);
     tags.musicbrainz_album = item(ItemKey::MusicBrainzReleaseId);
@@ -259,6 +264,9 @@ fn read_with_symphonia(path: &Path) -> Option<Tags> {
             Some(T::MusicBrainzAlbumId(s)) => tags.musicbrainz_album = text(s),
             Some(T::TrackNumber(n)) => tags.track_no = u32::try_from(*n).ok(),
             Some(T::DiscNumber(n)) => tags.disc_no = u32::try_from(*n).ok(),
+            Some(T::OriginalReleaseDate(s)) => {
+                tags.original_year = s.get(..4).and_then(|y| y.parse().ok())
+            }
             Some(T::ReleaseDate(s) | T::RecordingDate(s)) if tags.year.is_none() => {
                 tags.year = s.get(..4).and_then(|y| y.parse().ok());
             }

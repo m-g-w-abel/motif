@@ -17,6 +17,12 @@
   const details = $derived(library.details(track));
   /** The ReplayGain adjustment the engine applies to what is playing. */
   const gain = $derived(engine.player?.gain_db);
+  /** The original year, with the release's own when it differs: "1977 (2011 release)". */
+  function yearLabel(d: { year?: number | null; original_year?: number | null } | null | undefined): string {
+    if (!d?.original_year) return d?.year ? String(d.year) : '';
+    return d.year && d.year !== d.original_year ? `${d.original_year} (${d.year} release)` : String(d.original_year);
+  }
+
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
 
   const rows = $derived<[string, string][]>(
@@ -28,7 +34,7 @@
             ['Album', track.album ?? ''],
             ['Queue', playing && context && context.index !== null ? `${context.index + 1}/${context.len}` : ''],
             ['Duration', track.duration_ms ? formatTime(track.duration_ms) : ''],
-            ['Year', details?.year ? String(details.year) : ''],
+            ['Year', yearLabel(details)],
             ['Genre', details?.genre ?? ''],
             ['Format', format],
             ['Sample rate', details?.sample_rate ? `${details.sample_rate / 1000} kHz` : ''],

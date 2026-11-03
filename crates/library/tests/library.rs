@@ -564,6 +564,64 @@ fn musicbrainz_release_ids_are_read() {
     assert_eq!(library.musicbrainz_album(&other), None);
 }
 
+#[test]
+fn both_years_are_kept_and_original_sorts_first() {
+    use lofty::{config::WriteOptions, file::TaggedFileExt, prelude::ItemKey, tag::TagExt};
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &music,
+    );
+    let file = music.join("Artist A/First Album/01 Opening.flac");
+    let mut tag = lofty::read_from_path(&file)
+        .unwrap()
+        .primary_tag()
+        .unwrap()
+        .clone();
+    tag.insert_text(ItemKey::RecordingDate, "2010-05-01".into());
+    tag.insert_text(ItemKey::OriginalReleaseDate, "1975-03-02".into());
+    tag.save_to_path(&file, WriteOptions::default()).unwrap();
+    let other = music.join("Artist A/First Album/02 Closing.flac");
+    let mut tag = lofty::read_from_path(&other)
+        .unwrap()
+        .primary_tag()
+        .unwrap()
+        .clone();
+    tag.insert_text(ItemKey::RecordingDate, "2010-05-01".into());
+    tag.save_to_path(&other, WriteOptions::default()).unwrap();
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 4 && !s.scanning);
+    let opening = track(&library, "Opening");
+    assert_eq!(
+        (opening.year, opening.original_year),
+        (Some(2010), Some(1975))
+    );
+    let closing = track(&library, "Closing");
+    assert_eq!((closing.year, closing.original_year), (Some(2010), None));
+    let QueryResult::Tracks { tracks, .. } = library
+        .query(LibraryQuery::Tracks {
+            search: None,
+            sort: vec![protocol::SortRule {
+                key: protocol::SortKey::Year,
+                descending: true,
+            }],
+            offset: 0,
+            limit: 100,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    // 2010 (release year only) before 1975 (original year), unyeared files last.
+    assert_eq!(tracks[0].track.title.as_deref(), Some("Closing"));
+    assert_eq!(tracks[1].track.title.as_deref(), Some("Opening"));
+}
+
 /// A stand-in for LRCLIB answering requests in turn with `answers` (status,
 /// JSON body). Returns its URL and each request's first line.
 fn fake_lrclib(answers: Vec<(u16, &'static str)>) -> (String, Arc<Mutex<Vec<String>>>) {
