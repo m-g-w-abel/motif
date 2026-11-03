@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Bumped on any incompatible change to the types below.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// A message sent from a client: a command for the engine, a query for the
 /// library, or a change of subscription. `id` is echoed back in the matching
@@ -31,11 +31,11 @@ pub enum ClientMessage {
         id: u32,
         bands: bool,
     },
-    /// Replaces the host's [`IntegrationSettings`]; every client then gets
+    /// Changes the host's [`IntegrationSettings`]; every client then gets
     /// [`Event::Integrations`].
     SetIntegrations {
         id: u32,
-        integrations: Box<IntegrationSettings>,
+        changes: Box<IntegrationChanges>,
     },
 }
 
@@ -235,7 +235,8 @@ pub enum Event {
 }
 
 /// Settings for integrations with outside services (lyrics, scrobbling…),
-/// kept and obeyed by the host and always sent whole. Secrets (tokens) stay
+/// kept and obeyed by the host, always sent out whole and changed with
+/// [`IntegrationChanges`]. Secrets (tokens) stay
 /// on the host; at most who is signed in goes over the wire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(default)]
@@ -267,6 +268,31 @@ impl Default for IntegrationSettings {
             discord: false,
         }
     }
+}
+
+/// The [`IntegrationSettings`] a client changes: only the fields given are
+/// replaced, so a client with an old copy doesn't undo what another client
+/// (or the host) changed meanwhile. Of an account, only `enabled` and
+/// `sign_in` are taken; the rest is the host's.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct IntegrationChanges {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lrclib: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub listenbrainz: Option<ScrobbleAccount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lastfm: Option<ScrobbleAccount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub librefm: Option<ScrobbleAccount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub discord: Option<bool>,
 }
 
 /// A scrobbling service in [`IntegrationSettings`].

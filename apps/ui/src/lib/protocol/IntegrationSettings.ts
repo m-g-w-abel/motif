@@ -3,7 +3,8 @@ import type { ScrobbleAccount } from "./ScrobbleAccount";
 
 /**
  * Settings for integrations with outside services (lyrics, scrobbling…),
- * kept and obeyed by the host and always sent whole. Secrets (tokens) stay
+ * kept and obeyed by the host, always sent out whole and changed with
+ * [`IntegrationChanges`]. Secrets (tokens) stay
  * on the host; at most who is signed in goes over the wire.
  */
 export type IntegrationSettings = { 

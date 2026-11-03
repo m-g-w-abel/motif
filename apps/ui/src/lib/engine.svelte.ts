@@ -1,6 +1,7 @@
 import { untrack } from 'svelte';
 import type { ClientMessage } from './protocol/ClientMessage';
 import type { Command } from './protocol/Command';
+import type { IntegrationChanges } from './protocol/IntegrationChanges';
 import type { IntegrationSettings } from './protocol/IntegrationSettings';
 import type { LibraryQuery } from './protocol/LibraryQuery';
 import type { LibraryStatus } from './protocol/LibraryStatus';
@@ -12,7 +13,7 @@ import { toasts } from './toast.svelte';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
-const PROTOCOL_VERSION = 7;
+const PROTOCOL_VERSION = 8;
 const MAX_BACKOFF_MS = 5000;
 
 /** Where the engine lives: the embedded one under Tauri, else the page's host. */
@@ -74,15 +75,15 @@ export class EngineClient {
     return new Promise((resolve, reject) => this.#pending.set(id, { resolve, reject }));
   }
 
-  /** Replaces the host's integration settings (all of them); shows failures in the UI. */
-  setIntegrations(integrations: IntegrationSettings): void {
+  /** Changes the host's integration settings given in `changes`; shows failures in the UI. */
+  setIntegrations(changes: IntegrationChanges): void {
     const socket = this.#socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       this.error = 'not connected to the engine';
       return;
     }
     const id = this.#nextId++;
-    const message: ClientMessage = { id, integrations };
+    const message: ClientMessage = { id, changes };
     socket.send(JSON.stringify(message));
     new Promise<void>((resolve, reject) => this.#pending.set(id, { resolve, reject })).catch((e: Error) => (this.error = e.message));
   }

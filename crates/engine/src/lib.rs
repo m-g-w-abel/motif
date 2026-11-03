@@ -125,17 +125,7 @@ impl Engine {
                     // Repeat while a failure moves playback on to another entry;
                     // `fail` stops once every entry has failed.
                     loop {
-                        let started = Instant::now();
-                        let position = player.position(started);
-                        let current = player.current_item().map(|item| item.id);
-                        player.resolve_current(&resolver, now);
-                        // Time spent waiting for a measurement isn't played.
-                        if player.current_item().map(|item| item.id) == current
-                            && started.elapsed() > WAITED
-                        {
-                            now = Instant::now();
-                            player.sync_position(position, now);
-                        }
+                        now = resolve(&mut player, &resolver, now);
                         let current = player.current_item().map(|item| item.id);
                         output.reconcile(&mut player, &resolver, now);
                         if player.current_item().map(|item| item.id) == current {
@@ -221,6 +211,21 @@ fn snapshot(player: &Player) -> PlayerState {
 }
 
 /// The clock `PlayerState::sampled_at_ms` is measured on (Unix ms).
+/// Resolves the current entry, which can wait for a loudness measurement.
+/// That wait isn't played: returns the time to go on from.
+fn resolve(player: &mut Player, resolver: &dyn Resolver, now: Instant) -> Instant {
+    let started = Instant::now();
+    let position = player.position(started);
+    let current = player.current_item().map(|item| item.id);
+    player.resolve_current(resolver, now);
+    if player.current_item().map(|item| item.id) == current && started.elapsed() > WAITED {
+        let now = Instant::now();
+        player.sync_position(position, now);
+        return now;
+    }
+    now
+}
+
 pub fn wall_clock_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -230,7 +235,50 @@ pub fn wall_clock_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::{PlaybackStatus, TrackRef};
+    use protocol::{ContextKind, PlaybackStatus, ReplayGain, TrackRef};
+
+    /// Untagged files whose measurement takes a while.
+    struct SlowToMeasure;
+    impl Resolver for SlowToMeasure {
+        fn resolve(&self, track: &TrackRef) -> Result<Playable, String> {
+            Ok(Playable::File(
+                track.id.clone().into(),
+                ReplayGain::default(),
+            ))
+        }
+        fn measure(&self, _: &[TrackRef], wait: bool) {
+            if wait {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
+
+    #[test]
+    fn waiting_for_a_measurement_isnt_played() {
+        let mut player = Player::default();
+        let tracks = vec![TrackRef {
+            source: "local".into(),
+            id: "/a.flac".into(),
+            duration_ms: Some(60_000),
+            ..Default::default()
+        }];
+        let start = Instant::now();
+        let play = Command::SetContext {
+            tracks,
+            start: Some(0),
+            kind: ContextKind::Album,
+            label: None,
+        };
+        player.apply(play, start).unwrap();
+        assert_eq!(player.status(), PlaybackStatus::Playing);
+        let now = resolve(&mut player, &SlowToMeasure, start);
+        assert!(now >= start + Duration::from_millis(200));
+        assert!(
+            player.position(now) < Duration::from_millis(50),
+            "starts at the start, not 200 ms in: {:?}",
+            player.position(now)
+        );
+    }
 
     #[tokio::test]
     async fn commands_update_published_state() {

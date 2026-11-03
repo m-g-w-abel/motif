@@ -101,8 +101,8 @@
   let listenBrainzToken = $state('');
   /** Signs the host in to a scrobbling service (a ListenBrainz user token; anything for Last.fm and Libre.fm), or out with ''. */
   function signIn(service: 'listenbrainz' | 'lastfm' | 'librefm', credential: string) {
-    const integrations = engine.integrations;
-    if (integrations) engine.setIntegrations({ ...integrations, [service]: { ...integrations[service], sign_in: credential } });
+    const account = engine.integrations?.[service];
+    if (account) engine.setIntegrations({ [service]: { ...account, sign_in: credential } });
   }
   // Opens a service's sign-in page once the host has one, in the window that asked only.
   let browserSignIn = $state<'lastfm' | 'librefm' | null>(null);
@@ -448,7 +448,7 @@
             <span class="label">Lyrics from LRCLIB</span>
             <div class="segmented" role="radiogroup" aria-label="Lyrics from LRCLIB">
               {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
-                <button role="radio" aria-checked={integrations.lrclib === value} class:active={integrations.lrclib === value} onclick={() => engine.setIntegrations({ ...integrations, lrclib: value })}>{text}</button>
+                <button role="radio" aria-checked={integrations.lrclib === value} class:active={integrations.lrclib === value} onclick={() => engine.setIntegrations({ lrclib: value })}>{text}</button>
               {/each}
             </div>
             <p class="status">Looks up lyrics for what plays on lrclib.net. Applies to every window and device using this engine.</p>
@@ -459,7 +459,7 @@
             {#if lb.user}
               <div class="segmented" role="radiogroup" aria-label="Scrobble to ListenBrainz">
                 {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
-                  <button role="radio" aria-checked={lb.enabled === value} class:active={lb.enabled === value} onclick={() => engine.setIntegrations({ ...integrations, listenbrainz: { ...lb, enabled: value } })}>{text}</button>
+                  <button role="radio" aria-checked={lb.enabled === value} class:active={lb.enabled === value} onclick={() => engine.setIntegrations({ listenbrainz: { ...lb, enabled: value } })}>{text}</button>
                 {/each}
               </div>
               <div class="actions">
@@ -490,7 +490,7 @@
             {#if fm.user}
               <div class="segmented" role="radiogroup" aria-label="Scrobble to {name}">
                 {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
-                  <button role="radio" aria-checked={fm.enabled === value} class:active={fm.enabled === value} onclick={() => engine.setIntegrations({ ...integrations, [service]: { ...fm, enabled: value } })}>{text}</button>
+                  <button role="radio" aria-checked={fm.enabled === value} class:active={fm.enabled === value} onclick={() => engine.setIntegrations({ [service]: { ...fm, enabled: value } })}>{text}</button>
                 {/each}
               </div>
               <div class="actions">
@@ -523,7 +523,7 @@
             <span class="label">Discord status</span>
             <div class="segmented" role="radiogroup" aria-label="Discord status">
               {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
-                <button role="radio" aria-checked={integrations.discord === value} class:active={integrations.discord === value} onclick={() => engine.setIntegrations({ ...integrations, discord: value })}>{text}</button>
+                <button role="radio" aria-checked={integrations.discord === value} class:active={integrations.discord === value} onclick={() => engine.setIntegrations({ discord: value })}>{text}</button>
               {/each}
             </div>
             <p class="status">Shows what plays on your Discord profile, as "Listening to" the artist, while Discord runs on the computer playing. Cover art comes from the Cover Art Archive for tracks tagged with a MusicBrainz release.</p>

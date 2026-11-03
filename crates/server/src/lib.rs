@@ -367,24 +367,26 @@ async fn session(socket: WebSocket, state: AppState) {
                 }
                 ServerMessage::Response { id, error: None }
             }
-            Ok(ClientMessage::SetIntegrations {
-                id,
-                integrations: mut new,
-            }) => {
+            Ok(ClientMessage::SetIntegrations { id, changes }) => {
                 state.integrations.send_if_modified(|settings| {
-                    new.secrets_unencrypted = settings.secrets_unencrypted;
-                    for (new, old) in [
-                        (&mut new.listenbrainz, &settings.listenbrainz),
-                        (&mut new.lastfm, &settings.lastfm),
-                        (&mut new.librefm, &settings.librefm),
-                    ] {
-                        new.user = old.user.clone();
-                        new.error = old.error.clone();
-                        new.auth_url = old.auth_url.clone();
+                    let before = settings.clone();
+                    if let Some(on) = changes.lrclib {
+                        settings.lrclib = on;
                     }
-                    let changed = *settings != *new;
-                    *settings = *new;
-                    changed
+                    if let Some(on) = changes.discord {
+                        settings.discord = on;
+                    }
+                    for (new, old) in [
+                        (changes.listenbrainz, &mut settings.listenbrainz),
+                        (changes.lastfm, &mut settings.lastfm),
+                        (changes.librefm, &mut settings.librefm),
+                    ] {
+                        if let Some(new) = new {
+                            old.enabled = new.enabled;
+                            old.sign_in = new.sign_in;
+                        }
+                    }
+                    *settings != before
                 });
                 ServerMessage::Response { id, error: None }
             }
@@ -529,7 +531,7 @@ mod tests {
             addr: "127.0.0.1:0".parse().unwrap(),
             ui_dir: None,
             library: None,
-            integrations,
+            integrations: integrations.clone(),
         };
         let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
             .await
@@ -554,23 +556,13 @@ mod tests {
             }
         }
         assert!(settings(&mut b).await.lrclib);
-        let new = IntegrationSettings {
-            lrclib: false,
-            listenbrainz: protocol::ScrobbleAccount {
-                user: Some("mallory".into()),
-                ..Default::default()
-            },
-            lastfm: Default::default(),
-            librefm: Default::default(),
-            secrets_unencrypted: true,
-            discord: false,
-        };
-        let json = serde_json::to_string(&ClientMessage::SetIntegrations {
-            id: 1,
-            integrations: new.into(),
-        })
+        let send = |json: &str| WsMessage::Text(json.to_owned().into());
+        a.send(send(
+            r#"{"id":1,"changes":{"lrclib":false,"secrets_unencrypted":true,
+                "listenbrainz":{"enabled":true,"user":"mallory"}}}"#,
+        ))
+        .await
         .unwrap();
-        a.send(WsMessage::Text(json.into())).await.unwrap();
         let got = settings(&mut b).await;
         assert!(!got.lrclib);
         assert!(
@@ -578,6 +570,18 @@ mod tests {
             "only the host says where secrets are"
         );
         assert_eq!(got.listenbrainz.user, None, "only the host signs in");
+        assert!(got.listenbrainz.enabled);
+
+        // The host signs in to Last.fm while a's copy still says it is off:
+        // a's next change mustn't turn it off again.
+        integrations.send_modify(|s| s.lastfm.enabled = true);
+        assert!(settings(&mut b).await.lastfm.enabled);
+        a.send(send(r#"{"id":2,"changes":{"discord":true}}"#))
+            .await
+            .unwrap();
+        let got = settings(&mut b).await;
+        assert!(got.discord);
+        assert!(got.lastfm.enabled && !got.lrclib, "the rest is kept");
     }
 
     #[test]

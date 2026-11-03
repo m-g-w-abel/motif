@@ -54,6 +54,10 @@ pub fn measure(path: &Path, hash: bool) -> Result<(Option<f64>, f64, Option<Stri
 /// ahead of earlier ones still waiting. With `wait`, the first is measured
 /// now and this returns once it is cached (or after [`WAIT_LIMIT`]).
 pub(crate) fn request(shared: &Arc<Shared>, mut paths: Vec<PathBuf>, wait: bool) {
+    {
+        let unmeasurable = shared.unmeasurable.lock().unwrap();
+        paths.retain(|p| !unmeasurable.contains(p));
+    }
     if wait && !paths.is_empty() {
         let (path, (done, finished)) = (paths.remove(0), mpsc::channel());
         let shared = shared.clone();
@@ -132,6 +136,8 @@ fn measure_one(shared: &Shared, path: &Path) {
             Ok(measured) => measured,
             Err(err) => {
                 tracing::debug!(%err, ?path, "can't measure loudness");
+                // shortcut: remembered until restart, so a file fixed meanwhile is measured after one.
+                shared.unmeasurable.lock().unwrap().insert(path.to_owned());
                 return Ok(());
             }
         };

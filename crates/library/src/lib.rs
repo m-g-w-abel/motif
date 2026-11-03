@@ -16,7 +16,7 @@ mod tags;
 mod waveform;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -60,6 +60,9 @@ struct Shared {
     /// Files waiting for their loudness to be measured, and whether a
     /// thread is measuring them (see [`loudness::request`]).
     measuring: Mutex<(VecDeque<PathBuf>, bool)>,
+    /// Files the library's decoder can't measure (those only libopus or
+    /// FFmpeg play), so they aren't tried again on every engine change.
+    unmeasurable: Mutex<HashSet<PathBuf>>,
     /// Set when a measurement is cached, until [`Library::take_measured`].
     measured: AtomicBool,
     /// When LRCLIB last failed (see [`lyrics::BACKOFF`]).
@@ -103,6 +106,7 @@ impl Library {
             db_path: db_path.clone(),
             extras: Mutex::default(),
             measuring: Mutex::default(),
+            unmeasurable: Mutex::default(),
             measured: AtomicBool::new(false),
             lrclib_failed: Mutex::default(),
         });

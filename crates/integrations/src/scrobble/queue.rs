@@ -40,14 +40,15 @@ impl Queue {
     /// Submits everything, oldest first. Listens the service rejects are
     /// dropped; anything else stops the flush and leaves the rest queued.
     pub async fn flush<S: Scrobbler>(&mut self, service: &S, secret: &str) -> Result<(), Error> {
-        let mut batch = S::BATCH;
+        // Listens left to send singly, after a batch with a bad one was rejected.
+        let mut singly = 0;
         while !self.listens.is_empty() {
-            let n = batch.min(self.listens.len());
+            let n = if singly > 0 { 1 } else { S::BATCH }.min(self.listens.len());
             match service.scrobble(secret, &self.listens[..n]).await {
                 Ok(()) => {}
-                // Find the bad one by sending the rest singly.
+                // Find the bad one by sending that batch singly.
                 Err(Error::Rejected(_)) if n > 1 => {
-                    batch = 1;
+                    singly = n;
                     continue;
                 }
                 Err(Error::Rejected(err)) => {
@@ -56,6 +57,7 @@ impl Queue {
                 Err(err) => return Err(err),
             }
             self.listens.drain(..n);
+            singly = singly.saturating_sub(n);
             if let Err(err) = self.save() {
                 tracing::warn!(%err, "can't save the scrobble queue");
             }
@@ -82,6 +84,8 @@ mod tests {
     struct Fake {
         online: Arc<Mutex<bool>>,
         got: Arc<Mutex<Vec<String>>>,
+        /// The size of every batch sent while online.
+        sizes: Arc<Mutex<Vec<usize>>>,
     }
 
     impl Scrobbler for Fake {
@@ -106,6 +110,7 @@ mod tests {
             if !*self.online.lock().unwrap() {
                 return Err(Error::Retry("offline".into()));
             }
+            self.sizes.lock().unwrap().push(listens.len());
             if listens.iter().any(|l| l.title == "bad") {
                 return Err(Error::Rejected("bad".into()));
             }
@@ -139,22 +144,27 @@ mod tests {
         let fake = Fake::default();
 
         let mut queue = Queue::open(file.clone());
-        for (i, title) in ["a", "b", "bad", "c", "d"].into_iter().enumerate() {
+        for (i, title) in ["a", "b", "bad", "c", "d", "e"].into_iter().enumerate() {
             queue.push(listen(title, 100 + i as u64)).unwrap();
         }
         assert!(queue.flush(&fake, "secret").await.is_err());
-        assert_eq!(queue.len(), 5, "nothing lost offline");
+        assert_eq!(queue.len(), 6, "nothing lost offline");
         drop(queue);
 
         let mut queue = Queue::open(file.clone());
-        assert_eq!(queue.len(), 5, "kept across a restart");
+        assert_eq!(queue.len(), 6, "kept across a restart");
         *fake.online.lock().unwrap() = true;
         queue.flush(&fake, "secret").await.unwrap();
         assert!(queue.is_empty());
         assert_eq!(
             *fake.got.lock().unwrap(),
-            ["a@100", "b@101", "c@103", "d@104"],
+            ["a@100", "b@101", "c@103", "d@104", "e@105"],
             "in order with their own times, the rejected one dropped"
+        );
+        assert_eq!(
+            *fake.sizes.lock().unwrap(),
+            [2, 2, 1, 1, 2],
+            "only the rejected batch goes singly"
         );
         assert!(Queue::open(file).is_empty());
         std::fs::remove_dir_all(dir).unwrap();
