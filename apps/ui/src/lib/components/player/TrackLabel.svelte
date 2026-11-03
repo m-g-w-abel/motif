@@ -27,8 +27,9 @@
     white-space: nowrap;
   }
 
+  /* The sheet's title weight, so the morph's ghost matches it (#109). */
   .title {
-    font-weight: 600;
+    font-weight: 700;
   }
 
   .sub {
