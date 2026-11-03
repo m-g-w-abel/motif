@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Bumped on any incompatible change to the types below.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// A message sent from a client: a command for the engine, a query for the
 /// library, or a change of subscription. `id` is echoed back in the matching
@@ -36,6 +36,11 @@ pub enum ClientMessage {
     SetIntegrations {
         id: u32,
         changes: Box<IntegrationChanges>,
+    },
+    /// Pairing and paired-device management; needs [`Scope::Pairing`].
+    Pairing {
+        id: u32,
+        pairing: PairingCommand,
     },
 }
 
@@ -231,6 +236,11 @@ pub enum Event {
     /// The host's integration settings, on connecting and whenever they change.
     Integrations {
         settings: IntegrationSettings,
+    },
+    /// Paired devices and pairing in progress, on connecting and whenever
+    /// they change. Only sent to clients with [`Scope::Pairing`].
+    Pairing {
+        state: PairingState,
     },
 }
 
@@ -740,6 +750,195 @@ pub struct TrackGroup {
     pub artist: String,
     #[ts(type = "number")]
     pub duration_ms: u64,
+}
+
+/// What a client may do. Every client may read the player state and the
+/// library; each scope allows changing something.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Scope {
+    /// Transport, volume, repeat, and choosing what plays.
+    Playback,
+    /// Adding, moving and removing queue entries.
+    Queue,
+    /// Library folders, rescans, watching, saving lyrics.
+    Library,
+    /// Engine and integration settings (decoders, output, ReplayGain…).
+    Settings,
+    /// Pairing new devices and managing paired ones.
+    Pairing,
+}
+
+/// The sets of [`Scope`]s offered when approving a device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Preset {
+    Full,
+    ControlPlayback,
+    ViewOnly,
+}
+
+impl Preset {
+    pub fn scopes(self) -> Vec<Scope> {
+        match self {
+            Preset::Full => vec![
+                Scope::Playback,
+                Scope::Queue,
+                Scope::Library,
+                Scope::Settings,
+                Scope::Pairing,
+            ],
+            Preset::ControlPlayback => vec![Scope::Playback, Scope::Queue],
+            Preset::ViewOnly => vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum PairingCommand {
+    /// Makes a one-time code for a new device, shown in
+    /// [`PairingState::code`]. Replaces any earlier code.
+    Start,
+    /// Withdraws the current code.
+    Cancel,
+    /// Lets a waiting device ([`PendingDevice::id`]) in with these scopes.
+    Approve {
+        request: u32,
+        preset: Preset,
+    },
+    Deny {
+        request: u32,
+    },
+    /// Lets devices in without approval, with this preset; `None` (the
+    /// default) asks every time.
+    SetAutoApprove {
+        preset: Option<Preset>,
+    },
+    Rename {
+        device: String,
+        name: String,
+    },
+    SetPreset {
+        device: String,
+        preset: Preset,
+    },
+    /// Forgets the device and closes its connections.
+    Revoke {
+        device: String,
+    },
+    /// Closes one connection ([`Connection::id`]); the device stays paired.
+    Disconnect {
+        connection: u32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PairingState {
+    /// The engine's public key (ed25519, hex), its identity.
+    pub engine_key: String,
+    pub code: Option<PairingCode>,
+    pub auto_approve: Option<Preset>,
+    /// Devices that redeemed a code and wait for approval.
+    pub pending: Vec<PendingDevice>,
+    pub devices: Vec<PairedDevice>,
+    pub connected: Vec<Connection>,
+    /// Newest last, capped.
+    pub log: Vec<PairingLogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PairingCode {
+    pub code: String,
+    #[ts(type = "number")]
+    pub expires_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PendingDevice {
+    pub id: u32,
+    pub name: String,
+    /// The device's ed25519 public key (hex), if it has one (Motif apps).
+    pub public_key: Option<String>,
+    pub address: String,
+    #[ts(type = "number")]
+    pub requested_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PairedDevice {
+    pub id: String,
+    pub name: String,
+    pub public_key: Option<String>,
+    pub scopes: Vec<Scope>,
+    #[ts(type = "number")]
+    pub paired_at_ms: u64,
+    #[ts(type = "number | null")]
+    pub last_seen_ms: Option<u64>,
+}
+
+/// A client connected now.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Connection {
+    pub id: u32,
+    /// The paired device, or `None` for this machine (loopback).
+    pub device: Option<String>,
+    pub address: String,
+    #[ts(type = "number")]
+    pub connected_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PairingLogEntry {
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub action: PairingAction,
+    /// The device's name after the action.
+    pub device: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PairingAction {
+    /// Let in without approval.
+    Paired,
+    Approved,
+    Denied,
+    Revoked,
+    Renamed,
+    PresetChanged,
+}
+
+/// Body of `POST /pair`, sent by a new device with the code it was shown.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PairRequest {
+    pub code: String,
+    pub name: String,
+    /// The device's ed25519 public key (hex), if it has one.
+    #[serde(default)]
+    pub public_key: Option<String>,
+}
+
+/// The answer to [`PairRequest`] once the device is let in. `token` goes in
+/// `Authorization: Bearer <token>` or a `token` URL parameter (for `/ws`,
+/// `/art` and `/images`); the engine keeps only its hash.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Paired {
+    pub device: String,
+    pub token: String,
+    pub engine_key: String,
 }
 
 #[cfg(test)]

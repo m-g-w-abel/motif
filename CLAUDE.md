@@ -33,7 +33,7 @@ directory (`MOTIF_DATA_DIR` overrides it, handy for tests).
 | `crates/engine` | Queue and transport state machine (`player.rs` is pure and unit-tested) |
 | `crates/library` | Library: scan, tags, SQLite (`db.rs` holds sort orders and migrations), artwork, waveforms |
 | `crates/integrations` | OS media controls |
-| `crates/server` | WebSocket `/ws` + static UI hosting (loopback only until pairing exists) |
+| `crates/server` | WebSocket `/ws` + static UI hosting; `pairing.rs` (engine identity, paired devices, scoped tokens; loopback needs none) |
 | `apps/desktop` | Tauri 2 shell embedding engine + server (binary `motif`) |
 | `apps/headless` | Engine without a window on `127.0.0.1:7700` (binary `motif-headless`) |
 | `apps/ui` | Svelte 5 + Vite SPA (no SvelteKit). `lib/layout/` parser, presets and store; `lib/themes.ts` (built-ins), `lib/themeFile.ts` + `lib/userThemes.svelte.ts` (user themes); `lib/sort.svelte.ts`; `lib/settings.svelte.ts` |

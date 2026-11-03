@@ -13,7 +13,7 @@ import { toasts } from './toast.svelte';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
-const PROTOCOL_VERSION = 8;
+const PROTOCOL_VERSION = 9;
 const MAX_BACKOFF_MS = 5000;
 
 /** Where the engine lives: the embedded one under Tauri, else the page's host. */
@@ -213,7 +213,8 @@ export class EngineClient {
           this.library = message.event.status;
         } else if (message.event.type === 'integrations') {
           this.integrations = message.event.settings;
-        } else {
+        } else if (message.event.type === 'bands') {
+          // Pairing state is ignored until the pairing UI (#106).
           for (const listener of this.#bands) listener(message.event.bands);
         }
         break;

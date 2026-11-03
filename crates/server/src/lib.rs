@@ -2,31 +2,32 @@
 //! artwork at `/art/<id>` (a track's other images listed at `/images`) and
 //! the web UI.
 //!
-//! Phase 0 has no authentication, so callers must bind to loopback only, and
-//! browsers may only connect from pages served by this machine.
-//! Pairing tokens arrive in phase 4 before the server is exposed on the LAN.
+//! Clients on this machine (loopback peers, from pages served by this
+//! machine) need no token; anyone else needs a paired device's token, got by
+//! redeeming a one-time code at `POST /pair` (see [`Pairing`]).
 
+mod pairing;
 mod resolver;
 pub mod settings;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{
-        Path, Query, State,
+        ConnectInfo, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode, Uri, header},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use engine::Engine;
 use futures_util::{SinkExt, StreamExt};
 use library::Library;
 use protocol::{
-    ClientMessage, Event, IntegrationSettings, LibraryQuery, PROTOCOL_VERSION, QueryResult,
-    ServerMessage,
+    ClientMessage, Command, Event, IntegrationSettings, LibraryQuery, PROTOCOL_VERSION,
+    PairRequest, QueryResult, Scope, ServerMessage,
 };
 use tokio::{
     net::TcpListener,
@@ -34,6 +35,8 @@ use tokio::{
 };
 use tower_http::services::{ServeDir, ServeFile};
 
+pub use pairing::Pairing;
+use pairing::Who;
 pub use resolver::LibraryResolver;
 
 pub struct Config {
@@ -43,6 +46,7 @@ pub struct Config {
     pub library: Option<Library>,
     /// The host's integration settings, which clients read and replace.
     pub integrations: watch::Sender<IntegrationSettings>,
+    pub pairing: Pairing,
 }
 
 #[derive(Clone)]
@@ -50,6 +54,7 @@ struct AppState {
     engine: Engine,
     library: Option<Library>,
     integrations: watch::Sender<IntegrationSettings>,
+    pairing: Pairing,
     /// Limits artwork requests in flight. Each can hold a whole image or a
     /// decoded one (tens of MB), and a grid asks for hundreds at once.
     art_slots: Arc<Semaphore>,
@@ -67,27 +72,26 @@ pub async fn bind(
 ) -> std::io::Result<(SocketAddr, impl Future<Output = std::io::Result<()>>)> {
     let listener = TcpListener::bind(config.addr).await?;
     let addr = listener.local_addr()?;
-    let app = router(engine, config.library, config.integrations, config.ui_dir);
+    let app = router(engine, config).into_make_service_with_connect_info::<SocketAddr>();
     Ok((addr, async move { axum::serve(listener, app).await }))
 }
 
-pub fn router(
-    engine: Engine,
-    library: Option<Library>,
-    integrations: watch::Sender<IntegrationSettings>,
-    ui_dir: Option<PathBuf>,
-) -> Router {
+/// The routes; serve them with `ConnectInfo<SocketAddr>`, which says who is
+/// local. `config.addr` is unused.
+pub fn router(engine: Engine, config: Config) -> Router {
     let router = Router::new()
         .route("/ws", get(upgrade))
         .route("/art/{key}", get(art))
         .route("/images", get(images))
+        .route("/pair", post(pair))
         .with_state(AppState {
             engine,
-            library,
-            integrations,
+            library: config.library,
+            integrations: config.integrations,
+            pairing: config.pairing,
             art_slots: Arc::new(Semaphore::new(ART_SLOTS)),
         });
-    match ui_dir {
+    match config.ui_dir {
         Some(dir) => {
             // Unknown paths fall back to index.html so client-side routes work.
             let index = ServeFile::new(dir.join("index.html"));
@@ -97,25 +101,65 @@ pub fn router(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct TokenParam {
+    token: Option<String>,
+}
+
 async fn upgrade(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(params): Query<TokenParam>,
     State(state): State<AppState>,
 ) -> Response {
-    if !origin_allowed(
-        headers
-            .get(header::ORIGIN)
-            .map(|v| v.to_str().unwrap_or("")),
-    ) {
-        return StatusCode::FORBIDDEN.into_response();
+    let Some(who) = authorise(&state, peer, &headers, params.token.as_deref()) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    ws.on_upgrade(move |socket| session(socket, state, who, peer))
+}
+
+/// Who a request comes from: the device whose token it carries (in
+/// `Authorization: Bearer` or, for browsers' `<img>` and WebSocket, a
+/// `token` parameter), else this machine if the peer is loopback and the
+/// page (if any) is local. `None` is refused.
+fn authorise(
+    state: &AppState,
+    peer: SocketAddr,
+    headers: &HeaderMap,
+    token: Option<&str>,
+) -> Option<Who> {
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    if let Some(token) = bearer.or(token) {
+        return state.pairing.authenticate(token).map(Who::Device);
     }
-    ws.on_upgrade(move |socket| session(socket, state))
+    let origin = headers
+        .get(header::ORIGIN)
+        .map(|v| v.to_str().unwrap_or(""));
+    (peer.ip().to_canonical().is_loopback() && origin_allowed(origin)).then_some(Who::Local)
+}
+
+/// A new device redeems a pairing code; the answer may wait for the host's
+/// approval.
+async fn pair(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(request): Json<PairRequest>,
+) -> Response {
+    match state.pairing.redeem(request, peer).await {
+        Ok(paired) => Json(paired).into_response(),
+        Err(refusal) => refusal.into_response(),
+    }
 }
 
 #[derive(serde::Deserialize)]
 struct ImagesParams {
     /// The track's path in the library.
     track: String,
+    token: Option<String>,
 }
 
 /// Artwork keys for all of a track's images (cover, back, booklet…), its
@@ -124,12 +168,13 @@ struct ImagesParams {
 async fn images(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(params): Query<ImagesParams>,
 ) -> Response {
-    let origin = headers.get(header::ORIGIN).cloned();
-    if !origin_allowed(origin.as_ref().map(|v| v.to_str().unwrap_or(""))) {
-        return StatusCode::FORBIDDEN.into_response();
+    if authorise(&state, peer, &headers, params.token.as_deref()).is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
     }
+    let origin = headers.get(header::ORIGIN).cloned();
     let Some(library) = state.library else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -159,6 +204,7 @@ async fn images(
 struct ArtParams {
     /// Fit within this many pixels; full size if absent.
     size: Option<u32>,
+    token: Option<String>,
 }
 
 /// Artwork by id. Ids are content hashes, so responses never change and the
@@ -166,9 +212,13 @@ struct ArtParams {
 async fn art(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(key): Path<String>,
     Query(params): Query<ArtParams>,
 ) -> Response {
+    let Some(who) = authorise(&state, peer, &headers, params.token.as_deref()) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
     let origin = headers.get(header::ORIGIN).cloned();
     let Some(library) = state.library else {
         return StatusCode::NOT_FOUND.into_response();
@@ -189,14 +239,18 @@ async fn art(
                     header::CONTENT_TYPE,
                     if png { "image/png" } else { "image/jpeg" },
                 ),
-                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
                 (header::VARY, "origin"),
             ];
             let mut response = (headers, bytes).into_response();
             // The desktop window's page has another origin than this server,
             // and it reads the cover's pixels for art colours.
-            if let Some(origin) = origin.filter(|o| origin_allowed(Some(o.to_str().unwrap_or(""))))
-            {
+            if let Some(origin) = origin.filter(|o| {
+                matches!(who, Who::Device(_)) || origin_allowed(Some(o.to_str().unwrap_or("")))
+            }) {
                 response
                     .headers_mut()
                     .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
@@ -244,10 +298,58 @@ async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, Str
     .map_err(|e| e.to_string())
 }
 
+/// The scope a message needs; `None` if any client may send it.
+fn required_scope(message: &ClientMessage) -> Option<Scope> {
+    match message {
+        ClientMessage::Command { command, .. } => Some(match command {
+            Command::Play
+            | Command::Pause
+            | Command::TogglePlayback
+            | Command::Stop
+            | Command::Next
+            | Command::Previous
+            | Command::Seek { .. }
+            | Command::SetVolume { .. }
+            | Command::SetRepeat { .. }
+            | Command::SetContext { .. }
+            | Command::PlayItem { .. } => Scope::Playback,
+            Command::Enqueue { .. }
+            | Command::EnqueueNext { .. }
+            | Command::RemoveItem { .. }
+            | Command::MoveItem { .. }
+            | Command::ClearQueue => Scope::Queue,
+            Command::SetDecoders { .. }
+            | Command::SetOutput { .. }
+            | Command::ListOutputs
+            | Command::SetReplayGain { .. } => Scope::Settings,
+        }),
+        ClientMessage::Query { query, .. } => match query {
+            LibraryQuery::Status
+            | LibraryQuery::Tracks { .. }
+            | LibraryQuery::Groups { .. }
+            | LibraryQuery::Albums { .. }
+            | LibraryQuery::AlbumPosition { .. }
+            | LibraryQuery::Lookup { .. }
+            | LibraryQuery::AlbumTracks { .. }
+            | LibraryQuery::Waveform { .. }
+            | LibraryQuery::Lyrics { .. } => None,
+            LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. } => Some(Scope::Playback),
+            LibraryQuery::AddRoot { .. }
+            | LibraryQuery::RemoveRoot { .. }
+            | LibraryQuery::Rescan
+            | LibraryQuery::SetWatching { .. }
+            | LibraryQuery::SaveLyrics { .. } => Some(Scope::Library),
+        },
+        ClientMessage::Subscribe { .. } => None,
+        ClientMessage::SetIntegrations { .. } => Some(Scope::Settings),
+        ClientMessage::Pairing { .. } => Some(Scope::Pairing),
+    }
+}
+
 /// Browsers let any website open a WebSocket to localhost, so a page must come
 /// from this machine or be the Tauri window. Clients that send no `Origin`
-/// are not browsers and can't be driven by a website.
-// shortcut: trusts every local origin (other localhost apps too), replace with pairing tokens in phase 4.
+/// are not browsers and can't be driven by a website. Only asked for
+/// loopback peers: anyone else could fake the header.
 fn origin_allowed(origin: Option<&str>) -> bool {
     let Some(origin) = origin else { return true };
     let Ok(uri) = origin.parse::<Uri>() else {
@@ -261,8 +363,9 @@ fn origin_allowed(origin: Option<&str>) -> bool {
 }
 
 /// One connected client: forwards state changes out and commands in.
-async fn session(socket: WebSocket, state: AppState) {
+async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr) {
     let engine = state.engine.clone();
+    let (connection, close) = state.pairing.connected(&who, peer);
     let (mut sink, mut stream) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<ServerMessage>(32);
 
@@ -296,6 +399,9 @@ async fn session(socket: WebSocket, state: AppState) {
         library = lib.subscribe();
         library.mark_changed();
     }
+    let mut pairing = state.pairing.subscribe();
+    pairing.mark_changed();
+    let (pairing_handle, publisher_who) = (state.pairing.clone(), who.clone());
     let event_tx = out_tx.clone();
     let publisher = tokio::spawn(async move {
         let _no_library = no_library;
@@ -312,6 +418,13 @@ async fn session(socket: WebSocket, state: AppState) {
                 Ok(()) = states.changed() => Event::State { state: states.borrow_and_update().clone() },
                 Ok(()) = library.changed() => Event::Library { status: library.borrow_and_update().clone() },
                 Ok(()) = integrations.changed() => Event::Integrations { settings: integrations.borrow_and_update().clone() },
+                Ok(()) = pairing.changed() => {
+                    let state = pairing.borrow_and_update().clone();
+                    if !pairing_handle.allows(&publisher_who, Scope::Pairing) {
+                        continue;
+                    }
+                    Event::Pairing { state }
+                }
                 else => break,
             };
             if event_tx.send(ServerMessage::Event { event }).await.is_err() {
@@ -322,13 +435,39 @@ async fn session(socket: WebSocket, state: AppState) {
 
     // Forwards visualiser bands while subscribed; dropping it unsubscribes.
     let mut bands: Option<tokio::task::JoinHandle<()>> = None;
-    while let Some(Ok(msg)) = stream.next().await {
+    loop {
+        let msg = tokio::select! {
+            msg = stream.next() => msg,
+            () = close.notified() => break,
+        };
         let text = match msg {
-            Message::Text(text) => text,
-            Message::Close(_) => break,
+            Some(Ok(Message::Text(text))) => text,
+            Some(Ok(Message::Close(_)) | Err(_)) | None => break,
             _ => continue,
         };
-        let reply = match serde_json::from_str::<ClientMessage>(&text) {
+        let message = serde_json::from_str::<ClientMessage>(&text);
+        if let Ok(message) = &message
+            && let Some(scope) = required_scope(message)
+            && !state.pairing.allows(&who, scope)
+        {
+            let error = Some(format!("not allowed: needs the {scope:?} permission"));
+            let reply = match *message {
+                ClientMessage::Query { id, .. } => ServerMessage::QueryResult {
+                    id,
+                    error,
+                    result: None,
+                },
+                ClientMessage::Command { id, .. }
+                | ClientMessage::Subscribe { id, .. }
+                | ClientMessage::SetIntegrations { id, .. }
+                | ClientMessage::Pairing { id, .. } => ServerMessage::Response { id, error },
+            };
+            if out_tx.send(reply).await.is_err() {
+                break;
+            }
+            continue;
+        }
+        let reply = match message {
             Ok(ClientMessage::Command { id, command }) => ServerMessage::Response {
                 id,
                 error: engine.send(command).await.err().map(|e| e.to_string()),
@@ -390,6 +529,10 @@ async fn session(socket: WebSocket, state: AppState) {
                 });
                 ServerMessage::Response { id, error: None }
             }
+            Ok(ClientMessage::Pairing { id, pairing }) => ServerMessage::Response {
+                id,
+                error: state.pairing.command(pairing).err(),
+            },
             Err(err) => {
                 tracing::debug!(%err, "malformed client message");
                 ServerMessage::Response {
@@ -403,6 +546,7 @@ async fn session(socket: WebSocket, state: AppState) {
         }
     }
 
+    state.pairing.disconnected(connection);
     publisher.abort();
     if let Some(task) = bands {
         task.abort();
@@ -437,6 +581,7 @@ mod tests {
             ui_dir: None,
             library: None,
             integrations: watch::channel(Default::default()).0,
+            pairing: Pairing::in_memory(),
         };
         let (addr, serve) = bind(engine, config).await.unwrap();
         tokio::spawn(serve);
@@ -491,7 +636,11 @@ mod tests {
                     event: Event::State { state },
                 } => playing = state.status == PlaybackStatus::Playing,
                 ServerMessage::Event {
-                    event: Event::Queue { .. } | Event::Context { .. } | Event::Integrations { .. },
+                    event:
+                        Event::Queue { .. }
+                        | Event::Context { .. }
+                        | Event::Integrations { .. }
+                        | Event::Pairing { .. },
                 } => {}
                 other => panic!("unexpected {other:?}"),
             }
@@ -505,6 +654,7 @@ mod tests {
             ui_dir: None,
             library: None,
             integrations: watch::channel(Default::default()).0,
+            pairing: Pairing::in_memory(),
         };
         let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
             .await
@@ -532,6 +682,7 @@ mod tests {
             ui_dir: None,
             library: None,
             integrations: integrations.clone(),
+            pairing: Pairing::in_memory(),
         };
         let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
             .await
@@ -582,6 +733,149 @@ mod tests {
         let got = settings(&mut b).await;
         assert!(got.discord);
         assert!(got.lastfm.enabled && !got.lrclib, "the rest is kept");
+    }
+
+    /// Serves to clients that all appear to come from another machine.
+    async fn lan_server(pairing: Pairing) -> SocketAddr {
+        let config = Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui_dir: None,
+            library: None,
+            integrations: watch::channel(Default::default()).0,
+            pairing,
+        };
+        let app = router(Engine::spawn(engine::LocalFiles), config).layer(
+            axum::extract::connect_info::MockConnectInfo(SocketAddr::from((
+                [192, 168, 1, 20],
+                5000,
+            ))),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        addr
+    }
+
+    async fn token(pairing: &Pairing, preset: protocol::Preset) -> String {
+        pairing
+            .command(protocol::PairingCommand::SetAutoApprove {
+                preset: Some(preset),
+            })
+            .unwrap();
+        let request = PairRequest {
+            code: pairing.start().code,
+            name: "Phone".into(),
+            public_key: None,
+        };
+        let peer = "192.168.1.20:5000".parse().unwrap();
+        pairing.redeem(request, peer).await.unwrap().token
+    }
+
+    async fn http_status(addr: SocketAddr, path: &str) -> u16 {
+        let request = format!("GET {path} HTTP/1.1\r\nHost: motif\r\nConnection: close\r\n\r\n");
+        tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(addr).unwrap();
+            stream.write_all(request.as_bytes()).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            response[9..12].parse().unwrap()
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn other_machines_need_a_token() {
+        let pairing = Pairing::in_memory();
+        let addr = lan_server(pairing.clone()).await;
+        assert!(connect_async(format!("ws://{addr}/ws")).await.is_err());
+        assert!(
+            connect_async(format!("ws://{addr}/ws?token=guess"))
+                .await
+                .is_err()
+        );
+        assert_eq!(http_status(addr, "/art/abc").await, 401);
+        assert_eq!(http_status(addr, "/images?track=a").await, 401);
+
+        let token = token(&pairing, protocol::Preset::ViewOnly).await;
+        let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            next_message(&mut ws).await,
+            ServerMessage::Hello { .. }
+        ));
+        // Past the auth check: this engine has no library.
+        assert_eq!(
+            http_status(addr, &format!("/art/abc?token={token}")).await,
+            404
+        );
+    }
+
+    #[tokio::test]
+    async fn view_only_devices_cant_control_playback() {
+        let pairing = Pairing::in_memory();
+        let addr = lan_server(pairing.clone()).await;
+        let token = token(&pairing, protocol::Preset::ViewOnly).await;
+        let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
+            .await
+            .unwrap();
+        for (id, json) in [
+            (1, r#"{"id":1,"command":{"type":"play"}}"#),
+            (2, r#"{"id":2,"pairing":{"type":"start"}}"#),
+        ] {
+            ws.send(WsMessage::Text(json.into())).await.unwrap();
+            loop {
+                match next_message(&mut ws).await {
+                    ServerMessage::Response { id: got, error } => {
+                        assert_eq!(got, id);
+                        assert!(error.unwrap().starts_with("not allowed"));
+                        break;
+                    }
+                    ServerMessage::Event {
+                        event: Event::Pairing { .. },
+                    } => panic!("pairing state is for Full devices"),
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(pairing.subscribe().borrow().code, None);
+    }
+
+    #[tokio::test]
+    async fn revoking_a_device_closes_its_connection() {
+        let pairing = Pairing::in_memory();
+        let addr = lan_server(pairing.clone()).await;
+        let token = token(&pairing, protocol::Preset::Full).await;
+        let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
+            .await
+            .unwrap();
+        let device = loop {
+            if let ServerMessage::Event {
+                event: Event::Pairing { state },
+            } = next_message(&mut ws).await
+                && let Some(connection) = state.connected.first()
+            {
+                break connection.device.clone().unwrap();
+            }
+        };
+        pairing
+            .command(protocol::PairingCommand::Revoke { device })
+            .unwrap();
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while let Some(Ok(_)) = ws.next().await {}
+        })
+        .await;
+        assert!(closed.is_ok(), "the socket closes");
+        assert!(
+            connect_async(format!("ws://{addr}/ws?token={token}"))
+                .await
+                .is_err()
+        );
+        let state = pairing.subscribe();
+        let state = state.borrow();
+        assert!(state.devices.is_empty() && state.connected.is_empty());
     }
 
     #[test]
