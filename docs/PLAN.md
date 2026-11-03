@@ -198,9 +198,9 @@ be saved back to the file or a sidecar.
 | **1** | Desktop player | Symphonia/FFmpeg decode, cpal output, gapless, queue, library scan + DB, OS media controls (MPRIS, SMTC, macOS Now Playing) |
 | **2** | Looks great | User themes, album-art palettes, drag/resize editing of layouts, per-device layouts, waveform seekbar, visualiser, artwork. (The layout file format, views and now-playing bar/widget were pulled forward into phase 0.) |
 | **3** | Cheap wins | Lyrics, scrobbling, Discord, ReplayGain |
-| **4** | Remote control | Pairing + tokens, LAN exposure, MPD protocol |
+| **4** | Remote control | Pairing (device keys + scoped tokens, the one pairing system phase 6 reuses), LAN exposure + mDNS, pairing UI, MPD protocol |
 | **5** | Android | Android build, MediaSession plugin, gestures, local + remote modes |
-| **6** | P2P + sync | iroh transport, device pairing, CRDT metadata, selective file sync, transcoding |
+| **6** | P2P + sync | iroh transport for devices paired in phase 4 (encrypted, over the internet), CRDT metadata, selective file sync, transcoding |
 | **7** | Jam / listen-along | Sessions, permissions, browser guests, clock sync |
 | **8** | Streaming | Plugin host, YouTube, radio, Subsonic/Jellyfin, SoundCloud, Bandcamp |
 | **9** | Audiophile | Exclusive output, sample-rate switching, DSD (DoP/native), crossfade, PEQ + AutoEQ, convolution, crossfeed, speed/pitch, A-B repeat, sleep timer |
@@ -209,6 +209,29 @@ be saved back to the file or a sidecar.
 | **12** | Sources & outputs | SMB/WebDAV/SFTP folders, Subsonic API server, podcasts, audiobooks, Chromecast, AirPlay, UPnP/DLNA, Snapcast multi-room |
 | **13** | Discovery & stats | bliss-rs similarity radio, ListenBrainz similar artists, local year-in-review |
 | **14** | Platform & power users | Android Auto, widgets, Wear OS, media keys, command palette, WASM plugin API, accessibility, i18n, library backup/export |
+
+## Phase 4 decisions (2026-11-03)
+
+- **One pairing system.** Phase 4 builds it around device keys (ed25519, iroh's
+  key type) and a paired-devices list with scoped, revocable tokens. Phase 6
+  adds iroh as a second transport for the same devices; it does not pair again.
+- **LAN in phase 4 is plain HTTP/WebSocket plus a token.** Someone sniffing
+  the same network could read a token; the encrypted path is iroh (phase 6).
+  Loopback stays trusted without a token.
+- **Discovery:** the QR code carries the address; the engine also advertises
+  `_motif._tcp` (and `_mpd._tcp` when MPD is on) over mDNS.
+- **Permissions** are stored as scopes (playback, queue, library, settings,
+  pairing) so phase 7 jam guests fit; the UI offers Full / Control playback /
+  View only.
+- **Pairing flow:** the host shows a QR (address + one-time code); the new
+  device opens it and the host approves it (approval is on by default and
+  can be switched off). Headless prints the QR in its terminal, and any Full
+  device can start or approve pairing.
+- **Exposure:** loopback only until pairing starts, which opens the LAN. It
+  stays open while any LAN device is paired; a switch closes it without
+  revoking anyone.
+- **MPD** is off by default, loopback only unless LAN is also allowed; a
+  password gives control, without one it is read-only.
 
 ## Phase 0 checklist
 
