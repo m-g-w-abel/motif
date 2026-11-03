@@ -92,6 +92,13 @@
     return el.getBoundingClientRect();
   }
 
+  /** The box of all of the element's text. */
+  function ink(el: HTMLElement): DOMRect {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return range.getBoundingClientRect();
+  }
+
   /** FLIP: the transform (origin top left) that puts box `x`, inside `e`, over box `y`. */
   function fit(e: DOMRect, x: DOMRect, y: DOMRect, mode: Mode) {
     let sx = y.width / x.width;
@@ -129,6 +136,18 @@
     const [ga, gb] = mode === 'text' ? [glyph(a), glyph(b)] : [ra, rb];
     b.style.transformOrigin = '0 0';
     const move = mode === 'text' ? textMove : MOVE;
+    if (kind === 'cross' && mode === 'text') {
+      const [ia, ib] = [ink(a), ink(b)];
+      // Same text on one line in both: the sheet's travels alone, matched by width, since any
+      // crossfade between two drawings of it shows (#109). Cut-off or wrapped titles still crossfade.
+      if (a.scrollWidth <= a.clientWidth && ib.height < 1.5 * gb.height) {
+        const sx = ia.width / ib.width;
+        const sy = ga.height / gb.height;
+        const dx = ia.left - rb.left - (ib.left - rb.left) * sx;
+        const dy = ga.top + ga.height / 2 - rb.top - (gb.top + gb.height / 2 - rb.top) * sy;
+        return [{ el: b, ghost: false, dx, dy, sx, sy, move }];
+      }
+    }
     const there = { el: b, ghost: false, ...fit(rb, gb, ga, mode), move };
     if (kind === 'move') return [there];
     if (kind === 'stage') return [{ el: b, ghost: false, ...STILL, show: IN }, { el: copy(a, from, at), ghost: true, ...STILL, hide: OUT }];
