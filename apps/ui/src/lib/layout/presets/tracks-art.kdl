@@ -1,9 +1,10 @@
-layout version=1 name="Tracks + art" description="Track list with artwork and track details beside it" icon=info
+layout version=1 name="Tracks + art" description="Track list with artwork, track details and lyrics beside it" icon=info
 
 split row {
     tracklist style=grouped
     split column size=300 {
         artwork
         track-info
+        lyrics
     }
 }

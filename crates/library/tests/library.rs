@@ -652,7 +652,7 @@ fn fake_lrclib(answers: Vec<(u16, &'static str)>) -> (String, Arc<Mutex<Vec<Stri
 }
 
 #[test]
-fn lyrics_come_from_tags_then_sidecars_then_lrclib() {
+fn synced_lyrics_win_then_sidecars_then_tags_then_lrclib() {
     use lofty::{
         TextEncoding,
         config::WriteOptions,
@@ -699,6 +699,10 @@ fn lyrics_come_from_tags_then_sidecars_then_lrclib() {
     )));
     id3.save_to_path(album_b.join("01 Beginning.mp3"), WriteOptions::default())
         .unwrap();
+    // Synced beats plain whatever the source, then sidecars beat tags: the
+    // Ogg's .lrc wins, the MP3's plain .txt doesn't hide its SYLT.
+    fs::write(album_b.join("02 Ending.lrc"), "[00:02.00]Sidecar ending\n").unwrap();
+    fs::write(album_b.join("01 Beginning.txt"), "Plain sidecar\n").unwrap();
     // Sidecar: the synced .lrc beats the plain .txt.
     fs::write(album_a.join("01 Opening.txt"), "Sidecar words\n").unwrap();
     fs::write(
@@ -733,7 +737,7 @@ fn lyrics_come_from_tags_then_sidecars_then_lrclib() {
     };
     assert_eq!(
         lyrics("Ending", Some(&lrclib)),
-        found(LyricsSource::Embedded, vec![line(1000, "Ogg line")])
+        found(LyricsSource::Sidecar, vec![line(2000, "Sidecar ending")])
     );
     assert_eq!(
         lyrics("Beginning", Some(&lrclib)),
@@ -793,6 +797,12 @@ fn lyrics_come_from_tags_then_sidecars_then_lrclib() {
         found(LyricsSource::Sidecar, vec![line(2500, "Fetched")])
     );
     assert_eq!(seen.lock().unwrap().len(), 2);
+    // After an error LRCLIB is left alone for a while.
+    fs::remove_file(album_a.join("02 Closing.lrc")).unwrap();
+    db.execute("DELETE FROM lyrics", []).unwrap();
+    assert_eq!(lyrics("Closing", Some("http://127.0.0.1:9")), None);
+    assert_eq!(lyrics("Closing", Some(&lrclib)), None);
+    assert_eq!(seen.lock().unwrap().len(), 2, "backing off");
     assert!(
         library
             .save_lyrics("/not/in/the/library.flac", 0, None)

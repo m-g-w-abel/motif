@@ -67,7 +67,7 @@ between checkouts; cargo would mix their workspace crates).
   `import -window <id>` to capture it, where available.
 - Dev builds read URL parameters to set up a state without clicking, e.g.
   `?dev-layout=builtin:details.kdl&dev-theme=paper&dev-play=5&dev-sheet=1`
-  (also `dev-art=accent|tint|full`, `dev-drawer`, `dev-arrange`, `dev-settings=interface|library|playback|keyboard|integrations|technical|about`, `dev-player=floating`). See `App.svelte`.
+  (also `dev-art=accent|tint|full`, `dev-lyrics` (the sheet's lyrics view), `dev-drawer`, `dev-arrange`, `dev-settings=interface|library|playback|keyboard|integrations|technical|about`, `dev-player=floating`). See `App.svelte`.
   `?dev-library` shows the generated demo library instead of the real one
   (`dev-play` plays it); `?dev-stress&dev-library=50000` runs the webview
   stress test (results in `docs/PLAN.md`); `dev-stress=scroll` measures plain

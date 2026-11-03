@@ -42,6 +42,7 @@ export type PanelNode = {
   | { panel: 'controls' }
   | { panel: 'queue'; collapsible: boolean }
   | { panel: 'visualiser' }
+  | { panel: 'lyrics' }
 );
 
 export type LayoutNode = SplitNode | PanelNode;
@@ -57,6 +58,7 @@ export const WIDGETS: Record<Widget, string> = {
   controls: 'Controls',
   queue: 'Queue',
   visualiser: 'Visualiser',
+  lyrics: 'Lyrics',
 };
 
 export interface Layout {

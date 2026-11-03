@@ -29,7 +29,8 @@ use std::{
 
 use protocol::{
     Command, ContextKind, ImageKind, LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack,
-    Lyrics, LyricsSource, QueryResult, SortRule, TrackGroup, TrackImage, TrackKeys, TrackRef,
+    Lyrics, LyricsLine, LyricsSource, QueryResult, SortRule, TrackGroup, TrackImage, TrackKeys,
+    TrackRef,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
@@ -61,6 +62,8 @@ struct Shared {
     measuring: Mutex<(VecDeque<PathBuf>, bool)>,
     /// Set when a measurement is cached, until [`Library::take_measured`].
     measured: AtomicBool,
+    /// When LRCLIB last failed (see [`lyrics::BACKOFF`]).
+    lrclib_failed: Mutex<Option<std::time::Instant>>,
 }
 
 impl Shared {
@@ -101,6 +104,7 @@ impl Library {
             extras: Mutex::default(),
             measuring: Mutex::default(),
             measured: AtomicBool::new(false),
+            lrclib_failed: Mutex::default(),
         });
         let (scanner, requests) = mpsc::channel();
         let scanner_conn = db::open(&db_path)?;
@@ -604,17 +608,24 @@ impl Library {
             .optional()?
             .ok_or_else(|| Error::Other("not in the library".into()))?;
         let file = Path::new(path);
-        let local = [
-            (LyricsSource::Embedded, lyrics::embedded as fn(&Path) -> _),
-            (LyricsSource::Sidecar, lyrics::sidecars),
-        ];
-        for (source, read) in local {
-            if let Some(lines) = lyrics::best(read(file)) {
-                return Ok(Some(Lyrics { source, lines }));
-            }
+        // Sidecars beat embedded lyrics, but synced beats plain first (#90).
+        let sidecars = lyrics::sidecars(file).into_iter();
+        let embedded = lyrics::embedded(file).into_iter();
+        let local = lyrics::best(
+            (sidecars.map(|l| (LyricsSource::Sidecar, l)))
+                .chain(embedded.map(|l| (LyricsSource::Embedded, l))),
+        );
+        let found = |best: Option<(LyricsSource, Vec<LyricsLine>)>| {
+            Ok(best.map(|(source, lines)| Lyrics { source, lines }))
+        };
+        if local
+            .as_ref()
+            .is_some_and(|(_, lines)| lyrics::synced(lines))
+        {
+            return found(local);
         }
         let (Some(base), Some(title), Some(artist)) = (lrclib, title, artist) else {
-            return Ok(None);
+            return found(local);
         };
         // Not hashed yet: a FLAC's hash is free; others are asked for uncached
         // until the scanner hashes them.
@@ -642,13 +653,19 @@ impl Library {
                 (synced, plain)
             }
             _ => {
+                let failed = *self.shared.lrclib_failed.lock().unwrap();
+                if failed.is_some_and(|at| at.elapsed() < lyrics::BACKOFF) {
+                    return found(local);
+                }
                 let duration = duration_ms.map(|d| d.max(0) as u64);
                 let fetched = match lyrics::fetch(base, &artist, &title, album.as_deref(), duration)
                 {
                     Ok(fetched) => fetched.unwrap_or_default(),
                     Err(err) => {
                         tracing::warn!(path, %err, "can't ask LRCLIB for lyrics");
-                        return Ok(None);
+                        *self.shared.lrclib_failed.lock().unwrap() =
+                            Some(std::time::Instant::now());
+                        return found(local);
                     }
                 };
                 if let Some(hash) = hash {
@@ -664,13 +681,12 @@ impl Library {
                 fetched
             }
         };
-        let candidates = [synced, plain].into_iter().flatten();
-        Ok(
-            lyrics::best(candidates.map(|text| lyrics::parse(&text))).map(|lines| Lyrics {
-                source: LyricsSource::Lrclib,
-                lines,
-            }),
-        )
+        // Local plain lyrics beat LRCLIB's plain ones, not its synced ones.
+        let fetched = [synced, plain]
+            .into_iter()
+            .flatten()
+            .map(|text| (LyricsSource::Lrclib, lyrics::parse(&text)));
+        found(lyrics::best(local.into_iter().chain(fetched)))
     }
 
     /// Writes the lyrics [`Self::lyrics`] finds as `<track>.lrc` next to the

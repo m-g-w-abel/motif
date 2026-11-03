@@ -236,12 +236,17 @@ export class PlaybackPosition {
   }
 
   get ms(): number {
+    return this.at(this.#now);
+  }
+
+  /** The position at wall clock time `now`, for timers that need it to the millisecond, not the second. */
+  at(now: number): number {
     const player = this.engine.player;
     if (!player) return 0;
     if (player.status !== 'playing') return player.position_ms;
     // Snapshots are taken when something changes, so one can be old: a client
     // that connects mid-track gets the one from when the track started.
-    const position = player.position_ms + Math.max(0, this.#now + this.engine.clockOffset - player.sampled_at_ms);
+    const position = player.position_ms + Math.max(0, now + this.engine.clockOffset - player.sampled_at_ms);
     return Math.min(position, this.engine.current?.track.duration_ms ?? Infinity);
   }
 
