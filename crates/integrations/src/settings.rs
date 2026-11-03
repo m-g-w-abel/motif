@@ -31,7 +31,7 @@ pub fn keep(dir: &Path) -> watch::Sender<IntegrationSettings> {
             let now = rx.borrow_and_update().clone();
             let saved = serde_json::to_vec_pretty(&now)
                 .map_err(std::io::Error::other)
-                .and_then(|json| std::fs::write(&file, json));
+                .and_then(|json| replace(&file, &json));
             if let Err(err) = saved {
                 tracing::warn!(%err, "can't save integration settings");
             }
@@ -118,20 +118,28 @@ impl Secrets {
     }
 
     fn write_file(&self, secrets: &BTreeMap<String, String>) -> std::io::Result<()> {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-            options.mode(0o600);
-            // `mode` only applies to new files.
-            if self.file.exists() {
-                std::fs::set_permissions(&self.file, std::fs::Permissions::from_mode(0o600))?;
-            }
-        }
         let json = serde_json::to_vec_pretty(secrets).map_err(std::io::Error::other)?;
-        options.open(&self.file)?.write_all(&json)
+        replace(&self.file, &json)
     }
+}
+
+/// Replaces `file` whole, so a crash or power cut leaves the old or the new
+/// contents, never a cut-off file. Only this user may read it.
+pub(crate) fn replace(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let partial = file.with_extension("partial");
+    // `mode` only applies to new files.
+    let _ = std::fs::remove_file(&partial);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut out = options.open(&partial)?;
+    out.write_all(bytes)?;
+    out.sync_all()?;
+    std::fs::rename(partial, file)
 }
 
 #[cfg(test)]

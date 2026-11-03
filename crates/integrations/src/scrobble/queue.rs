@@ -63,12 +63,9 @@ impl Queue {
         Ok(())
     }
 
-    /// Replaces the file whole, so a crash leaves the old or the new list.
     fn save(&self) -> std::io::Result<()> {
         let json = serde_json::to_vec(&self.listens).map_err(std::io::Error::other)?;
-        let partial = self.file.with_extension("json.partial");
-        std::fs::write(&partial, json)?;
-        std::fs::rename(partial, &self.file)
+        crate::settings::replace(&self.file, &json)
     }
 }
 

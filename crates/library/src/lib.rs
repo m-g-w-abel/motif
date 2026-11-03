@@ -696,7 +696,27 @@ impl Library {
             .lyrics(path, lrclib)?
             .ok_or_else(|| Error::Other("no lyrics to save".into()))?;
         let file = Path::new(path).with_extension("lrc");
-        fs::write(&file, lyrics::to_lrc(&lyrics.lines, offset_ms))
+        let text = match fs::read_to_string(&file) {
+            // The lyrics came from this file: move its offset, keeping word stamps and tags.
+            Ok(existing)
+                if lyrics.source == LyricsSource::Sidecar
+                    && lyrics::synced(&lyrics::parse(&existing)) =>
+            {
+                lyrics::shift(&existing, offset_ms)
+            }
+            Ok(_) => {
+                return Err(Error::Other(format!(
+                    "{} already exists; not replacing it",
+                    file.display()
+                )));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                lyrics::to_lrc(&lyrics.lines, offset_ms)
+            }
+            // Unreadable (not UTF-8, say): leave it alone too.
+            Err(err) => return Err(Error::Other(format!("{}: {err}", file.display()))),
+        };
+        fs::write(&file, text)
             .map_err(|e| Error::Other(format!("can't save {}: {e}", file.display())))
     }
 

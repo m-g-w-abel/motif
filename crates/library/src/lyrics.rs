@@ -123,6 +123,32 @@ pub fn to_lrc(lines: &[LyricsLine], offset_ms: i32) -> String {
     out
 }
 
+/// LRC `text` with every line moved by `offset_ms` (positive is later)
+/// through its `[offset:]` tag; everything else (other tags, word stamps)
+/// stays as written.
+pub fn shift(text: &str, offset_ms: i32) -> String {
+    let mut offset = 0i64;
+    let mut kept = Vec::new();
+    for line in text.trim_start_matches('\u{feff}').lines() {
+        match (line.trim().strip_prefix("[offset:")).and_then(|r| r.strip_suffix(']')) {
+            Some(value) => offset = value.trim().parse().unwrap_or(0),
+            None => kept.push(line),
+        }
+    }
+    // A positive offset shows lines earlier.
+    let offset = offset - i64::from(offset_ms);
+    let mut out = if offset == 0 {
+        String::new()
+    } else {
+        format!("[offset:{offset}]\n")
+    };
+    for line in kept {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 pub fn synced(lines: &[LyricsLine]) -> bool {
     lines.first().is_some_and(|l| l.time_ms.is_some())
 }
@@ -321,5 +347,20 @@ mod tests {
         assert_eq!(to_lrc(&lines, -2000), "[00:00.00]One\n[01:03.00]Two\n");
         let plain = parse("Just words");
         assert_eq!(to_lrc(&plain, 500), "Just words\n");
+    }
+
+    #[test]
+    fn shifting_a_file_only_touches_its_offset() {
+        let lrc = "[ar:Someone]\n[offset:+200]\n[00:01.00]One <00:01.50>word\n";
+        let shifted = shift(lrc, 500);
+        assert_eq!(
+            shifted,
+            "[offset:-300]\n[ar:Someone]\n[00:01.00]One <00:01.50>word\n"
+        );
+        assert_eq!(parse(&shifted), vec![line(1300, "One word")]);
+        assert_eq!(
+            shift(&shifted, -300),
+            "[ar:Someone]\n[00:01.00]One <00:01.50>word\n"
+        );
     }
 }

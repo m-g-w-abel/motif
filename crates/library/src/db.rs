@@ -118,6 +118,11 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
          CREATE INDEX IF NOT EXISTS tracks_isrc ON tracks (isrc);
          CREATE INDEX IF NOT EXISTS tracks_hash ON tracks (audio_hash);
          CREATE INDEX IF NOT EXISTS tracks_title ON tracks (lower(title));
+         -- An album's tracks by ALBUM_KEY (same text, or SQLite won't use it),
+         -- looked up for album gain whenever the engine resolves a track.
+         CREATE INDEX IF NOT EXISTS tracks_album ON tracks (
+             coalesce(album_artist, artist, '') || char(31) || coalesce(album, '')
+         );
          -- The default order (see order()): pages of a big library come from
          -- the index instead of sorting every track for each page.
          CREATE INDEX IF NOT EXISTS tracks_order ON tracks (
@@ -278,6 +283,24 @@ pub fn track_count(conn: &Connection) -> rusqlite::Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn album_lookups_use_the_index() {
+        let file = std::env::temp_dir().join(format!("motif-db-{}.db", std::process::id()));
+        let conn = open(&file).unwrap();
+        let plan: String = conn
+            .query_row(
+                &format!("EXPLAIN QUERY PLAN SELECT path FROM tracks WHERE {ALBUM_KEY} = ?1"),
+                ["x"],
+                |r| r.get(3),
+            )
+            .unwrap();
+        assert!(plan.contains("tracks_album"), "{plan}");
+        drop(conn);
+        for end in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{end}", file.display()));
+        }
+    }
 
     const fn rule(key: SortKey, descending: bool) -> SortRule {
         SortRule { key, descending }

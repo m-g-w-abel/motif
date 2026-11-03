@@ -797,6 +797,22 @@ fn synced_lyrics_win_then_sidecars_then_tags_then_lrclib() {
         found(LyricsSource::Sidecar, vec![line(2500, "Fetched")])
     );
     assert_eq!(seen.lock().unwrap().len(), 2);
+    // Saving over the sidecar it came from only moves its offset.
+    let lrc = album_a.join("02 Closing.lrc");
+    fs::write(&lrc, "[ar:Someone]\n[00:02.50]Fetched <00:03.00>word\n").unwrap();
+    library.save_lyrics(&closing, 500, None).unwrap();
+    assert_eq!(
+        fs::read_to_string(&lrc).unwrap(),
+        "[offset:-500]\n[ar:Someone]\n[00:02.50]Fetched <00:03.00>word\n"
+    );
+    // Another .lrc (here plain, hidden by the embedded synced lyrics) is never replaced.
+    let beginning = track(&library, "Beginning").track.id;
+    fs::write(album_b.join("01 Beginning.lrc"), "Mine\n").unwrap();
+    assert!(library.save_lyrics(&beginning, 0, None).is_err());
+    assert_eq!(
+        fs::read_to_string(album_b.join("01 Beginning.lrc")).unwrap(),
+        "Mine\n"
+    );
     // After an error LRCLIB is left alone for a while.
     fs::remove_file(album_a.join("02 Closing.lrc")).unwrap();
     db.execute("DELETE FROM lyrics", []).unwrap();
