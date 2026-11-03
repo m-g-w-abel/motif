@@ -31,9 +31,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = std::env::var("MOTIF_ADDR")
         .unwrap_or_else(|_| DEFAULT_ADDR.into())
         .parse()?;
-    if !addr.ip().is_loopback() {
-        tracing::warn!(%addr, "no authentication yet: anyone who can reach this address can control playback");
-    }
     let ui_dir = std::env::var_os("MOTIF_UI_DIR")
         .map(PathBuf::from)
         .or_else(|| Some(PathBuf::from(DEFAULT_UI_DIR)).filter(|p| p.is_dir()));
@@ -72,6 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui_dir: ui_dir.clone(),
         library: Some(library),
         integrations,
+        pairing: server::Pairing::open(&data_dir)?,
     };
     let (addr, serve) = server::bind(engine, config).await?;
     claim.publish(&format!("ws://{addr}/ws"))?;

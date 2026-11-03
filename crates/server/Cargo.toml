@@ -8,9 +8,12 @@ license.workspace = true
 
 [dependencies]
 axum.workspace = true
+blake3 = "=1.8.7"
+ed25519-dalek = "=3.0.0"
 engine.workspace = true
 library.workspace = true
 futures-util.workspace = true
+getrandom = "=0.4.3"
 serde.workspace = true
 protocol.workspace = true
 serde_json.workspace = true

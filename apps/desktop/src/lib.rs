@@ -154,11 +154,15 @@ async fn start_engine(
         integrations.subscribe(),
     );
     let config = server::Config {
-        // Loopback only until pairing exists (phase 4).
+        // Loopback only until LAN exposure exists (#105).
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         ui_dir: None,
         library: library.as_ref().map(|(library, _)| library.clone()),
         integrations,
+        pairing: match library.is_some().then(library::data_dir).flatten() {
+            Some(dir) => server::Pairing::open(&dir)?,
+            None => server::Pairing::in_memory(),
+        },
     };
     let (addr, serve) = server::bind(engine, config).await?;
     let url = format!("ws://{addr}/ws");
