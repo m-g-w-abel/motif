@@ -3,7 +3,7 @@
 A layout arranges the **music area**: the part of the window that shows what
 you're browsing (the library now, saved playlists later). The app has one set
 of widgets (track list, album gallery, artwork, track info, controls, queue,
-visualiser), and a layout only chooses which of them appear there, where, and
+visualiser, lyrics), and a layout only chooses which of them appear there, where, and
 how each is configured. The now-playing screen is built from the same widgets.
 
 Layouts never change the rest of the app. The left panel and the player bar
@@ -24,7 +24,7 @@ use a plain list while the library shows a gallery).
 | Built-in | |
 |---|---|
 | Tracks | Album-grouped track list |
-| Tracks + art | Track list with artwork and track details beside it |
+| Tracks + art | Track list with artwork, track details and lyrics beside it |
 | Details | Columns, artwork, a visualiser and a full metadata table |
 | Tracks + gallery | Track list beside a cover gallery |
 | Gallery | Album covers only |
@@ -192,7 +192,20 @@ and in a visible window; otherwise it is blank and the engine does no analysis.
 It shows the music as it is played, whatever the volume. E.g. a strip under
 the artwork: `visualiser size=120`.
 
+### `lyrics`
+
+The playing track's lyrics: from a sidecar `.lrc` or `.txt` beside the file,
+its tags, or LRCLIB (when it is on in **Settings → Integrations**). Synced
+lyrics win over plain ones wherever they come from, then sidecars win over
+tags. Synced lyrics highlight the line being sung and keep it in the middle;
+click a line to play from there. Plain lyrics just scroll. The footer names
+the source and, for synced lyrics, has an offset (− and + move the lines 0.1 s
+earlier or later, kept per track on this device; click the value to reset) and
+**Save to sidecar**, which writes the lyrics with the offset baked in to a
+`.lrc` beside the track. Audio files are never written to. The now-playing
+screen has the same view behind its lyrics button. No properties.
+
 ## Planned
 
 These will be added without breaking existing files:
-- more widgets: lyrics, spectrogram, waveform, stats
+- more widgets: spectrogram, waveform, stats

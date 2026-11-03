@@ -16,6 +16,7 @@
   import AlbumGrid from '../widgets/AlbumGrid.svelte';
   import Artwork from '../widgets/Artwork.svelte';
   import Controls from '../widgets/Controls.svelte';
+  import Lyrics from '../widgets/Lyrics.svelte';
   import Queue from '../widgets/Queue.svelte';
   import TrackInfo from '../widgets/TrackInfo.svelte';
   import TrackList from '../widgets/TrackList.svelte';
@@ -216,6 +217,8 @@
     <Queue collapsible={node.collapsible} />
   {:else if node.panel === 'visualiser'}
     <Visualiser />
+  {:else if node.panel === 'lyrics'}
+    <Lyrics />
   {/if}
   {#if layout.arranging}
     <div class="handle" style:top="{8 + stack * 36}px">

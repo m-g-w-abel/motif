@@ -4,6 +4,7 @@
   import Scrollbar from '../Scrollbar.svelte';
   import ArtworkWidget from '../widgets/Artwork.svelte';
   import Controls from '../widgets/Controls.svelte';
+  import Lyrics from '../widgets/Lyrics.svelte';
   import Queue from '../widgets/Queue.svelte';
   import TrackInfo from '../widgets/TrackInfo.svelte';
 
@@ -40,10 +41,10 @@
     ['.total', '.controls .seek .time:last-child', 'box', 'stage'],
     ['[aria-label^="Repeat"]', '.controls [aria-label^="Repeat"]', 'box', 'stage'],
     ['.volume', '.controls .volume', 'box', 'stage'],
-    ['.end > [aria-label="Expand player"]', 'header .icon-button', 'box', 'stage'],
+    ['.end > [aria-label="Expand player"]', 'header [aria-label="Collapse"]', 'box', 'stage'],
   ];
   /** No counterpart in the bar: fade in in IN (the carousel's side cards and controls after its cover). */
-  const FADE = 'header .handle, .hero-album, .coverflow .card:not(.frame), .coverflow .turns, .coverflow .below';
+  const FADE = 'header .handle, header .lyrics-toggle, .hero-album, .coverflow .card:not(.frame), .coverflow .turns, .coverflow .below';
 
   type Mode = 'box' | 'even' | 'text';
   type Kind = 'move' | 'cross' | 'handover' | 'stage' | 'edge';
@@ -264,6 +265,16 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <header onpointerdown={(e) => sheet.drag(e, 'sheet')}>
     <span class="handle"></span>
+    <button
+      class="icon-button lyrics-toggle"
+      class:active={sheet.lyrics}
+      aria-label="Lyrics"
+      aria-pressed={sheet.lyrics}
+      title={sheet.lyrics ? 'Show artwork' : 'Show lyrics'}
+      onclick={() => (sheet.lyrics = !sheet.lyrics)}
+    >
+      <Icon name="lyrics" size={18} />
+    </button>
     <button class="icon-button" aria-label="Collapse" title="Collapse (Esc)" onclick={() => sheet.collapse()}>
       <Icon name="chevron-down" size={20} />
     </button>
@@ -271,7 +282,9 @@
 
   <div class="body" bind:this={body}>
     <div class="now">
-      <div class="art"><ArtworkWidget expands={false} playing /></div>
+      <div class="art" class:lyrics={sheet.lyrics}>
+        {#if sheet.lyrics}<Lyrics />{:else}<ArtworkWidget expands={false} playing />{/if}
+      </div>
       <div class="details">
         <TrackInfo style="hero" playing />
         <Controls />
@@ -384,6 +397,25 @@
     min-height: 0;
   }
 
+  /* Lyrics are as large as the space allows, not square like the artwork. */
+  @media (min-width: 701px) {
+    .now:has(.art.lyrics) {
+      grid-template-columns: minmax(0, 1.5fr) minmax(300px, 460px) minmax(0, 0.2fr);
+    }
+  }
+
+  .art.lyrics {
+    align-self: stretch;
+  }
+
+  .art.lyrics :global(.lyrics) {
+    background: none;
+  }
+
+  .lyrics-toggle.active {
+    color: var(--accent);
+  }
+
   .details {
     display: flex;
     flex-direction: column;
@@ -425,6 +457,12 @@
 
     .art {
       height: min(55vh, calc(100vw - 2 * var(--space-4)));
+    }
+
+    /* Lyrics are the main view: most of the screen, the controls below. */
+    .art.lyrics {
+      height: calc(100dvh - 320px);
+      min-height: 240px;
     }
 
     .queue-slot:has(:global(.queue.open)) {

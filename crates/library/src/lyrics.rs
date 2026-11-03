@@ -19,6 +19,10 @@ pub const LRCLIB: &str = "https://lrclib.net";
 /// LRCLIB is asked again this long after a miss, in case lyrics were added.
 pub const RETRY_SECS: i64 = 7 * 24 * 3600;
 
+/// LRCLIB isn't asked for this long after an error, so a widget asking on
+/// every track change doesn't wait on a server that is down or refusing.
+pub const BACKOFF: Duration = Duration::from_secs(60);
+
 /// Parses LRC: `[mm:ss.xx]` stamps (several per line) and `[offset:ms]`;
 /// other tags and lines without a stamp are dropped, and word stamps
 /// (`<mm:ss.xx>`) are ignored. Text without a single stamp is plain lyrics.
@@ -123,17 +127,20 @@ pub fn synced(lines: &[LyricsLine]) -> bool {
     lines.first().is_some_and(|l| l.time_ms.is_some())
 }
 
-/// The first synced candidate, else the first plain one.
-pub fn best(candidates: impl IntoIterator<Item = Vec<LyricsLine>>) -> Option<Vec<LyricsLine>> {
+/// The first synced candidate, else the first plain one: synced lyrics win
+/// whatever their source, so `candidates` come in order of preference.
+pub fn best<T>(
+    candidates: impl IntoIterator<Item = (T, Vec<LyricsLine>)>,
+) -> Option<(T, Vec<LyricsLine>)> {
     let mut plain = None;
-    for lines in candidates {
+    for (source, lines) in candidates {
         if lines.iter().all(|l| l.text.trim().is_empty()) {
             continue;
         }
         if synced(&lines) {
-            return Some(lines);
+            return Some((source, lines));
         }
-        plain.get_or_insert(lines);
+        plain.get_or_insert((source, lines));
     }
     plain
 }
@@ -297,11 +304,14 @@ mod tests {
         let plain = parse("Words");
         let synced = vec![line(0, "Sung")];
         assert_eq!(
-            best([vec![], plain.clone(), synced.clone()]),
-            Some(synced.clone())
+            best([(1, vec![]), (2, plain.clone()), (3, synced.clone())]),
+            Some((3, synced.clone()))
         );
-        assert_eq!(best([parse(" \n "), plain.clone()]), Some(plain));
-        assert_eq!(best([]), None);
+        assert_eq!(
+            best([(1, parse(" \n ")), (2, plain.clone())]),
+            Some((2, plain))
+        );
+        assert_eq!(best::<u8>([]), None);
     }
 
     #[test]

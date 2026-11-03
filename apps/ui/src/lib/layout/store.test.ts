@@ -90,7 +90,7 @@ describe('LayoutStore.saveAs', () => {
     expect(store.activeId).toBe('user:my-art.kdl');
     expect(store.edited).toBe(false);
     expect(names(store.layout.root)).toEqual({
-      row: [{ column: ['artwork', 'track-info', 'queue'], size: { px: 300 } }, 'tracklist'],
+      row: [{ column: ['artwork', 'track-info', 'queue', 'lyrics'], size: { px: 300 } }, 'tracklist'],
     });
     expect(store.layout.root.kind === 'split' && store.layout.root.children[1].size).toEqual({ px: 500 });
   });

@@ -7,6 +7,8 @@ export class PlayerSheet {
   progress = $state(0);
   /** True while a finger or pointer is moving the sheet, to disable easing. */
   dragging = $state(false);
+  /** The lyrics view instead of the artwork. */
+  lyrics = $state(false);
   /** The bar or floating player the sheet grows out of, when one is shown. */
   origin: HTMLElement | null = null;
   /** Set by the sheet: measures the morph's start and end boxes. */

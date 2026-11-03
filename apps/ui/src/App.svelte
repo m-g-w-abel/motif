@@ -226,6 +226,7 @@
     if (devArt) settings.current.artColours = devArt as typeof settings.current.artColours;
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     if (params.has('dev-sheet')) sheet.expand();
+    if (params.has('dev-lyrics')) sheet.lyrics = true;
     if (params.has('dev-drawer')) drawer.open = true;
     if (params.has('dev-arrange')) layout.arranging = true;
     const devSettings = params.get('dev-settings') as SettingsGroup;
