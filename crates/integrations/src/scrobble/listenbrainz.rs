@@ -61,10 +61,13 @@ impl ListenBrainz {
 }
 
 impl Scrobbler for ListenBrainz {
-    const NAME: &str = "listenbrainz";
     const BATCH: usize = 100;
 
-    fn account(settings: &mut IntegrationSettings) -> &mut ScrobbleAccount {
+    fn name(&self) -> &'static str {
+        "listenbrainz"
+    }
+
+    fn account<'a>(&self, settings: &'a mut IntegrationSettings) -> &'a mut ScrobbleAccount {
         &mut settings.listenbrainz
     }
 

@@ -35,7 +35,7 @@ pub enum ClientMessage {
     /// [`Event::Integrations`].
     SetIntegrations {
         id: u32,
-        integrations: IntegrationSettings,
+        integrations: Box<IntegrationSettings>,
     },
 }
 
@@ -247,6 +247,8 @@ pub struct IntegrationSettings {
     pub listenbrainz: ScrobbleAccount,
     /// Scrobble to Last.fm.
     pub lastfm: ScrobbleAccount,
+    /// Scrobble to Libre.fm.
+    pub librefm: ScrobbleAccount,
     /// Set by the host, ignored from clients: no OS keyring was found, so
     /// secrets are kept unencrypted in a file only this user can read.
     pub secrets_unencrypted: bool,
@@ -260,6 +262,7 @@ impl Default for IntegrationSettings {
             lrclib: true,
             listenbrainz: ScrobbleAccount::default(),
             lastfm: ScrobbleAccount::default(),
+            librefm: ScrobbleAccount::default(),
             secrets_unencrypted: false,
             discord: false,
         }
@@ -276,11 +279,11 @@ pub struct ScrobbleAccount {
     pub user: Option<String>,
     /// Set by the host: why signing in or the last submission failed.
     pub error: Option<String>,
-    /// Set by the host while signing in through the browser (Last.fm): the
+    /// Set by the host while signing in through the browser (Last.fm, Libre.fm): the
     /// page where the user allows Motif.
     pub auth_url: Option<String>,
     /// From clients only, never sent out or saved: a credential to sign in
-    /// with (the ListenBrainz user token; anything for Last.fm, which signs
+    /// with (the ListenBrainz user token; anything for Last.fm and Libre.fm, which sign
     /// in through the browser), or empty to sign out or stop signing in.
     #[serde(skip_serializing, default)]
     pub sign_in: Option<String>,

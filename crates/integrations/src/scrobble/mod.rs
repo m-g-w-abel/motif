@@ -83,11 +83,11 @@ impl std::fmt::Display for Error {
 /// A scrobbling service.
 pub trait Scrobbler: Clone + Send + Sync + 'static {
     /// Names its secret and its queue file.
-    const NAME: &str;
+    fn name(&self) -> &'static str;
     /// The most listens one [`Scrobbler::scrobble`] takes.
     const BATCH: usize;
     /// Its part of the integration settings.
-    fn account(settings: &mut IntegrationSettings) -> &mut ScrobbleAccount;
+    fn account<'a>(&self, settings: &'a mut IntegrationSettings) -> &'a mut ScrobbleAccount;
     /// Checks a credential the user pasted, or signs in through the browser,
     /// giving `show` the page to open. Returns the account name and the
     /// secret to keep for submitting.
@@ -127,7 +127,13 @@ pub fn start(engine: Engine, settings: watch::Sender<IntegrationSettings>, dir: 
         dir.to_owned(),
     ));
     tokio::spawn(run(
-        LastFm::new(http),
+        LastFm::new(http.clone()),
+        actions.subscribe(),
+        settings.clone(),
+        dir.to_owned(),
+    ));
+    tokio::spawn(run(
+        LastFm::libre_fm(http),
         actions.subscribe(),
         settings,
         dir.to_owned(),
@@ -184,17 +190,18 @@ async fn run<S: Scrobbler>(
     settings: watch::Sender<IntegrationSettings>,
     dir: PathBuf,
 ) {
+    let name = service.name();
     let secrets = Secrets::new(&dir);
-    let mut secret = secrets.get(S::NAME);
-    let mut queue = Queue::open(dir.join(format!("scrobbles-{}.json", S::NAME)));
+    let mut secret = secrets.get(name);
+    let mut queue = Queue::open(dir.join(format!("scrobbles-{name}.json")));
     let mut changes = settings.subscribe();
     // When to try again and the wait before that, after a failure.
     let mut retry: Option<(Instant, Duration)> = None;
     let set = |change: &dyn Fn(&mut ScrobbleAccount)| {
         settings.send_if_modified(|s| {
-            let before = S::account(s).clone();
-            change(S::account(s));
-            *S::account(s) != before
+            let before = service.account(s).clone();
+            change(service.account(s));
+            *service.account(s) != before
         })
     };
     // Saved errors and sign-ins are from the last run.
@@ -203,27 +210,30 @@ async fn run<S: Scrobbler>(
         a.auth_url = None;
     });
     loop {
-        let account = S::account(&mut changes.borrow_and_update().clone()).clone();
+        let account = service
+            .account(&mut changes.borrow_and_update().clone())
+            .clone();
         if let Some(credential) = account.sign_in {
             set(&|a| a.sign_in = None);
             let credential = credential.trim();
             if credential.is_empty() {
-                if let Err(err) = secrets.set(S::NAME, None) {
-                    tracing::warn!(%err, "can't forget the {} secret", S::NAME);
+                if let Err(err) = secrets.set(name, None) {
+                    tracing::warn!(%err, "can't forget the {} secret", name);
                 }
                 secret = None;
                 set(&|a| *a = ScrobbleAccount::default());
                 continue;
             }
             let show = |url: &str| {
-                tracing::info!(url, "{} sign-in: allow Motif on this page", S::NAME);
+                tracing::info!(url, "{} sign-in: allow Motif on this page", name);
                 set(&|a| a.auth_url = Some(url.into()));
             };
             let signed_in = {
                 // A new request (signing out, or in again) stops this one.
                 let asked_again = async {
                     while changes.changed().await.is_ok() {
-                        if S::account(&mut changes.borrow_and_update().clone())
+                        if service
+                            .account(&mut changes.borrow_and_update().clone())
                             .sign_in
                             .is_some()
                         {
@@ -243,7 +253,7 @@ async fn run<S: Scrobbler>(
             set(&|a| a.auth_url = None);
             match signed_in {
                 Ok((user, new)) => {
-                    let kept = secrets.set(S::NAME, Some(&new));
+                    let kept = secrets.set(name, Some(&new));
                     let error = kept.err().map(|e| format!("Can't keep the sign-in: {e}"));
                     secret = error.is_none().then_some(new);
                     set(&|a| {
@@ -271,8 +281,8 @@ async fn run<S: Scrobbler>(
                 }
                 // Keeps the queue for signing in again.
                 Err(Error::SignedOut(err)) => {
-                    if let Err(err) = secrets.set(S::NAME, None) {
-                        tracing::warn!(%err, "can't forget the {} secret", S::NAME);
+                    if let Err(err) = secrets.set(name, None) {
+                        tracing::warn!(%err, "can't forget the {} secret", name);
                     }
                     secret = None;
                     retry = None;
@@ -286,7 +296,7 @@ async fn run<S: Scrobbler>(
                 Err(err) => {
                     let wait = retry.map_or(FIRST_RETRY, |(_, wait)| (wait * 2).min(LAST_RETRY));
                     retry = Some((Instant::now() + wait, wait));
-                    tracing::debug!(%err, ?wait, "{} submission failed", S::NAME);
+                    tracing::debug!(%err, ?wait, "{} submission failed", name);
                     let waiting = queue.len();
                     set(&|a| {
                         a.error = Some(format!("{err} ({waiting} waiting to be sent)"));
@@ -303,18 +313,18 @@ async fn run<S: Scrobbler>(
                     let (service, secret) = (service.clone(), secret.clone().unwrap_or_default());
                     tokio::spawn(async move {
                         if let Err(err) = service.now_playing(&secret, &listen).await {
-                            tracing::debug!(%err, "{} now playing failed", S::NAME);
+                            tracing::debug!(%err, "{} now playing failed", name);
                         }
                     });
                 }
                 Ok(Action::Scrobble(listen)) if active => {
                     if let Err(err) = queue.push(listen) {
-                        tracing::warn!(%err, "can't save the {} scrobble queue", S::NAME);
+                        tracing::warn!(%err, "can't save the {} scrobble queue", name);
                     }
                 }
                 Ok(_) => {}
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
-                    tracing::warn!(missed, "{} missed scrobbles", S::NAME);
+                    tracing::warn!(missed, "{} missed scrobbles", name);
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
             },
@@ -338,9 +348,11 @@ mod tests {
     struct Fake;
 
     impl Scrobbler for Fake {
-        const NAME: &str = "fake-run";
         const BATCH: usize = 1;
-        fn account(settings: &mut IntegrationSettings) -> &mut ScrobbleAccount {
+        fn name(&self) -> &'static str {
+            "fake-run"
+        }
+        fn account<'a>(&self, settings: &'a mut IntegrationSettings) -> &'a mut ScrobbleAccount {
             &mut settings.lastfm
         }
         async fn sign_in(
@@ -413,7 +425,7 @@ mod tests {
         })
         .await;
         assert!(!seen.borrow().lastfm.enabled);
-        assert_eq!(Secrets::new(&dir).get(Fake::NAME), None);
+        assert_eq!(Secrets::new(&dir).get("fake-run"), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
