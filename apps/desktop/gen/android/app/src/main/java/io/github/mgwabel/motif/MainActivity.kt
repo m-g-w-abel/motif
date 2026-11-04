@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import org.json.JSONObject
 
 class MainActivity : TauriActivity() {
@@ -38,6 +39,14 @@ class MainActivity : TauriActivity() {
         )
       } else {
         requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)) {}
+      }
+    }
+
+    @JavascriptInterface
+    fun setBarIconsDark(dark: Boolean) = runOnUiThread {
+      WindowCompat.getInsetsController(window, window.decorView).apply {
+        isAppearanceLightStatusBars = dark
+        isAppearanceLightNavigationBars = dark
       }
     }
 

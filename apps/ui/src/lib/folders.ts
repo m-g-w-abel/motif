@@ -9,9 +9,13 @@ interface AndroidStorage {
   openAllFilesSettings(): void;
   /** Opens the system folder picker; the tree URI (or null) arrives at `window.motifFolderPicked`. */
   pickFolder(): void;
+  /** Dark status and navigation bar icons (for a light theme), or light ones. */
+  setBarIconsDark(dark: boolean): void;
 }
 
 const android = (globalThis as { MotifAndroid?: AndroidStorage }).MotifAndroid;
+
+export const setBarIconsDark = (dark: boolean) => android?.setBarIconsDark(dark);
 
 /** The Android app's storage bridge, while this phone's own engine is in control (a remote engine's folders are typed, as in a browser). */
 export const androidStorage = () => (engines.current.id === LOCAL_ID ? android : undefined);
