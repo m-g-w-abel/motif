@@ -49,6 +49,11 @@ export class Press {
     return this.axis === null && t - this.t >= HOLD;
   }
 
+  /** How far content follows the finger sideways at `x`: only once the press is a horizontal drag. */
+  offset(x: number) {
+    return this.axis === 'x' ? x - this.x : 0;
+  }
+
   /** The swipe a release at `x` completes, if any. */
   swipe(x: number): Gesture | null {
     const dx = x - this.x;
@@ -65,12 +70,43 @@ export function dragValue(start: number, dy: number, span: number) {
 /** What a surface can do; a `Follow` action starts a drag and gets its vertical distance (down positive). */
 export type Handlers = Partial<Record<Once, () => void> & Record<Follow, () => (dy: number) => void>>;
 
+/** Shows a swipe under way: `move` as the finger goes, then `end` with the swipe it completed (null: none). */
+export interface Slide {
+  move(dx: number): void;
+  end(swipe: Gesture | null): void;
+}
+
+/**
+ * Moves `el` with a swipe by `transform` alone, in short transitions: it
+ * follows the finger, then slides out the swipe's way and back in from the
+ * other side (the next track), or springs back.
+ */
+export function slide(el: HTMLElement): Slide {
+  const to = (x: number, ms: number) => {
+    el.style.transition = ms ? `transform ${ms}ms ease-out` : 'none';
+    el.style.transform = x ? `translateX(${x}px)` : '';
+  };
+  return {
+    move: (dx) => to(dx, 0),
+    end(swipe) {
+      if (!swipe) return to(0, 200);
+      const out = swipe === 'swipe-left' ? -el.offsetWidth : el.offsetWidth;
+      to(out, 150);
+      setTimeout(() => {
+        to(-out, 0);
+        void el.offsetWidth; // lays out the jump, so the slide in starts from it
+        to(0, 200);
+      }, 150);
+    },
+  };
+}
+
 /**
  * Tracks a touch or pen press on `surface` and runs what its gestures map
- * to. On surfaces with a long-press, the browser's own long-press (the
- * context menu) is held back; menus stay on right-click.
+ * to; `shown` shows its swipes. On surfaces with a long-press, the browser's
+ * own long-press (the context menu) is held back; menus stay on right-click.
  */
-export function gesture(e: PointerEvent, surface: Surface, on: Handlers) {
+export function gesture(e: PointerEvent, surface: Surface, on: Handlers, shown?: Slide) {
   if (e.pointerType === 'mouse' || !e.isPrimary) return;
   const map = GESTURES[surface];
   const press = new Press(e.clientX, e.clientY, performance.now());
@@ -97,7 +133,9 @@ export function gesture(e: PointerEvent, surface: Surface, on: Handlers) {
 
   const move = (ev: PointerEvent) => {
     if (ev.pointerId !== e.pointerId) return;
-    if (press.move(ev.clientX, ev.clientY) !== 'y') return;
+    const axis = press.move(ev.clientX, ev.clientY);
+    if (axis === 'x') shown?.move(press.offset(ev.clientX));
+    if (axis !== 'y') return;
     const action = map['drag-vertical'];
     if (action === 'volume') {
       follow ??= on.volume?.();
@@ -106,13 +144,13 @@ export function gesture(e: PointerEvent, surface: Surface, on: Handlers) {
   };
   const up = (ev: PointerEvent) => {
     if (ev.pointerId !== e.pointerId) return;
-    if (!longPressed) {
-      const swipe = press.swipe(ev.clientX);
-      if (swipe) run(swipe);
-    }
+    const swipe = longPressed ? null : press.swipe(ev.clientX);
+    if (swipe) run(swipe);
+    if (press.axis === 'x') shown?.end(swipe);
     end();
   };
-  const end = () => {
+  const end = (ev?: PointerEvent) => {
+    if (ev?.type === 'pointercancel' && press.axis === 'x') shown?.end(null);
     clearTimeout(timer);
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);

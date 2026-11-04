@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getApp } from '../../context';
   import { formatTime } from '../../format';
-  import { gesture } from '../../gestures';
+  import { gesture, slide } from '../../gestures';
   import { BAR_ART_SIZE } from '../../library.svelte';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
@@ -12,6 +12,7 @@
   import Volume from './Volume.svelte';
 
   const { engine, position, sheet } = getApp();
+  let sliding = $state<HTMLElement>();
   const duration = $derived(engine.current?.track.duration_ms ?? 0);
 
   /**
@@ -23,7 +24,12 @@
     const target = e.target as HTMLElement;
     if (target.closest('button:not(.identity), [role="slider"]')) return;
     const onTrack = !!target.closest('.identity');
-    gesture(e, 'bar', { next: () => engine.run({ type: 'next' }), previous: () => engine.run({ type: 'previous' }) });
+    gesture(
+      e,
+      'bar',
+      { next: () => engine.run({ type: 'next' }), previous: () => engine.run({ type: 'previous' }) },
+      sliding ? slide(sliding) : undefined,
+    );
     sheet.drag(e, 'bar', onTrack ? () => sheet.expand() : undefined);
   }
 </script>
@@ -37,8 +43,11 @@
     <div class="transport"><Transport size={17} /></div>
 
     <button class="identity" title="Expand player">
-      <Artwork track={engine.current?.track} size={40} exact={BAR_ART_SIZE} />
-      <TrackLabel />
+      <!-- Follows a touch swipe; the button clips it. -->
+      <span class="slide" bind:this={sliding}>
+        <Artwork track={engine.current?.track} size={40} exact={BAR_ART_SIZE} />
+        <TrackLabel />
+      </span>
     </button>
 
     <div class="end">
@@ -88,14 +97,21 @@
   .identity {
     flex: 1;
     display: flex;
-    align-items: center;
-    gap: var(--space-3);
     min-width: 0;
+    overflow: hidden;
     padding: 0;
     border: 0;
     background: none;
     text-align: left;
     cursor: pointer;
+  }
+
+  .slide {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
   }
 
   .end {

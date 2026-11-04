@@ -10,7 +10,7 @@
   import { albumKey } from '../../albums';
   import { menu } from '../../contextMenu.svelte';
   import { demoLibrary, isDemo } from '../../demo';
-  import { dragValue, gesture } from '../../gestures';
+  import { dragValue, gesture, slide } from '../../gestures';
   import { albumMenu, playTracks, queueTracks } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { viewSort } from '../../sort.svelte';
@@ -132,6 +132,8 @@
   let hide: ReturnType<typeof setTimeout> | undefined;
   function onPointerDown(e: PointerEvent) {
     if ((e.target as HTMLElement).closest('button:not(.shade)')) return;
+    // The carousel's stage follows a swipe: the centre card's own transform is the sheet's morph.
+    const stage = (e.currentTarget as HTMLElement).querySelector<HTMLElement>('.coverflow .stage');
     gesture(e, 'artwork', {
       next: () => engine.run({ type: 'next' }),
       previous: () => engine.run({ type: 'previous' }),
@@ -145,7 +147,7 @@
           hide = setTimeout(() => (level = null), 800);
         };
       },
-    });
+    }, stage ? slide(stage) : undefined);
   }
 </script>
 

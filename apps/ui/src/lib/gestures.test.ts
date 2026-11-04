@@ -49,6 +49,19 @@ describe('Press', () => {
   });
 });
 
+describe('Press.offset', () => {
+  it('follows the finger sideways only once the press is a horizontal drag', () => {
+    const p = new Press(200, 100, 0);
+    expect(p.offset(205)).toBe(0);
+    p.move(170, 104);
+    expect(p.offset(170)).toBe(-30);
+    expect(p.offset(260)).toBe(60);
+    const v = new Press(200, 100, 0);
+    v.move(204, 60);
+    expect(v.offset(260)).toBe(0);
+  });
+});
+
 describe('dragValue', () => {
   it('rises as the finger moves up and stays within 0..1', () => {
     expect(dragValue(0.5, -100, 200)).toBe(1);
