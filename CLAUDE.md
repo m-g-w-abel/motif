@@ -92,6 +92,9 @@ for now, so these local runs are the only check. If no Rust changed (no
 In a new git worktree, run `scripts/seed-build.sh` before the first build: it
 copies the main checkout's compiled dependencies (never share one build folder
 between checkouts; cargo would mix their workspace crates).
+Don't wait on a build with `pgrep -f "<command>"` loops: the pattern is in the
+loop's own command line, so it matches itself, never ends, and blocks archiving
+the session. Run the build in the background and wait for its notification.
 
 ## Testing the UI
 
