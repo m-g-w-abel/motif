@@ -1,9 +1,11 @@
 package io.github.mgwabel.motif
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -15,9 +17,17 @@ import androidx.core.view.WindowCompat
 import org.json.JSONObject
 
 class MainActivity : TauriActivity() {
+  private var multicastLock: WifiManager.MulticastLock? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+  }
+
+  override fun onDestroy() {
+    multicastLock?.release()
+    multicastLock = null
+    super.onDestroy()
   }
 
   override fun onWebViewCreate(webView: WebView) {
@@ -39,6 +49,18 @@ class MainActivity : TauriActivity() {
         )
       } else {
         requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)) {}
+      }
+    }
+
+    /** Wi-Fi drops multicast (mDNS) packets unless this is held; the UI holds it only while looking for engines. */
+    @JavascriptInterface
+    fun setMulticast(on: Boolean) {
+      if (on && multicastLock == null) {
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        multicastLock = wifi.createMulticastLock("motif-mdns").apply { acquire() }
+      } else if (!on) {
+        multicastLock?.release()
+        multicastLock = null
       }
     }
 

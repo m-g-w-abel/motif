@@ -13,6 +13,8 @@ use engine::Engine;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
+mod remote;
+
 // glibc's allocator keeps freed artwork buffers as fragmented heap (#53).
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -99,7 +101,12 @@ pub fn run() {
             app.manage(EngineUrl(url));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_url, show_in_folder])
+        .invoke_handler(tauri::generate_handler![
+            engine_url,
+            show_in_folder,
+            remote::discover_engines,
+            remote::pair_engine
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the app");
 }
