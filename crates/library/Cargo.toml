@@ -25,5 +25,9 @@ tokio.workspace = true
 tracing.workspace = true
 walkdir = "2.5.0"
 
+[target.'cfg(target_os = "android")'.dependencies]
+# HTTPS roots for Android (tls_roots in lyrics.rs).
+webpki-root-certs = "=1.0.9"
+
 [lints]
 workspace = true
