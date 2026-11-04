@@ -5,7 +5,8 @@
   import { Drawer } from './lib/drawer.svelte';
   import { SETTINGS_GROUPS, SettingsView, type SettingsGroup } from './lib/settingsView.svelte';
   import SettingsScreen from './lib/components/shell/SettingsScreen.svelte';
-  import { EngineClient, PlaybackPosition } from './lib/engine.svelte';
+  import { EngineClient, engines, PlaybackPosition } from './lib/engine.svelte';
+  import { addEngine, LOCAL_ID, switchTo } from './lib/engines';
   import { accentFromPixels, artPalette } from './lib/artAccent';
   import { LibraryClient } from './lib/library.svelte';
   import { installLayoutFiles } from './lib/layout/install';
@@ -234,6 +235,9 @@
     const devSettings = params.get('dev-settings') as SettingsGroup;
     if (SETTINGS_GROUPS.includes(devSettings)) settingsView.open(devSettings);
     if (params.has('dev-pair')) settingsView.pairing = true;
+    // A second engine to switch to, e.g. ?dev-engine=127.0.0.1:7711&dev-token=…
+    const devEngine = params.get('dev-engine');
+    if (devEngine) engines.update((list) => addEngine(list, { id: devEngine, name: devEngine, addresses: [devEngine], token: params.get('dev-token') }));
     if (params.has('dev-stress')) import('./lib/components/StressTest.svelte').then((m) => (StressTest = m.default));
     const devPlay = params.get('dev-play');
     if (devPlay !== null) {
@@ -245,6 +249,8 @@
     }
   }
 
+  const remote = engines.current.id !== LOCAL_ID;
+
   let editing = $state(false);
   const player = $derived(settings.current.player);
 </script>
@@ -252,13 +258,19 @@
 <svelte:document oncontextmenu={onContextMenu} />
 <svelte:window onkeydown={onShortcut} onpointerdown={onPointerDown} ondragenter={onDragEnter} ondragleave={onDragLeave} ondragover={onDragOver} ondrop={onDrop} />
 
-{#if engine.unpaired}
+{#if engine.unpaired && !remote}
   <PairPage unpaired />
 {:else}
 <div class="shell">
   <Nav />
 
   <div class="body">
+    {#if remote && (engine.unpaired || engine.status === 'closed')}
+      <div class="error" role="alert">
+        <span>{engine.unpaired ? `${engines.current.name} no longer accepts this device.` : `Can't reach ${engines.current.name}.`}</span>
+        <button class="button" onclick={() => engines.update((list) => switchTo(list, LOCAL_ID))}>Switch to this device</button>
+      </div>
+    {/if}
     {#if engine.error}
       <div class="error" role="alert">
         <span>{engine.error}</span>

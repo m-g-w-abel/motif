@@ -13,6 +13,7 @@ import type { QueryResult } from './protocol/QueryResult';
 import type { PlayerState } from './protocol/PlayerState';
 import type { QueueItem } from './protocol/QueueItem';
 import type { ServerMessage } from './protocol/ServerMessage';
+import { currentEngine, loadEngines, LOCAL_ID, setToken, socketUrl, type EngineList } from './engines';
 import { toasts } from './toast.svelte';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
@@ -20,34 +21,49 @@ export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 const PROTOCOL_VERSION = 9;
 const MAX_BACKOFF_MS = 5000;
 
-const TOKEN_KEY = 'pairing-token';
+const ENGINES_KEY = 'engines';
+/** Where the token lived before there was a list of engines. */
+const LEGACY_TOKEN_KEY = 'pairing-token';
 
-/** This device's token from pairing (`POST /pair`), if it has one; loopback pages need none. */
-export function savedToken(): string | null {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
+/** The engines this device can control, and which one is in control; switching remounts the app (see `Root.svelte`). */
+class Engines {
+  list = $state.raw<EngineList>(Engines.#load());
+  current = $derived(currentEngine(this.list));
+
+  static #load(): EngineList {
+    try {
+      return loadEngines(localStorage.getItem(ENGINES_KEY), localStorage.getItem(LEGACY_TOKEN_KEY));
+    } catch {
+      return loadEngines(null, null);
+    }
+  }
+
+  update(change: (list: EngineList) => EngineList) {
+    this.list = change(this.list);
+    try {
+      localStorage.setItem(ENGINES_KEY, JSON.stringify(this.list));
+      localStorage.removeItem(LEGACY_TOKEN_KEY);
+    } catch {
+      // Lasts until reload.
+    }
   }
 }
 
+export const engines = new Engines();
+
+/** This device's token from pairing (`POST /pair`) with the page's host; loopback pages need none. */
 export function saveToken(token: string | null) {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    // Lasts until reload.
-  }
+  engines.update((list) => setToken(list, LOCAL_ID, token));
 }
 
-/** `url` with this device's token, for requests that can't send headers (`<img src>`, WebSocket). */
+/** `url` with the current engine's token, for requests that can't send headers (`<img src>`, WebSocket). */
 export function withToken(url: string): string {
-  const token = savedToken();
+  const token = engines.current.token;
   return token ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : url;
 }
 
-/** Where the engine lives: the embedded one under Tauri, else the page's host. */
-async function engineUrl(): Promise<string> {
+/** This device's own engine: the embedded one under Tauri, else the page's host. */
+async function ownEngineUrl(): Promise<string> {
   if ('__TAURI_INTERNALS__' in window) {
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<string>('engine_url');
@@ -90,6 +106,8 @@ export class EngineClient {
   #pending = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
   #queries = new Map<number, { resolve: (r: QueryResult) => void; reject: (e: Error) => void }>();
   #backoff = 250;
+  /** Connection attempts so far, to try each of the engine's addresses in turn. */
+  #attempts = 0;
   #closed = false;
   /** Visualisers listening for spectrum bands; the engine sends them only while there are any. */
   #bands = new Set<(bands: number[]) => void>();
@@ -199,10 +217,10 @@ export class EngineClient {
   }
 
   async #connect() {
-    this.status = 'connecting';
+    // Stays `closed` while reconnecting, so a lost engine reads as lost.
     let socket: WebSocket;
     try {
-      const url = await engineUrl();
+      const url = socketUrl(engines.current, this.#attempts++, await ownEngineUrl());
       this.httpBase = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
       socket = new WebSocket(withToken(url));
     } catch (e) {
