@@ -5,10 +5,22 @@
   import Icon, { type IconName } from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import { canDecorate } from '../../windowChrome';
+  import { contextMenu } from '../../contextMenu.svelte';
+  import { engines } from '../../engine.svelte';
+  import { switchTo } from '../../engines';
 
   const { engine, library, layout, drawer, settings, settingsView } = getApp();
   let scroller = $state<HTMLElement>();
   const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
+
+  function openSwitcher(e: MouseEvent) {
+    const button = e.currentTarget as HTMLElement;
+    const box = button.getBoundingClientRect();
+    const others = engines.list.engines.filter((other) => other.id !== engines.list.current);
+    const items = others.map((other) => ({ label: `Switch to ${other.name}`, run: () => engines.update((list) => switchTo(list, other.id)) }));
+    // At the bottom of the screen: opens upwards from the button's top edge.
+    contextMenu.show(items, box.left, box.top - 4, button);
+  }
 
   const sources: { id: Source; label: string; icon: IconName; count: () => number }[] = [
     { id: 'library', label: 'Library', icon: 'library', count: () => (isDemo ? demoLibrary.length : (library.status?.tracks ?? 0)) },
@@ -51,9 +63,20 @@
 
   <!-- Pinned to the bottom of the screen. -->
   <div class="footer">
-    <span class="connection {engine.status}" title={statusLabel[engine.status]} role="status">
-      <span class="dot"></span>{statusLabel[engine.status]}
-    </span>
+    {#if engines.list.engines.length > 1}
+      <button
+        class="connection switcher {engine.status}"
+        aria-label="{engines.current.name}, {statusLabel[engine.status]}. Switch engine"
+        title="{engines.current.name}: {statusLabel[engine.status]}"
+        onclick={openSwitcher}
+      >
+        <span class="dot"></span><span class="engine">{engines.current.name}</span><Icon name="chevron-up" size={12} />
+      </button>
+    {:else}
+      <span class="connection {engine.status}" title={statusLabel[engine.status]} role="status">
+        <span class="dot"></span>{statusLabel[engine.status]}
+      </span>
+    {/if}
     <button
       class="icon-button"
       class:active={settingsView.group !== null}
@@ -170,7 +193,30 @@
     color: var(--text-muted);
   }
 
+  .switcher {
+    min-width: 0;
+    height: 28px;
+    padding: 0 var(--space-2);
+    margin-left: calc(-1 * var(--space-2));
+    border: 0;
+    border-radius: var(--radius-md);
+    background: none;
+    cursor: pointer;
+  }
+
+  .switcher:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .engine {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .dot {
+    flex: none;
     width: 7px;
     height: 7px;
     border-radius: 50%;

@@ -1,10 +1,13 @@
 <script lang="ts">
   import { contextMenu } from '../contextMenu.svelte';
 
-  // Clamps the menu into the window and puts the focus on its first item.
+  // Clamps the menu into the window, opening upwards from `y` when it doesn't
+  // fit below, and puts the focus on its first item.
   function place(node: HTMLElement) {
+    const height = node.offsetHeight;
+    const top = contextMenu.y + height > innerHeight ? contextMenu.y - height : contextMenu.y;
     node.style.left = `${Math.max(0, Math.min(contextMenu.x, innerWidth - node.offsetWidth))}px`;
-    node.style.top = `${Math.max(0, Math.min(contextMenu.y, innerHeight - node.offsetHeight))}px`;
+    node.style.top = `${Math.max(0, Math.min(top, innerHeight - height))}px`;
     node.querySelector('button')?.focus();
   }
 
@@ -58,7 +61,7 @@
 <style>
   .context-menu {
     position: fixed;
-    z-index: 45;
+    z-index: 47; /* Over the phone drawer (46), which has menus of its own. */
     min-width: 180px;
     padding: var(--space-1) 0;
     border: 1px solid var(--border);

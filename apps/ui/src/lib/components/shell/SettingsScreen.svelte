@@ -21,6 +21,8 @@
   import Slider from '../Slider.svelte';
   import { FONT_LIST } from '../../themeFile';
   import { canDecorate } from '../../windowChrome';
+  import { engines } from '../../engine.svelte';
+  import { LOCAL_ID, removeEngine, switchTo } from '../../engines';
   import WindowButtons from './WindowButtons.svelte';
 
   const { settings, themes, engine, library, settingsView } = getApp();
@@ -185,6 +187,25 @@
     </nav>
 
     <div class="panel" bind:this={panel}>
+      {#if group === 'devices' && engines.list.engines.length > 1}
+        <div class="row">
+          <span class="label">Engine in control</span>
+          {#each engines.list.engines as saved (saved.id)}
+            <div class="device">
+              <span class="name">{saved.name}</span>
+              {#if saved.id === engines.list.current}
+                <span class="status">{engine.unpaired ? 'Not paired' : { connecting: 'Connecting…', open: '● Connected', closed: 'Disconnected' }[engine.status]}</span>
+              {:else}
+                <button class="button" onclick={() => engines.update((list) => switchTo(list, saved.id))}>Switch</button>
+              {/if}
+              {#if saved.id !== LOCAL_ID}
+                <button class="button" onclick={() => engines.update((list) => removeEngine(list, saved.id))}>Forget</button>
+              {/if}
+            </div>
+          {/each}
+          <p class="status">Controls one engine at a time. Music playing on this device keeps playing while you control another.</p>
+        </div>
+      {/if}
       {#if !allowed}
         <p class="status">This device can't change these settings. The host can give it Full access under Settings → Devices.</p>
       {:else if group === 'interface'}
