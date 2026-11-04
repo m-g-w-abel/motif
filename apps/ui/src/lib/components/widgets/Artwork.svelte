@@ -10,11 +10,14 @@
   import { albumKey } from '../../albums';
   import { menu } from '../../contextMenu.svelte';
   import { demoLibrary, isDemo } from '../../demo';
+  import { dragValue, gesture, slide } from '../../gestures';
   import { albumMenu, playTracks, queueTracks } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { viewSort } from '../../sort.svelte';
   import type { LibraryTrack } from '../../protocol/LibraryTrack';
   import type { TrackImage } from '../../protocol/TrackImage';
+  import { volumeSetter } from '../../volume';
+  import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
   import Coverflow, { type Card } from '../player/Coverflow.svelte';
 
@@ -123,9 +126,46 @@
   let height = $state(0);
   const PADDING = 12;
   const side = $derived(Math.max(0, Math.min(width, height) - 2 * PADDING));
+
+  // In the sheet, touch gestures: swipe to skip, drag up or down for the volume, shown while it changes.
+  let level = $state<number | null>(null);
+  let hide: ReturnType<typeof setTimeout> | undefined;
+  function onPointerDown(e: PointerEvent) {
+    if ((e.target as HTMLElement).closest('button:not(.shade)')) return;
+    // The carousel's stage follows a swipe: the centre card's own transform is the sheet's morph.
+    const stage = (e.currentTarget as HTMLElement).querySelector<HTMLElement>('.coverflow .stage');
+    gesture(e, 'artwork', {
+      next: () => engine.run({ type: 'next' }),
+      previous: () => engine.run({ type: 'previous' }),
+      volume: () => {
+        const start = engine.player?.volume ?? 1;
+        const set = volumeSetter(engine);
+        return (dy) => {
+          level = dragValue(start, dy, Math.max(side, 200));
+          set(level);
+          clearTimeout(hide);
+          hide = setTimeout(() => (level = null), 800);
+        };
+      },
+    }, stage ? slide(stage) : undefined);
+  }
 </script>
 
-<section class="artwork" bind:clientWidth={width} bind:clientHeight={height}>
+<!-- Touch gestures only; keys and the mouse have the player's controls. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<section
+  class="artwork"
+  bind:clientWidth={width}
+  bind:clientHeight={height}
+  onpointerdown={expands || !engine.can('playback') ? undefined : onPointerDown}
+>
+  {#if level !== null}
+    <div class="level" aria-hidden="true">
+      <Icon name="volume" size={16} />
+      <span class="track"><span class="fill" style:transform="scaleX({level})"></span></span>
+      {Math.round(level * 100)}%
+    </div>
+  {/if}
   {#if !expands}
     <!-- The sheet: always the carousel, so its centre card is the same box with or without the rest. -->
     {#if width > 0}
@@ -140,12 +180,46 @@
 
 <style>
   .artwork {
+    position: relative;
     display: grid;
     place-items: center;
     height: 100%;
     min-height: 120px;
     background: var(--bg);
     overflow: hidden;
+  }
+
+  .level {
+    position: absolute;
+    top: var(--space-4);
+    left: 50%;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  .level .track {
+    width: 80px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--divider);
+    overflow: hidden;
+  }
+
+  .level .fill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transform-origin: left;
   }
 
   .frame {

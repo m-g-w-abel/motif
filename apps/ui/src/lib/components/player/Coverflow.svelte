@@ -76,6 +76,7 @@
     go(at + by);
   }
 
+  // Mouse only: a touch swipe on the artwork skips the track (`gestures.ts`).
   let swipeX: number | null = null;
   function onPointerUp(e: PointerEvent) {
     const dx = swipeX === null ? 0 : e.clientX - swipeX;
@@ -92,7 +93,7 @@
   aria-label="Album images"
   tabindex="0"
   onkeydown={onKey}
-  onpointerdown={(e) => (swipeX = e.clientX)}
+  onpointerdown={(e) => (swipeX = e.pointerType === 'mouse' ? e.clientX : null)}
   onpointerup={onPointerUp}
   onpointercancel={() => (swipeX = null)}
 >
@@ -170,7 +171,8 @@
     gap: 8px;
     width: 100%;
     height: 100%;
-    touch-action: pan-y;
+    /* A vertical touch drag sets the volume rather than scrolling the sheet. */
+    touch-action: none;
     outline: none;
   }
 

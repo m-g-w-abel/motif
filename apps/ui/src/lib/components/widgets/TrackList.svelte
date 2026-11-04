@@ -14,6 +14,7 @@
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { scrollMemory } from '../../scrollMemory';
   import { menu } from '../../contextMenu.svelte';
+  import { gesture } from '../../gestures';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
@@ -207,6 +208,7 @@
   let pressing = false;
   function press(e: PointerEvent, i: number) {
     pressing = true;
+    gesture(e, 'row', { queue: () => queueRow(i) });
     const key = data.key(i);
     if (e.button === 2) {
       if (!picked.has(key)) select(i);
@@ -220,6 +222,11 @@
       anchor = i;
       touch(i);
     } else if (!inSelection(picked, key)) select(i);
+  }
+  /** Middle-click or long-press: queues the row, or the selection it is part of. */
+  function queueRow(i: number) {
+    if (!inSelection(picked, data.key(i))) select(i);
+    queueTracks(engine, tracksAt(i));
   }
   function release(e: MouseEvent, i: number) {
     if (!e.shiftKey && !e.ctrlKey && !e.metaKey) select(i);
@@ -592,11 +599,7 @@
                 aria-selected={picked.has(key)}
                 onpointerdown={(e) => press(e, i)}
                 onclick={(e) => release(e, i)}
-                onauxclick={(e) => {
-                  if (e.button !== 1) return;
-                  if (!inSelection(picked, key)) select(i);
-                  queueTracks(engine, tracksAt(i));
-                }}
+                onauxclick={(e) => e.button === 1 && queueRow(i)}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}
                 use:menu={() => trackMenu(engine, data, view, i)}

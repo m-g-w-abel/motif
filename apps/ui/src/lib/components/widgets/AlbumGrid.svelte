@@ -5,6 +5,7 @@
   import { demoLibrary, isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
+  import { gesture } from '../../gestures';
   import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
@@ -123,6 +124,7 @@
   // As in the track list: a press inside a selection waits for the click,
   // so a right-click acts on all of it.
   function press(e: PointerEvent, i: number, album: Card) {
+    gesture(e, 'row', { queue: () => queueAlbum(i, album) });
     if (e.button === 2) {
       if (!picked.has(album.key)) select(i);
     } else if (e.button !== 0) {
@@ -135,6 +137,12 @@
       view.browse.focusAlbum = album.key;
       anchor = i;
     } else if (!inSelection(picked, album.key)) select(i);
+  }
+  /** Middle-click or long-press: queues the album, or the picked albums it is part of. */
+  function queueAlbum(i: number, album: Card) {
+    if (!inSelection(picked, album.key)) select(i);
+    const keys = keysFor(album);
+    queueTracks(engine, albumTracks(keys), false, keys.length > 1 ? `${keys.length} albums` : album.title || 'Unknown album');
   }
   function release(e: MouseEvent, i: number) {
     if (!e.shiftKey && !e.ctrlKey && !e.metaKey) select(i);
@@ -391,12 +399,7 @@
               title="{album.title} — {album.artist} · {album.tracks} tracks · {formatTime(album.duration_ms)}"
               onpointerdown={(e) => press(e, i, album)}
               onclick={(e) => release(e, i)}
-              onauxclick={(e) => {
-                if (e.button !== 1) return;
-                if (!inSelection(picked, album.key)) select(i);
-                const keys = keysFor(album);
-                queueTracks(engine, albumTracks(keys), false, keys.length > 1 ? `${keys.length} albums` : album.title || 'Unknown album');
-              }}
+              onauxclick={(e) => e.button === 1 && queueAlbum(i, album)}
               ondblclick={() => play(album)}
             >
               <Artwork track={album.track} art={album.art} title={album.title} />
