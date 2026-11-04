@@ -564,6 +564,11 @@
       display: none;
     }
 
+    /* The title gives way to the search and layout buttons, but never the drawer button (#118). */
+    .title {
+      min-width: 36px;
+    }
+
     /* The buttons sit mid-toolbar here, so hang the popovers from the toolbar's
        edge instead: one 300px wide from a button would be clipped off the left. */
     .menu {

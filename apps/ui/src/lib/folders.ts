@@ -9,28 +9,11 @@ interface AndroidStorage {
   openAllFilesSettings(): void;
   /** Opens the system folder picker; the tree URI (or null) arrives at `window.motifFolderPicked`. */
   pickFolder(): void;
-  /** The system bar insets in CSS pixels: top, right, bottom, left. Changes arrive at `window.motifInsets`. */
-  insets(): string;
   /** Dark status and navigation bar icons (for a light theme), or light ones. */
   setBarIconsDark(dark: boolean): void;
 }
 
 const android = (globalThis as { MotifAndroid?: AndroidStorage }).MotifAndroid;
-
-/** Keeps `--inset-*` at the Android system bars' size, and the bar icons readable on the theme. */
-export function trackSystemBars(): void {
-  if (!android) return;
-  const apply = () => {
-    const [top, right, bottom, left] = android.insets().split(' ');
-    const style = document.documentElement.style;
-    style.setProperty('--inset-top', `${top}px`);
-    style.setProperty('--inset-right', `${right}px`);
-    style.setProperty('--inset-bottom', `${bottom}px`);
-    style.setProperty('--inset-left', `${left}px`);
-  };
-  (globalThis as { motifInsets?: () => void }).motifInsets = apply;
-  apply();
-}
 
 export const setBarIconsDark = (dark: boolean) => android?.setBarIconsDark(dark);
 
