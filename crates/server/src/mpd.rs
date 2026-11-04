@@ -56,6 +56,9 @@ use crate::{Pairing, lan::Advert};
 const GREETING: &str = "OK MPD 0.21.0\n";
 /// Longer request lines close the connection.
 const MAX_LINE: u64 = 64 * 1024;
+/// Longer command lists close the connection, as MPD's
+/// `max_command_list_size` does.
+const MAX_LIST: usize = 2 * 1024 * 1024;
 
 /// (command, needs control). Also the answer to `commands`.
 const COMMANDS: &[(&str, bool)] = &[
@@ -469,17 +472,15 @@ impl Client {
                 }
                 Some(begin @ ("command_list_begin" | "command_list_ok_begin")) => {
                     let ok_each = begin == "command_list_ok_begin";
-                    let mut list = Vec::new();
-                    loop {
-                        let Some(request) = lines.recv().await else {
-                            return reader.abort();
-                        };
-                        if request == "command_list_end" {
+                    match read_list(&mut lines).await {
+                        Some(Ok(list)) => self.list(&list, ok_each, &mut out).await,
+                        Some(Err(ack)) => {
+                            respond_ack(&mut out, 0, begin, ack);
+                            let _ = write.write_all(out.as_bytes()).await;
                             break;
                         }
-                        list.push(request);
+                        None => break,
                     }
-                    self.list(&list, ok_each, &mut out).await;
                 }
                 _ => {
                     let name = words.first().cloned().unwrap_or_default();
@@ -1110,6 +1111,23 @@ impl Client {
     }
 }
 
+/// A command list's requests up to `command_list_end`; `None` if the
+/// connection closed first, an error once it passes [`MAX_LIST`].
+async fn read_list(lines: &mut mpsc::Receiver<String>) -> Option<Result<Vec<String>, Ack>> {
+    let (mut list, mut size) = (Vec::new(), 0);
+    loop {
+        let request = lines.recv().await?;
+        if request == "command_list_end" {
+            return Some(Ok(list));
+        }
+        size += request.len() + 1;
+        if size > MAX_LIST {
+            return Some(Err(Ack(ACK_SYSTEM, "command list is too long".into())));
+        }
+        list.push(request);
+    }
+}
+
 fn respond_ack(out: &mut String, index: usize, command: &str, Ack(code, message): Ack) {
     out.push_str(&format!("ACK [{code}@{index}] {{{command}}} {message}\n"));
 }
@@ -1646,6 +1664,26 @@ mod tests {
         tx.send("noidle".into()).await.unwrap();
         assert!(client.idle(&["player".into()], &mut lines, &mut out).await);
         assert_eq!(out, "OK\n");
+    }
+
+    #[tokio::test]
+    async fn command_lists_are_capped() {
+        let (tx, mut lines) = mpsc::channel(16);
+        tokio::spawn(async move {
+            for request in ["status", "ping", "command_list_end"] {
+                tx.send(request.to_owned()).await.unwrap();
+            }
+            let request = "x".repeat(60_000);
+            while tx.send(request.clone()).await.is_ok() {}
+        });
+        assert_eq!(
+            read_list(&mut lines).await.unwrap().unwrap(),
+            ["status", "ping"]
+        );
+        assert_eq!(
+            read_list(&mut lines).await.unwrap().unwrap_err(),
+            Ack(ACK_SYSTEM, "command list is too long".into())
+        );
     }
 
     #[tokio::test]
