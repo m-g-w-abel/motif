@@ -26,6 +26,20 @@ directory (`MOTIF_DATA_DIR` overrides it, handy for tests).
   the now-playing sheet); layouts only place and configure them.
 - Pin new dependencies to exact versions that are at least two weeks old.
 
+## Writing code and tests
+
+- Shape the data first, and make illegal states unrepresentable (enums and
+  types over runtime checks). Commands and handlers should be safe to repeat:
+  remote clients retry.
+- Logic (state machines, parsers, protocol mappings) is test-first: write the
+  failing test, see it fail, then make it pass. Visual changes are checked in
+  WebKit instead (see Testing the UI).
+- Test behaviour through the public interface. A test that would still pass if
+  the function returned nothing or a default value proves nothing: fix it or
+  delete it. Refactor only while tests pin the behaviour.
+- Don't silence the compiler or linters (`#[allow]`, `@ts-ignore`,
+  `svelte-ignore`); fix the cause, or explain in a comment why it can't be.
+
 ## Layout
 
 | Path | What |
