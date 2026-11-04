@@ -52,11 +52,11 @@
     for (const address of chosen.addresses) {
       try {
         const paired = await pairEngine(address, code, name);
-        if (cancelled) return;
         if (paired.engine_key !== chosen.id) throw new Error("this isn't the engine that was picked");
         const engine = { id: chosen.id, name: chosen.name, addresses: chosen.addresses, token: paired.token };
-        engines.update((list) => switchTo(addEngine(list, engine), engine.id));
-        onClose();
+        // Allowed after Cancel: keep the token, but don't take control from under the user.
+        engines.update((list) => (cancelled ? addEngine(list, engine) : switchTo(addEngine(list, engine), engine.id)));
+        if (!cancelled) onClose();
         return;
       } catch (err) {
         reason = String(err instanceof Error ? err.message : err);
@@ -67,7 +67,7 @@
     if (!cancelled) error = reason.charAt(0).toUpperCase() + reason.slice(1);
   }
 
-  /** The host may still allow the request; its token is then dropped, and the host can remove the device. */
+  /** The request can't be recalled: if the host allows it later, the engine is added to the list (not switched to). */
   function cancel() {
     cancelled = true;
     waiting = false;

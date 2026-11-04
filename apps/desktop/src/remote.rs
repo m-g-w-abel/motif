@@ -147,19 +147,17 @@ mod tests {
         assert_eq!(found(&resolved("169.254.3.3", Some("k"))), None);
     }
 
-    /// A real engine on this machine's LAN: found over mDNS, paired by code.
-    #[tokio::test]
-    async fn finds_an_engine_and_pairs_with_its_code() {
-        // Allows every device by itself, as a host does that has chosen so.
+    /// A server on a free loopback port that allows every device by itself,
+    /// as a host does that has chosen so; the LAN stays closed.
+    async fn local_engine() -> (server::Pairing, String, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("motif-remote-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("pairing.json"),
-            r#"{"auto_approve":"view_only","devices":[],"log":[],"lan":true}"#,
+            r#"{"auto_approve":"view_only","devices":[],"log":[],"lan":false}"#,
         )
         .unwrap();
         let pairing = server::Pairing::open(&dir).unwrap();
-        let key = pairing.engine_key().to_owned();
         let config = server::Config {
             addr: "127.0.0.1:0".parse().unwrap(),
             ui: None,
@@ -167,25 +165,20 @@ mod tests {
             integrations: tokio::sync::watch::channel(Default::default()).0,
             pairing: pairing.clone(),
         };
-        let (_, serve) = server::bind(engine::Engine::spawn(engine::LocalFiles), config)
+        let (addr, serve) = server::bind(engine::Engine::spawn(engine::LocalFiles), config)
             .await
             .unwrap();
         tokio::spawn(serve);
-        // A live code opens the LAN and starts the advert.
+        (pairing, addr.to_string(), dir)
+    }
+
+    #[tokio::test]
+    async fn pairing_by_code_and_its_errors() {
+        let (pairing, address, dir) = local_engine().await;
         let code = pairing.start().code;
-        let mut engine = None;
-        for _ in 0..4 {
-            let seen = tauri::async_runtime::spawn_blocking(browse)
-                .await
-                .unwrap()
-                .unwrap();
-            engine = seen.into_iter().find(|e| e.id == key);
-            if engine.is_some() {
-                break;
-            }
-        }
-        let engine = engine.expect("the engine shows up in the browse");
-        let address = engine.addresses[0].clone();
+        // A connection made before the server first looks at the new code is reset.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let key = pairing.engine_key().to_owned();
 
         let wrong = pair_engine(address.clone(), "WRONG".into(), "Phone".into()).await;
         assert_eq!(wrong.unwrap_err(), "unknown code");
@@ -203,5 +196,39 @@ mod tests {
         let gone = pair_engine("127.0.0.1:9".into(), "X".into(), "Phone".into()).await;
         assert_eq!(gone.unwrap_err(), "can't reach 127.0.0.1:9");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Multicast on the real network, and the engine listens on every interface meanwhile.
+    #[tokio::test]
+    #[ignore = "needs LAN multicast"]
+    async fn browse_finds_an_engine_on_the_lan() {
+        let pairing = server::Pairing::in_memory();
+        let key = pairing.engine_key().to_owned();
+        let config = server::Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui: None,
+            library: None,
+            integrations: tokio::sync::watch::channel(Default::default()).0,
+            pairing: pairing.clone(),
+        };
+        let (_, serve) = server::bind(engine::Engine::spawn(engine::LocalFiles), config)
+            .await
+            .unwrap();
+        tokio::spawn(serve);
+        // A live code opens the LAN and starts the advert.
+        pairing.start();
+        let mut engine = None;
+        for _ in 0..4 {
+            let seen = tauri::async_runtime::spawn_blocking(browse)
+                .await
+                .unwrap()
+                .unwrap();
+            engine = seen.into_iter().find(|e| e.id == key);
+            if engine.is_some() {
+                break;
+            }
+        }
+        let engine = engine.expect("the engine shows up in the browse");
+        assert!(!engine.addresses.is_empty());
     }
 }
