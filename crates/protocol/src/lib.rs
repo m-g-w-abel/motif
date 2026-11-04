@@ -844,6 +844,15 @@ pub enum PairingCommand {
     SetLan {
         allowed: bool,
     },
+    /// Turns the MPD server ([`MpdState`]) on or off.
+    SetMpd {
+        enabled: bool,
+    },
+    /// The password MPD clients send to get control; empty removes it,
+    /// leaving them read-only.
+    SetMpdPassword {
+        password: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
@@ -860,6 +869,21 @@ pub struct PairingState {
     /// Newest last, capped.
     pub log: Vec<PairingLogEntry>,
     pub lan: LanState,
+    pub mpd: MpdState,
+}
+
+/// The MPD server for third-party clients (ncmpcpp, M.A.L.P.…): off by
+/// default; on the LAN while [`LanState::allowed`], else this machine only.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MpdState {
+    pub enabled: bool,
+    /// Clients that send the password may control playback; without one
+    /// set, every client is read-only.
+    pub password_set: bool,
+    pub port: u16,
+    /// Enabled and listening (false if the port is taken).
+    pub listening: bool,
 }
 
 /// Whether other machines can reach this engine.

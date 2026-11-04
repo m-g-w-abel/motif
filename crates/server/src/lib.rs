@@ -7,8 +7,11 @@
 //! redeeming a one-time code at `POST /pair` (see [`Pairing`]). Other
 //! machines reach the engine only while the LAN is open (see [`Pairing`]'s
 //! [`protocol::LanState`]): the server then listens on every interface.
+//!
+//! MPD clients have a server of their own (see `mpd.rs`), off by default.
 
 mod lan;
+mod mpd;
 mod pairing;
 mod resolver;
 pub mod settings;
@@ -80,7 +83,8 @@ const ART_SLOTS: usize = 50;
 
 /// Binds the listener and returns its address plus a future that serves it.
 /// Binding first lets callers use port 0 and learn the real port. While the
-/// LAN is open the server listens on every interface on that port.
+/// LAN is open the server listens on every interface on that port. The
+/// future also serves MPD while [`Pairing`] says so.
 pub async fn bind(
     engine: Engine,
     config: Config,
@@ -89,8 +93,18 @@ pub async fn bind(
     let addr = listener.local_addr();
     // Tapping is a no-op; axum knows the peer address of tapped listeners.
     let listener = axum::serve::ListenerExt::tap_io(listener, |_| {});
+    let mpd = mpd::serve(
+        engine.clone(),
+        config.library.clone(),
+        config.pairing.clone(),
+    );
     let app = router(engine, config).into_make_service_with_connect_info::<SocketAddr>();
-    Ok((addr, async move { axum::serve(listener, app).await }))
+    Ok((addr, async move {
+        tokio::select! {
+            result = axum::serve(listener, app).into_future() => result,
+            () = mpd => Ok(()),
+        }
+    }))
 }
 
 /// The routes; serve them with `ConnectInfo<SocketAddr>`, which says who is

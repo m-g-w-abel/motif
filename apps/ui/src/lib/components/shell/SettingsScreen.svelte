@@ -125,6 +125,7 @@
 
   let themeInput = $state<HTMLInputElement>();
   let listenBrainzToken = $state('');
+  let mpdPassword = $state('');
   /** Signs the host in to a scrobbling service (a ListenBrainz user token; anything for Last.fm and Libre.fm), or out with ''. */
   function signIn(service: 'listenbrainz' | 'lastfm' | 'librefm', credential: string) {
     const account = engine.integrations?.[service];
@@ -638,6 +639,38 @@
               {#each PRESETS as [value, label] (value)}<option {value}>On, with {label}</option>{/each}
             </select>
             <p class="status">Anyone with a code gets in without asking you.</p>
+          </div>
+          <div class="row">
+            <span class="label">MPD clients</span>
+            <div class="segmented" role="radiogroup" aria-label="MPD clients">
+              {#each [[true, 'On'], [false, 'Off']] as const as [value, text] (text)}
+                <button role="radio" aria-checked={p.mpd.enabled === value} class:active={p.mpd.enabled === value} onclick={() => engine.pair({ type: 'set_mpd', enabled: value })}>{text}</button>
+              {/each}
+            </div>
+            <p class="status">
+              {#if !p.mpd.enabled}Lets MPD apps such as ncmpcpp or M.A.L.P. control this engine.
+              {:else if !p.mpd.listening}Can't listen on port {p.mpd.port}; is another MPD server running?
+              {:else if p.lan.allowed}Listening on port {p.mpd.port}, for this computer and the network.
+              {:else}Listening on port {p.mpd.port}, for this computer only.{/if}
+            </p>
+            <form
+              class="actions token"
+              onsubmit={(e) => {
+                e.preventDefault();
+                engine.pair({ type: 'set_mpd_password', password: mpdPassword });
+                mpdPassword = '';
+              }}
+            >
+              <input class="select" type="password" autocomplete="off" placeholder={p.mpd.password_set ? 'New password' : 'Password'} aria-label="MPD password" bind:value={mpdPassword} />
+              <button class="button" disabled={!mpdPassword}>Set</button>
+              {#if p.mpd.password_set}
+                <button class="button" type="button" onclick={() => engine.pair({ type: 'set_mpd_password', password: '' })}>Remove</button>
+              {/if}
+            </form>
+            <p class="status">
+              {#if p.mpd.password_set}Apps that send the password can control playback; others can only look.
+              {:else}Without a password, MPD apps can only look, not control playback.{/if}
+            </p>
           </div>
           <div class="row">
             <span class="label">Pairing log</span>
