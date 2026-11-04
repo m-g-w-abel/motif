@@ -29,6 +29,8 @@
   import ExpandedPlayer from './lib/components/player/ExpandedPlayer.svelte';
   import FloatingPlayer from './lib/components/player/FloatingPlayer.svelte';
   import NowPlayingBar from './lib/components/player/NowPlayingBar.svelte';
+  import PairPage from './lib/components/pairing/PairPage.svelte';
+  import PendingRequest from './lib/components/pairing/PendingRequest.svelte';
 
   const engine = new EngineClient();
   const position = new PlaybackPosition(engine);
@@ -231,6 +233,7 @@
     if (params.has('dev-arrange')) layout.arranging = true;
     const devSettings = params.get('dev-settings') as SettingsGroup;
     if (SETTINGS_GROUPS.includes(devSettings)) settingsView.open(devSettings);
+    if (params.has('dev-pair')) settingsView.pairing = true;
     if (params.has('dev-stress')) import('./lib/components/StressTest.svelte').then((m) => (StressTest = m.default));
     const devPlay = params.get('dev-play');
     if (devPlay !== null) {
@@ -249,6 +252,9 @@
 <svelte:document oncontextmenu={onContextMenu} />
 <svelte:window onkeydown={onShortcut} onpointerdown={onPointerDown} ondragenter={onDragEnter} ondragleave={onDragLeave} ondragover={onDragOver} ondrop={onDrop} />
 
+{#if engine.unpaired}
+  <PairPage unpaired />
+{:else}
 <div class="shell">
   <Nav />
 
@@ -292,8 +298,15 @@
 {#if dragDepth > 0}
   <div class="drop-overlay" aria-hidden="true"><span>Drop a .kdl file to install it as a layout or theme</span></div>
 {/if}
+{/if}
 
 <div class="toasts" role="status">
+  <!-- Every Full client is asked, not only the one that showed the code. -->
+  {#if !settingsView.pairing}
+    {#each engine.pairing?.pending ?? [] as request (request.id)}
+      <div class="toast"><PendingRequest {request} /></div>
+    {/each}
+  {/if}
   {#each toasts.items as toast (toast.id)}
     <div class="toast {toast.kind}">
       <button class="message selectable" onclick={() => !getSelection()?.toString() && toasts.dismiss(toast.id)}>{toast.message}</button>

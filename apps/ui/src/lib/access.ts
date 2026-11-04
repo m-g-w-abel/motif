@@ -1,0 +1,61 @@
+import type { Command } from './protocol/Command';
+import type { LibraryQuery } from './protocol/LibraryQuery';
+import type { Preset } from './protocol/Preset';
+import type { Scope } from './protocol/Scope';
+
+/** The scope each command needs, as the engine checks it (`required_scope` in crates/server). */
+export const COMMAND_SCOPES: Record<Command['type'], Scope> = {
+  play: 'playback',
+  pause: 'playback',
+  toggle_playback: 'playback',
+  stop: 'playback',
+  next: 'playback',
+  previous: 'playback',
+  seek: 'playback',
+  set_volume: 'playback',
+  set_repeat: 'playback',
+  set_context: 'playback',
+  play_item: 'playback',
+  enqueue: 'queue',
+  enqueue_next: 'queue',
+  remove_item: 'queue',
+  move_item: 'queue',
+  clear_queue: 'queue',
+  set_decoders: 'settings',
+  set_output: 'settings',
+  list_outputs: 'settings',
+  set_replay_gain: 'settings',
+};
+
+/** The scope a library query needs; `null` for reads, which every client may do. */
+export function queryScope(query: LibraryQuery): Scope | null {
+  switch (query.type) {
+    case 'play':
+    case 'play_album':
+      return 'playback';
+    case 'add_root':
+    case 'remove_root':
+    case 'rescan':
+    case 'set_watching':
+    case 'save_lyrics':
+      return 'library';
+    default:
+      return null;
+  }
+}
+
+/** The presets offered when approving a device, with their names. */
+export const PRESETS: [Preset, string][] = [
+  ['full', 'Full'],
+  ['control_playback', 'Control playback'],
+  ['view_only', 'View only'],
+];
+
+/** The preset a paired device's scopes match (`Preset::scopes` in crates/protocol), if any. */
+export function presetOf(scopes: Scope[]): Preset | null {
+  const has = (s: Scope) => scopes.includes(s);
+  if (scopes.length === 5) return 'full';
+  if (scopes.length === 2 && has('playback') && has('queue')) return 'control_playback';
+  if (scopes.length === 0) return 'view_only';
+  return null;
+}

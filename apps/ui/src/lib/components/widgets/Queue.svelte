@@ -56,6 +56,7 @@
   }
 
   function move(from: number, to: number) {
+    if (!engine.can('queue')) return;
     const item = queue[from];
     // Moved here at once so the dropped row doesn't jump back until the engine replies.
     engine.queue = moveItem(queue, from, to);
@@ -85,7 +86,7 @@
       {#if item.track.artist}<span class="artist">{item.track.artist}</span>{/if}
       <span class="time">{item.track.duration_ms == null ? '' : formatTime(item.track.duration_ms)}</span>
     </button>
-    {#if queued}
+    {#if queued && engine.can('queue')}
       <button
         class="remove"
         aria-label="Remove {trackTitle(item.track)} from the queue"
@@ -117,7 +118,7 @@
         {#if queue.length}
           <div class="heading">
             <h3>Next in queue</h3>
-            <button class="link" onclick={() => engine.run({ type: 'clear_queue' })}>Clear</button>
+            {#if engine.can('queue')}<button class="link" onclick={() => engine.run({ type: 'clear_queue' })}>Clear</button>{/if}
           </div>
           <ReorderList items={queue} label="Queue" key={(item) => String(item.id)} onmove={move}>
             {#snippet row(item)}{@render entry(item, true)}{/snippet}

@@ -1,5 +1,9 @@
 <script lang="ts">
+  import { PRESETS, presetOf } from '../../access';
   import { getApp } from '../../context';
+  import type { Preset } from '../../protocol/Preset';
+  import type { Scope } from '../../protocol/Scope';
+  import PairDialog from '../pairing/PairDialog.svelte';
   import { addFolder } from '../../folders';
   import { installTheme } from '../../layout/install';
   import { openUrl } from '../../openUrl';
@@ -28,10 +32,32 @@
     { id: 'playback', label: 'Playback' },
     { id: 'keyboard', label: 'Keyboard' },
     { id: 'integrations', label: 'Integrations' },
+    { id: 'devices', label: 'Devices' },
     { id: 'technical', label: 'Technical' },
     { id: 'about', label: 'About' },
   ];
   const group = $derived(settingsView.group);
+  /** What a group's controls need; other devices see that they can't change it. */
+  const needs: Partial<Record<SettingsGroup, Scope>> = { library: 'library', playback: 'settings', integrations: 'settings', devices: 'pairing' };
+  const allowed = $derived(!group || !needs[group] || engine.can(needs[group]));
+
+  const LOG_ACTIONS: Record<string, string> = {
+    paired: 'paired automatically',
+    approved: 'approved',
+    denied: 'denied',
+    revoked: 'removed',
+    renamed: 'renamed',
+    preset_changed: 'access changed',
+  };
+  /** The device whose Remove waits for a second click. */
+  let removing = $state<string | null>(null);
+  const engineTime = (ms: number) =>
+    new Date(ms - engine.clockOffset).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  function rename(device: string, current: string, input: HTMLInputElement) {
+    const name = input.value.trim();
+    if (!name) input.value = current;
+    else if (name !== current) engine.pair({ type: 'rename', device, name });
+  }
 
   // Devices come and go; refresh the list whenever Playback shows.
   $effect(() => {
@@ -158,7 +184,9 @@
     </nav>
 
     <div class="panel" bind:this={panel}>
-      {#if group === 'interface'}
+      {#if !allowed}
+        <p class="status">This device can't change these settings. The host can give it Full access under Settings → Devices.</p>
+      {:else if group === 'interface'}
         <div class="row">
           <span class="label">Theme</span>
           <div class="themes" role="radiogroup" aria-label="Theme">
@@ -534,6 +562,94 @@
         {:else}
           <p class="status">Integration settings aren't available yet.</p>
         {/if}
+      {:else if group === 'devices'}
+        {#if engine.pairing}
+          {@const p = engine.pairing}
+          <div class="row">
+            <span class="label">Other devices</span>
+            <div class="segmented" role="radiogroup" aria-label="Other devices">
+              {#each [[true, 'Allowed'], [false, 'Off']] as const as [value, text] (text)}
+                <button role="radio" aria-checked={p.lan.allowed === value} class:active={p.lan.allowed === value} onclick={() => engine.pair({ type: 'set_lan', allowed: value })}>{text}</button>
+              {/each}
+            </div>
+            <p class="status">
+              {#if p.lan.open}Reachable on the network at <span class="selectable">{p.lan.addresses.join(', ')}</span>.
+              {:else if p.lan.allowed}Opens to the network while a device is paired or pairing.
+              {:else}Only this computer can use the engine; paired devices stay paired.{/if}
+            </p>
+            <div class="actions">
+              <button class="button primary" onclick={() => (settingsView.pairing = true)}>Pair a device…</button>
+            </div>
+          </div>
+          <div class="row">
+            <span class="label">Paired devices</span>
+            {#each p.devices as device (device.id)}
+              {@const connections = p.connected.filter((c) => c.device === device.id)}
+              {@const preset = presetOf(device.scopes)}
+              <div class="device">
+                <input
+                  class="select name"
+                  aria-label="Name of {device.name}"
+                  value={device.name}
+                  maxlength="64"
+                  onchange={(e) => rename(device.id, device.name, e.currentTarget)}
+                  onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                />
+                <select
+                  class="select preset"
+                  aria-label="Access for {device.name}"
+                  value={preset ?? ''}
+                  onchange={(e) => engine.pair({ type: 'set_preset', device: device.id, preset: e.currentTarget.value as Preset })}
+                >
+                  {#if !preset}<option value="" disabled>Custom</option>{/if}
+                  {#each PRESETS as [value, label] (value)}<option {value}>{label}</option>{/each}
+                </select>
+                <button class="button" onclick={() => (removing = device.id)}>Remove</button>
+                {#if removing === device.id}
+                  <p class="status confirm">
+                    Remove {device.name}? It will need a new code to connect again.
+                    <button class="button" onclick={() => engine.pair({ type: 'revoke', device: device.id })}>Remove</button>
+                    <button class="button" onclick={() => (removing = null)}>Cancel</button>
+                  </p>
+                {/if}
+                <p class="status seen">
+                  {#if connections.length}
+                    <span class="online">● Connected now</span>
+                    {#each connections as c (c.id)}
+                      <button class="link" title="Close this connection; the device stays paired" onclick={() => engine.pair({ type: 'disconnect', connection: c.id })}>Disconnect {c.address.replace(/:\d+$/, '')}</button>
+                    {/each}
+                  {:else if device.last_seen_ms}Last seen {engineTime(device.last_seen_ms)}
+                  {:else}Never connected{/if}
+                </p>
+              </div>
+            {:else}
+              <p class="status">No devices yet.</p>
+            {/each}
+          </div>
+          <div class="row">
+            <span class="label">Approve new devices automatically</span>
+            <select
+              class="select narrow"
+              aria-label="Approve new devices automatically"
+              value={p.auto_approve ?? ''}
+              onchange={(e) => engine.pair({ type: 'set_auto_approve', preset: (e.currentTarget.value || null) as Preset | null })}
+            >
+              <option value="">Off: ask every time</option>
+              {#each PRESETS as [value, label] (value)}<option {value}>On, with {label}</option>{/each}
+            </select>
+            <p class="status">Anyone with a code gets in without asking you.</p>
+          </div>
+          <div class="row">
+            <span class="label">Pairing log</span>
+            {#each [...p.log].reverse() as entry, i (i)}
+              <p class="status">{engineTime(entry.at_ms)} · {entry.device} {LOG_ACTIONS[entry.action]}</p>
+            {:else}
+              <p class="status">Nothing yet.</p>
+            {/each}
+          </div>
+        {:else}
+          <p class="status">Pairing isn't available yet.</p>
+        {/if}
       {:else if group === 'technical'}
         <div class="row">
           <span class="label">Engine connection</span>
@@ -549,6 +665,8 @@
     <Scrollbar target={panel} />
   </div>
 </section>
+
+{#if settingsView.pairing}<PairDialog onClose={() => (settingsView.pairing = false)} />{/if}
 
 {#snippet gainSlider(label: string, key: 'preamp_db' | 'untagged_db', db: number)}
   <div class="row">
@@ -696,6 +814,57 @@
   .actions {
     display: flex;
     gap: var(--space-2);
+  }
+
+  .device {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: var(--space-1) var(--space-2);
+    align-items: center;
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .device .name {
+    min-width: 0;
+  }
+
+  .device .preset {
+    width: auto;
+  }
+
+  .seen {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .confirm {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--danger);
+  }
+
+  .online {
+    color: var(--ok);
+  }
+
+  .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .select.narrow {
+    width: auto;
+    align-self: flex-start;
   }
 
   .token .button {

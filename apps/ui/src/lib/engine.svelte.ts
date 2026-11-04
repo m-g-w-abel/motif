@@ -1,10 +1,14 @@
 import { untrack } from 'svelte';
+import { COMMAND_SCOPES, queryScope } from './access';
 import type { ClientMessage } from './protocol/ClientMessage';
 import type { Command } from './protocol/Command';
 import type { IntegrationChanges } from './protocol/IntegrationChanges';
 import type { IntegrationSettings } from './protocol/IntegrationSettings';
 import type { LibraryQuery } from './protocol/LibraryQuery';
 import type { LibraryStatus } from './protocol/LibraryStatus';
+import type { PairingCommand } from './protocol/PairingCommand';
+import type { PairingState } from './protocol/PairingState';
+import type { Scope } from './protocol/Scope';
 import type { QueryResult } from './protocol/QueryResult';
 import type { PlayerState } from './protocol/PlayerState';
 import type { QueueItem } from './protocol/QueueItem';
@@ -15,6 +19,32 @@ export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
 const PROTOCOL_VERSION = 9;
 const MAX_BACKOFF_MS = 5000;
+
+const TOKEN_KEY = 'pairing-token';
+
+/** This device's token from pairing (`POST /pair`), if it has one; loopback pages need none. */
+export function savedToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveToken(token: string | null) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Lasts until reload.
+  }
+}
+
+/** `url` with this device's token, for requests that can't send headers (`<img src>`, WebSocket). */
+export function withToken(url: string): string {
+  const token = savedToken();
+  return token ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : url;
+}
 
 /** Where the engine lives: the embedded one under Tauri, else the page's host. */
 async function engineUrl(): Promise<string> {
@@ -40,6 +70,12 @@ export class EngineClient {
   library = $state<LibraryStatus | null>(null);
   /** The host's integration settings; `null` until it sends them. */
   integrations = $state<IntegrationSettings | null>(null);
+  /** What this connection may do; `null` until the engine says, when everything shows. */
+  scopes = $state.raw<Scope[] | null>(null);
+  /** Paired devices and pairing in progress; only Full clients get it. */
+  pairing = $state.raw<PairingState | null>(null);
+  /** The engine refused this device: never paired, or its token was revoked. */
+  unpaired = $state(false);
   /** Where the engine serves HTTP (artwork), e.g. `http://127.0.0.1:7700`. */
   httpBase = $state('');
   /** Engine clock minus ours, so snapshot times (`sampled_at_ms`) can be read on our clock. */
@@ -68,6 +104,8 @@ export class EngineClient {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('not connected to the engine'));
     }
+    // Controls are hidden where the scope is missing; gestures (double-click to play) are only ignored.
+    if (!this.can(COMMAND_SCOPES[command.type])) return Promise.resolve();
     this.#noteClear(command.type);
     const id = this.#nextId++;
     const message: ClientMessage = { id, command };
@@ -88,12 +126,32 @@ export class EngineClient {
     new Promise<void>((resolve, reject) => this.#pending.set(id, { resolve, reject })).catch((e: Error) => (this.error = e.message));
   }
 
+  /** Whether this connection may do what needs `scope`. */
+  can(scope: Scope): boolean {
+    return this.scopes?.includes(scope) ?? true;
+  }
+
+  /** Sends a pairing command; shows failures in the UI. */
+  pair(pairing: PairingCommand): void {
+    const socket = this.#socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      this.error = 'not connected to the engine';
+      return;
+    }
+    const id = this.#nextId++;
+    const message: ClientMessage = { id, pairing };
+    socket.send(JSON.stringify(message));
+    new Promise<void>((resolve, reject) => this.#pending.set(id, { resolve, reject })).catch((e: Error) => (this.error = e.message));
+  }
+
   /** Asks the library a question. */
   query(query: LibraryQuery): Promise<QueryResult> {
     const socket = this.#socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('not connected to the engine'));
     }
+    const scope = queryScope(query);
+    if (scope && !this.can(scope)) return Promise.resolve({ type: 'done' });
     this.#noteClear(query.type);
     const id = this.#nextId++;
     const message: ClientMessage = { id, query };
@@ -146,15 +204,17 @@ export class EngineClient {
     try {
       const url = await engineUrl();
       this.httpBase = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
-      socket = new WebSocket(url);
+      socket = new WebSocket(withToken(url));
     } catch (e) {
       this.error = String(e);
       this.#retry();
       return;
     }
     this.#socket = socket;
+    let opened = false;
 
     socket.onopen = () => {
+      opened = true;
       this.status = 'open';
       this.error = null;
       this.#backoff = 250;
@@ -168,8 +228,24 @@ export class EngineClient {
       }
       this.#pending.clear();
       this.#queries.clear();
-      this.#retry();
+      // A refused WebSocket says nothing about why: ask over HTTP whether it was the token.
+      if (!opened) void this.#checkPaired();
+      else this.#retry();
     };
+  }
+
+  async #checkPaired() {
+    try {
+      const response = await fetch(withToken(`${this.httpBase}/art/probe`));
+      if (response.status === 401) {
+        this.status = 'closed';
+        this.unpaired = true;
+        return;
+      }
+    } catch {
+      // Unreachable: try again as usual.
+    }
+    this.#retry();
   }
 
   #retry() {
@@ -213,8 +289,11 @@ export class EngineClient {
           this.library = message.event.status;
         } else if (message.event.type === 'integrations') {
           this.integrations = message.event.settings;
+        } else if (message.event.type === 'access') {
+          this.scopes = message.event.scopes;
+        } else if (message.event.type === 'pairing') {
+          this.pairing = message.event.state;
         } else if (message.event.type === 'bands') {
-          // Pairing state is ignored until the pairing UI (#106).
           for (const listener of this.#bands) listener(message.event.bands);
         }
         break;

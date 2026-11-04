@@ -9,6 +9,8 @@
   const playing = $derived(engine.player?.status === 'playing');
 </script>
 
+<!-- Hidden on devices that may only look (View only). -->
+{#if engine.can('playback')}
 <div class="transport" style:--size="{size}px">
   {#if !compact}
     <button class="icon-button" aria-label="Previous" onclick={() => engine.run({ type: 'previous' })}>
@@ -27,6 +29,7 @@
     <Icon name="next" {size} />
   </button>
 </div>
+{/if}
 
 <style>
   .transport {

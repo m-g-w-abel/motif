@@ -237,6 +237,11 @@ pub enum Event {
     Integrations {
         settings: IntegrationSettings,
     },
+    /// What this connection may do, on connecting and whenever it changes
+    /// (the host changed the device's preset), so clients can hide controls.
+    Access {
+        scopes: Vec<Scope>,
+    },
     /// Paired devices and pairing in progress, on connecting and whenever
     /// they change. Only sent to clients with [`Scope::Pairing`].
     Pairing {

@@ -11,6 +11,7 @@
   const labels: Record<RepeatMode, string> = { off: 'Repeat off', all: 'Repeat all', one: 'Repeat one' };
 </script>
 
+{#if engine.can('playback')}
 <button
   class="icon-button"
   class:active={repeat !== 'off'}
@@ -21,6 +22,7 @@
   <Icon name="repeat" {size} />
   {#if repeat === 'one'}<span class="badge">1</span>{/if}
 </button>
+{/if}
 
 <style>
   .icon-button {

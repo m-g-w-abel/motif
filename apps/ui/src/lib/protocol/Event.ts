@@ -4,5 +4,6 @@ import type { LibraryStatus } from "./LibraryStatus";
 import type { PairingState } from "./PairingState";
 import type { PlayerState } from "./PlayerState";
 import type { QueueItem } from "./QueueItem";
+import type { Scope } from "./Scope";
 
-export type Event = { "type": "state", state: PlayerState, } | { "type": "queue", items: Array<QueueItem>, } | { "type": "context", offset: number, items: Array<QueueItem>, } | { "type": "library", status: LibraryStatus, } | { "type": "bands", bands: Array<number>, } | { "type": "integrations", settings: IntegrationSettings, } | { "type": "pairing", state: PairingState, };
+export type Event = { "type": "state", state: PlayerState, } | { "type": "queue", items: Array<QueueItem>, } | { "type": "context", offset: number, items: Array<QueueItem>, } | { "type": "library", status: LibraryStatus, } | { "type": "bands", bands: Array<number>, } | { "type": "integrations", settings: IntegrationSettings, } | { "type": "access", scopes: Array<Scope>, } | { "type": "pairing", state: PairingState, };

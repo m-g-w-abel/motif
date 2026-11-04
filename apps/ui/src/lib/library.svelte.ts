@@ -1,5 +1,5 @@
 import { SvelteMap } from 'svelte/reactivity';
-import type { EngineClient } from './engine.svelte';
+import { withToken, type EngineClient } from './engine.svelte';
 import type { LibraryAlbum } from './protocol/LibraryAlbum';
 import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { QueryResult } from './protocol/QueryResult';
@@ -313,13 +313,13 @@ export class LibraryClient {
     const phone = globalThis.matchMedia?.('(max-width: 700px)').matches;
     const step = ART_STEPS.find((s) => wanted <= s) ?? (phone ? 1024 : null);
     const pixels = exact ? size : step;
-    return `${this.engine.httpBase}/art/${art}${pixels ? `?size=${pixels}` : ''}`;
+    return withToken(`${this.engine.httpBase}/art/${art}${pixels ? `?size=${pixels}` : ''}`);
   }
 
   /** All images of the track at `path` (cover, back, booklet…), its own art first. */
   async images(path: string): Promise<TrackImage[]> {
     if (!this.engine.httpBase) return [];
-    const response = await fetch(`${this.engine.httpBase}/images?track=${encodeURIComponent(path)}`);
+    const response = await fetch(withToken(`${this.engine.httpBase}/images?track=${encodeURIComponent(path)}`));
     return response.ok ? response.json() : [];
   }
 }

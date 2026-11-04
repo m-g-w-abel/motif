@@ -203,14 +203,22 @@ impl Pairing {
     /// Whether `who` may do what needs `scope`, now: a revoked device may
     /// do nothing.
     pub(crate) fn allows(&self, who: &Who, scope: Scope) -> bool {
+        self.scopes(who).contains(&scope)
+    }
+
+    /// What `who` may do now: everything for this machine, nothing for a
+    /// revoked device.
+    pub(crate) fn scopes(&self, who: &Who) -> Vec<Scope> {
         match who {
-            Who::Local => true,
+            Who::Local => Preset::Full.scopes(),
             Who::Device(id) => self
                 .lock()
                 .saved
                 .devices
                 .iter()
-                .any(|d| &d.device.id == id && d.device.scopes.contains(&scope)),
+                .find(|d| &d.device.id == id)
+                .map(|d| d.device.scopes.clone())
+                .unwrap_or_default(),
         }
     }
 
