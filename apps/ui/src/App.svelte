@@ -237,6 +237,7 @@
     const devSettings = params.get('dev-settings') as SettingsGroup;
     if (SETTINGS_GROUPS.includes(devSettings)) settingsView.open(devSettings);
     if (params.has('dev-pair')) settingsView.pairing = true;
+    if (params.has('dev-add-engine')) settingsView.addingEngine = true;
     // A second engine to switch to, e.g. ?dev-engine=127.0.0.1:7711&dev-token=…
     const devEngine = params.get('dev-engine');
     if (devEngine) engines.update((list) => addEngine(list, { id: devEngine, name: devEngine, addresses: [devEngine], token: params.get('dev-token') }));

@@ -6,6 +6,8 @@ export class SettingsView {
   group = $state<SettingsGroup | null>(null);
   /** The Pair a device dialog is open (it shows waiting devices itself, so the app's prompt hides). */
   pairing = $state(false);
+  /** The Add an engine dialog is open. */
+  addingEngine = $state(false);
 
   open(group: SettingsGroup = 'interface') {
     this.group = group;

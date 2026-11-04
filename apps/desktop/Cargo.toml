@@ -22,7 +22,11 @@ tauri-build = { workspace = true, features = [] }
 engine.workspace = true
 library.workspace = true
 integrations.workspace = true
+mdns-sd = { version = "=0.21.6", default-features = false }
 mimalloc.workspace = true
+protocol.workspace = true
+reqwest = { version = "=0.13.5", default-features = false, features = ["json"] }
+serde.workspace = true
 server.workspace = true
 tauri = { workspace = true, features = [] }
 tauri-plugin-dialog = "=2.8.2"
@@ -32,7 +36,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-protocol.workspace = true
 serde_json.workspace = true
 
 [lints]

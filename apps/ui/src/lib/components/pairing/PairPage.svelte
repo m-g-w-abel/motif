@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { guessName } from '../../deviceName';
   import { saveToken } from '../../engine.svelte';
   import type { Paired } from '../../protocol/Paired';
   import type { PairRequest } from '../../protocol/PairRequest';
@@ -17,16 +18,6 @@
   let name = $state(guessName());
   let waiting = $state<AbortController | null>(null);
   let error = $state<string | null>(null);
-
-  function guessName(): string {
-    const ua = navigator.userAgent;
-    if (/iPhone/.test(ua)) return 'iPhone';
-    if (/iPad/.test(ua)) return 'iPad';
-    if (/Android/.test(ua)) return 'Android phone';
-    if (/Mac/.test(ua)) return 'Mac';
-    if (/Windows/.test(ua)) return 'Windows PC';
-    return 'Browser';
-  }
 
   async function pair(e: SubmitEvent) {
     e.preventDefault();

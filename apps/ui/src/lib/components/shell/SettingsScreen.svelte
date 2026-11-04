@@ -3,6 +3,7 @@
   import { getApp } from '../../context';
   import type { Preset } from '../../protocol/Preset';
   import type { Scope } from '../../protocol/Scope';
+  import AddEngineDialog from '../pairing/AddEngineDialog.svelte';
   import PairDialog from '../pairing/PairDialog.svelte';
   import { addFolder, androidStorage } from '../../folders';
   import { installTheme } from '../../layout/install';
@@ -21,6 +22,7 @@
   import Slider from '../Slider.svelte';
   import { FONT_LIST } from '../../themeFile';
   import { canDecorate } from '../../windowChrome';
+  import { canDiscover } from '../../discover';
   import { engines } from '../../engine.svelte';
   import { LOCAL_ID, removeEngine, switchTo } from '../../engines';
   import WindowButtons from './WindowButtons.svelte';
@@ -209,6 +211,15 @@
             </div>
           {/each}
           <p class="status">Controls one engine at a time. Music playing on this device keeps playing while you control another.</p>
+        </div>
+      {/if}
+      {#if group === 'devices' && canDiscover}
+        <div class="row">
+          <span class="label">Other engines</span>
+          <p class="status">Control Motif running on another computer on this network.</p>
+          <div class="actions">
+            <button class="button" onclick={() => (settingsView.addingEngine = true)}>Add an engine…</button>
+          </div>
         </div>
       {/if}
       {#if !allowed}
@@ -737,6 +748,7 @@
   </div>
 </section>
 
+{#if settingsView.addingEngine}<AddEngineDialog onClose={() => (settingsView.addingEngine = false)} />{/if}
 {#if settingsView.pairing}<PairDialog onClose={() => (settingsView.pairing = false)} />{/if}
 
 {#snippet gainSlider(label: string, key: 'preamp_db' | 'untagged_db', db: number)}
