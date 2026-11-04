@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let config = server::Config {
         addr,
-        ui_dir: ui_dir.clone(),
+        ui: ui_dir.clone().map(server::Ui::Dir),
         library: Some(library),
         integrations,
         pairing: pairing.clone(),

@@ -4,7 +4,7 @@
 //! The window's UI then connects to it exactly as a remote client would; the
 //! only Tauri-specific call is [`engine_url`], which tells it where to connect.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use engine::Engine;
 use tauri::Manager;
@@ -69,7 +69,7 @@ pub fn run() {
                 .map(|hwnd| hwnd.0);
             #[cfg(not(windows))]
             let hwnd = None;
-            let url = tauri::async_runtime::block_on(start_engine(hwnd))?;
+            let url = tauri::async_runtime::block_on(start_engine(hwnd, built_in_ui(app)))?;
             tracing::info!(%url, "engine");
             app.manage(EngineUrl(url));
             Ok(())
@@ -108,11 +108,27 @@ fn keep_gpu_rendering_on_nvidia() {
     }
 }
 
+/// The UI bundled into the app, served to other devices (a phone opening a
+/// pairing link). `tauri dev` loads the UI from Vite and bundles none.
+fn built_in_ui(app: &tauri::App) -> Option<server::Ui> {
+    let assets = app.asset_resolver();
+    if assets.get("index.html".into()).is_none() {
+        tracing::warn!("no built-in UI (tauri dev?): pairing links open no page");
+        return None;
+    }
+    Some(server::Ui::Assets(Arc::new(move |path: &str| {
+        assets
+            .get(path.into())
+            .map(|asset| (asset.bytes, asset.mime_type))
+    })))
+}
+
 /// Starts the embedded engine and returns its address. If another engine
 /// (e.g. the headless one) already owns this machine's library, the window
 /// connects to that one instead.
 async fn start_engine(
     hwnd: Option<*mut std::ffi::c_void>,
+    ui: Option<server::Ui>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let library = match library::data_dir() {
         Some(dir) => match library::Claim::take(&dir)? {
@@ -156,7 +172,7 @@ async fn start_engine(
     let config = server::Config {
         // Loopback; pairing opens the LAN on the same port (server::bind).
         addr: SocketAddr::from(([127, 0, 0, 1], 0)),
-        ui_dir: None,
+        ui,
         library: library.as_ref().map(|(library, _)| library.clone()),
         integrations,
         pairing: match library.is_some().then(library::data_dir).flatten() {

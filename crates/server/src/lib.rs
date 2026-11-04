@@ -41,13 +41,27 @@ pub use resolver::LibraryResolver;
 
 pub struct Config {
     pub addr: SocketAddr,
-    /// Built web UI (`apps/ui/dist`). `None` serves only `/ws`.
-    pub ui_dir: Option<PathBuf>,
+    /// The web UI to serve, for browsers and for phones opening a pairing
+    /// link. `None` serves only `/ws`, artwork and `POST /pair`.
+    pub ui: Option<Ui>,
     pub library: Option<Library>,
     /// The host's integration settings, which clients read and replace.
     pub integrations: watch::Sender<IntegrationSettings>,
     pub pairing: Pairing,
 }
+
+/// Where the web UI comes from.
+pub enum Ui {
+    /// A built UI folder (`apps/ui/dist`).
+    Dir(PathBuf),
+    /// A lookup of path (no leading `/`) to file bytes and MIME type, for a
+    /// UI built into the app (the desktop's Tauri assets). It answers unknown
+    /// paths with `index.html` itself so client-side routes work.
+    Assets(AssetLookup),
+}
+
+/// Path to file bytes and MIME type; see [`Ui::Assets`].
+pub type AssetLookup = Arc<dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync>;
 
 #[derive(Clone)]
 struct AppState {
@@ -83,12 +97,12 @@ pub async fn bind(
 /// local. `config.addr` is unused.
 pub fn router(engine: Engine, config: Config) -> Router {
     // A phone opening a pairing QR code GETs /pair: the UI answers it.
-    let index = config
-        .ui_dir
-        .as_ref()
-        .map(|dir| ServeFile::new(dir.join("index.html")));
-    let pair_route = match index {
-        Some(index) => post(pair).get_service(index),
+    let pair_route = match &config.ui {
+        Some(Ui::Dir(dir)) => post(pair).get_service(ServeFile::new(dir.join("index.html"))),
+        Some(Ui::Assets(lookup)) => {
+            let lookup = lookup.clone();
+            post(pair).get(move |uri: Uri| asset(lookup, uri))
+        }
         None => post(pair),
     };
     let router = Router::new()
@@ -103,13 +117,22 @@ pub fn router(engine: Engine, config: Config) -> Router {
             pairing: config.pairing,
             art_slots: Arc::new(Semaphore::new(ART_SLOTS)),
         });
-    match config.ui_dir {
-        Some(dir) => {
+    match config.ui {
+        Some(Ui::Dir(dir)) => {
             // Unknown paths fall back to index.html so client-side routes work.
             let index = ServeFile::new(dir.join("index.html"));
             router.fallback_service(ServeDir::new(dir).fallback(index))
         }
+        Some(Ui::Assets(lookup)) => router.fallback(move |uri: Uri| asset(lookup, uri)),
         None => router,
+    }
+}
+
+/// A file of a built-in UI ([`Ui::Assets`]).
+async fn asset(lookup: AssetLookup, uri: Uri) -> Response {
+    match lookup(uri.path().trim_start_matches('/')) {
+        Some((bytes, mime)) => ([(header::CONTENT_TYPE, mime)], bytes).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -613,7 +636,7 @@ mod tests {
         let engine = Engine::spawn(engine::LocalFiles);
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
-            ui_dir: None,
+            ui: None,
             library: None,
             integrations: watch::channel(Default::default()).0,
             pairing: Pairing::in_memory(),
@@ -687,7 +710,7 @@ mod tests {
     async fn subscribing_to_bands_is_acknowledged() {
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
-            ui_dir: None,
+            ui: None,
             library: None,
             integrations: watch::channel(Default::default()).0,
             pairing: Pairing::in_memory(),
@@ -715,7 +738,7 @@ mod tests {
         let (integrations, _) = watch::channel(IntegrationSettings::default());
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
-            ui_dir: None,
+            ui: None,
             library: None,
             integrations: integrations.clone(),
             pairing: Pairing::in_memory(),
@@ -777,7 +800,7 @@ mod tests {
         pairing.set_lan(Some(Vec::new()));
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
-            ui_dir: None,
+            ui: None,
             library: None,
             integrations: watch::channel(Default::default()).0,
             pairing,
@@ -810,14 +833,23 @@ mod tests {
     }
 
     async fn http_status(addr: SocketAddr, path: &str) -> u16 {
-        let request = format!("GET {path} HTTP/1.1\r\nHost: motif\r\nConnection: close\r\n\r\n");
+        http(addr, "GET", path, "").await[9..12].parse().unwrap()
+    }
+
+    /// The whole response, headers and body.
+    async fn http(addr: SocketAddr, method: &str, path: &str, body: &str) -> String {
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: motif\r\nConnection: close\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
         tokio::task::spawn_blocking(move || {
             use std::io::{Read, Write};
             let mut stream = std::net::TcpStream::connect(addr).unwrap();
             stream.write_all(request.as_bytes()).unwrap();
             let mut response = String::new();
             stream.read_to_string(&mut response).unwrap();
-            response[9..12].parse().unwrap()
+            response
         })
         .await
         .unwrap()
@@ -841,7 +873,7 @@ mod tests {
         let pairing = Pairing::in_memory();
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
-            ui_dir: None,
+            ui: None,
             library: None,
             integrations: watch::channel(Default::default()).0,
             pairing: pairing.clone(),
@@ -907,7 +939,7 @@ mod tests {
         std::fs::write(dir.join("index.html"), "<p>Motif</p>").unwrap();
         let config = Config {
             addr: "127.0.0.1:0".parse().unwrap(),
-            ui_dir: Some(dir.clone()),
+            ui: Some(Ui::Dir(dir.clone())),
             library: None,
             integrations: watch::channel(Default::default()).0,
             pairing: Pairing::in_memory(),
@@ -918,6 +950,56 @@ mod tests {
         tokio::spawn(serve);
         assert_eq!(http_status(addr, "/pair?code=ABCD&id=00").await, 200);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_built_in_ui_answers_pairing_links() {
+        let files = |path: &str| -> Option<(Vec<u8>, String)> {
+            match path {
+                "assets/app.js" => Some((b"run()".to_vec(), "text/javascript".into())),
+                _ => Some((b"<p>Motif</p>".to_vec(), "text/html".into())),
+            }
+        };
+        let pairing = Pairing::in_memory();
+        let config = Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui: Some(Ui::Assets(Arc::new(files))),
+            library: None,
+            integrations: watch::channel(Default::default()).0,
+            pairing: pairing.clone(),
+        };
+        let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
+            .await
+            .unwrap();
+        tokio::spawn(serve);
+        for (path, mime, body) in [
+            ("/pair?code=ABCD&id=00", "text/html", "<p>Motif</p>"),
+            ("/assets/app.js", "text/javascript", "run()"),
+            ("/some/route", "text/html", "<p>Motif</p>"),
+        ] {
+            let response = http(addr, "GET", path, "").await.to_lowercase();
+            assert!(response.starts_with("http/1.1 200"), "{path}: {response}");
+            assert!(
+                response.contains(&format!("content-type: {mime}")),
+                "{path}"
+            );
+            assert!(response.ends_with(&body.to_lowercase()), "{path}");
+        }
+        pairing
+            .command(protocol::PairingCommand::SetAutoApprove {
+                preset: Some(protocol::Preset::Full),
+            })
+            .unwrap();
+        let code = pairing.start().code;
+        let response = http(
+            addr,
+            "POST",
+            "/pair",
+            &format!(r#"{{"code":"{code}","name":"Phone"}}"#),
+        )
+        .await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(response.contains(r#""token":"#));
     }
 
     #[tokio::test]
