@@ -991,6 +991,8 @@ mod tests {
             })
             .unwrap();
         let code = pairing.start().code;
+        // The code opens the LAN: don't connect while the listener moves.
+        lan_open(&pairing, true).await;
         let response = http(
             addr,
             "POST",
