@@ -1,4 +1,5 @@
-import type { EngineClient } from './engine.svelte';
+import { engines, type EngineClient } from './engine.svelte';
+import { LOCAL_ID } from './engines';
 
 /** What `MainActivity.kt` adds to the Android app's WebView. */
 interface AndroidStorage {
@@ -10,7 +11,10 @@ interface AndroidStorage {
   pickFolder(): void;
 }
 
-export const androidStorage = (globalThis as { MotifAndroid?: AndroidStorage }).MotifAndroid;
+const android = (globalThis as { MotifAndroid?: AndroidStorage }).MotifAndroid;
+
+/** The Android app's storage bridge, while this phone's own engine is in control (a remote engine's folders are typed, as in a browser). */
+export const androidStorage = () => (engines.current.id === LOCAL_ID ? android : undefined);
 
 
 /**
@@ -46,20 +50,21 @@ function pickAndroidFolder(android: AndroidStorage): Promise<string | null> {
  */
 export async function addFolder(engine: EngineClient): Promise<void> {
   let path: string | null;
-  if (androidStorage) {
-    if (!androidStorage.hasAllFilesAccess()) {
+  const storage = androidStorage();
+  if (storage) {
+    if (!storage.hasAllFilesAccess()) {
       engine.error = 'Motif needs All files access to read your music. Allow it, then add the folder again.';
-      androidStorage.openAllFilesSettings();
+      storage.openAllFilesSettings();
       return;
     }
-    const uri = await pickAndroidFolder(androidStorage);
+    const uri = await pickAndroidFolder(storage);
     if (!uri) return;
     path = treeUriToPath(uri);
     if (!path) {
       engine.error = 'Pick a folder on the phone’s storage or an SD card; Motif can’t read that location by path.';
       return;
     }
-  } else if ('__TAURI_INTERNALS__' in window) {
+  } else if ('__TAURI_INTERNALS__' in window && !android) {
     const { open } = await import('@tauri-apps/plugin-dialog');
     const picked = await open({ directory: true, multiple: false, title: 'Add a music folder' });
     path = typeof picked === 'string' ? picked : null;

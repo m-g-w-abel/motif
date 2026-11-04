@@ -62,7 +62,8 @@
   }
 
   /** Android only: rechecked when the app comes back from the system toggle. */
-  let allFilesAccess = $state(androidStorage?.hasAllFilesAccess() ?? true);
+  const storage = androidStorage();
+  let allFilesAccess = $state(storage?.hasAllFilesAccess() ?? true);
 
   // Devices come and go; refresh the list whenever Playback shows.
   $effect(() => {
@@ -168,7 +169,7 @@
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && settingsView.close()} />
-<svelte:document onvisibilitychange={() => (allFilesAccess = androidStorage?.hasAllFilesAccess() ?? true)} />
+<svelte:document onvisibilitychange={() => (allFilesAccess = storage?.hasAllFilesAccess() ?? true)} />
 
 <!--
   To add a setting: put a `<div class="row">` with a `<span class="label">` and
@@ -368,8 +369,7 @@
           </div>
         </div>
       {:else if group === 'library'}
-        {#if !allFilesAccess && androidStorage}
-          {@const android = androidStorage}
+        {#if !allFilesAccess && storage}
           <div class="row">
             <span class="label">All files access</span>
             <p class="status">
@@ -377,7 +377,7 @@
               allows that with All files access.
             </p>
             <div class="actions">
-              <button class="button primary" onclick={() => android.openAllFilesSettings()}>Allow All files access…</button>
+              <button class="button primary" onclick={() => storage.openAllFilesSettings()}>Allow All files access…</button>
             </div>
           </div>
         {/if}
