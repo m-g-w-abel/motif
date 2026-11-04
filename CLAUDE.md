@@ -17,6 +17,11 @@ directory (`MOTIF_DATA_DIR` overrides it, handy for tests).
 - **Commit whenever a coherent, checked piece of work is done** (all the
   commands below pass), with a clear message. Don't push without being asked.
 - **The main branch is `master`**, not `main`.
+- **Keep `README.md` current.** It's a showcase for people we're showing the
+  project to (what works, notable engineering, how to build). When a change
+  adds or finishes a user-visible feature or a phase, or moves a number it
+  quotes, update the README in the same PR. Mention planned streaming sources
+  only by their general kind, not by service name.
 - **The engine is playback-only.** Never put UI concerns (layouts, themes, view
   state, settings) into `crates/engine`, `crates/protocol` or `crates/server`.
   If something non-playback seems to belong there, explain why and ask first.

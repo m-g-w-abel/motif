@@ -17,7 +17,10 @@ const LIBRE_API: &str = "https://libre.fm/2.0/";
 const LIBRE_AUTH: &str = "https://libre.fm/api/auth/";
 /// Motif's API account, in the source so every build (self-built, distro
 /// packages) can scrobble. `MOTIF_LASTFM_API_KEY` and
-/// `MOTIF_LASTFM_SHARED_SECRET` override it.
+/// `MOTIF_LASTFM_SHARED_SECRET` override it. Public on purpose: a desktop app
+/// can't hide a shared secret from its users (any build could be dumped), and
+/// it only identifies the app, never a user's account. If it's abused, Last.fm
+/// revokes it and we issue a new one.
 const API_KEY: &str = "d581da46dbeab20728d42f58f836a7f4";
 const SHARED_SECRET: &str = "503db78ee2c8b7ab16f54cc50a2eacd9";
 /// How often to ask whether the user has allowed Motif yet.
