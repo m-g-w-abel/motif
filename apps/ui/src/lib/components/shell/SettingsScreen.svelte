@@ -1101,6 +1101,7 @@
       position: fixed;
       inset: 0;
       z-index: 30;
+      padding: var(--inset-top) var(--inset-right) var(--inset-bottom) var(--inset-left);
     }
 
     .layout {

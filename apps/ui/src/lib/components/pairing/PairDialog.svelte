@@ -92,6 +92,7 @@
     position: fixed;
     inset: 0;
     z-index: 55;
+    padding: var(--inset-top) var(--inset-right) var(--inset-bottom) var(--inset-left);
     display: grid;
     place-items: center;
     background: color-mix(in srgb, var(--bg) 70%, transparent);
@@ -100,7 +101,7 @@
   .sheet {
     box-sizing: border-box;
     width: min(400px, calc(100vw - 32px));
-    max-height: calc(100dvh - 32px);
+    max-height: calc(100dvh - 32px - var(--inset-top) - var(--inset-bottom));
     overflow-y: auto;
     display: flex;
     flex-direction: column;
