@@ -49,6 +49,8 @@
     renamed: 'renamed',
     preset_changed: 'access changed',
   };
+  /** The device whose Remove waits for a second click. */
+  let removing = $state<string | null>(null);
   const engineTime = (ms: number) =>
     new Date(ms - engine.clockOffset).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
   function rename(device: string, current: string, input: HTMLInputElement) {
@@ -602,7 +604,14 @@
                   {#if !preset}<option value="" disabled>Custom</option>{/if}
                   {#each PRESETS as [value, label] (value)}<option {value}>{label}</option>{/each}
                 </select>
-                <button class="button" onclick={() => engine.pair({ type: 'revoke', device: device.id })}>Remove</button>
+                <button class="button" onclick={() => (removing = device.id)}>Remove</button>
+                {#if removing === device.id}
+                  <p class="status confirm">
+                    Remove {device.name}? It will need a new code to connect again.
+                    <button class="button" onclick={() => engine.pair({ type: 'revoke', device: device.id })}>Remove</button>
+                    <button class="button" onclick={() => (removing = null)}>Cancel</button>
+                  </p>
+                {/if}
                 <p class="status seen">
                   {#if connections.length}
                     <span class="online">● Connected now</span>
@@ -829,6 +838,15 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
+  }
+
+  .confirm {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--danger);
   }
 
   .online {
