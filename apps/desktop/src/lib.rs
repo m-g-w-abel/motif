@@ -69,7 +69,14 @@ pub fn run() {
                 .map(|hwnd| hwnd.0);
             #[cfg(not(windows))]
             let hwnd = None;
-            let url = tauri::async_runtime::block_on(start_engine(hwnd, built_in_ui(app)))?;
+            // Android has no user data directory; the library lives with the app.
+            let data_dir = if cfg!(target_os = "android") {
+                app.path().app_data_dir().ok()
+            } else {
+                library::data_dir()
+            };
+            let url =
+                tauri::async_runtime::block_on(start_engine(hwnd, built_in_ui(app), data_dir))?;
             tracing::info!(%url, "engine");
             app.manage(EngineUrl(url));
             Ok(())
@@ -129,22 +136,23 @@ fn built_in_ui(app: &tauri::App) -> Option<server::Ui> {
 async fn start_engine(
     hwnd: Option<*mut std::ffi::c_void>,
     ui: Option<server::Ui>,
+    data_dir: Option<std::path::PathBuf>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let library = match library::data_dir() {
-        Some(dir) => match library::Claim::take(&dir)? {
-            Ok(claim) => Some((library::Library::open(&dir)?, claim)),
+    let library = match &data_dir {
+        Some(dir) => match library::Claim::take(dir)? {
+            Ok(claim) => Some((library::Library::open(dir)?, claim)),
             Err(Some(owner)) => return Ok(owner),
             Err(None) => {
                 return Err(format!("{} is locked by another engine", dir.display()).into());
             }
         },
-        // shortcut: no data directory (Android) means no library, give Android its app data dir in phase 5.
         None => None,
     };
+    let data_dir = data_dir.filter(|_| library.is_some());
     let engine = Engine::spawn(server::LibraryResolver {
         library: library.as_ref().map(|(library, _)| library.clone()),
     });
-    if let Some(dir) = library.is_some().then(library::data_dir).flatten() {
+    if let Some(dir) = &data_dir {
         tauri::async_runtime::spawn(server::settings::keep(
             engine.clone(),
             dir.join("engine.json"),
@@ -155,10 +163,10 @@ async fn start_engine(
         library.as_ref().map(|(library, _)| library.clone()),
         hwnd,
     );
-    let integrations = match library.is_some().then(library::data_dir).flatten() {
+    let integrations = match &data_dir {
         Some(dir) => {
-            let settings = integrations::settings::keep(&dir);
-            integrations::scrobble::start(engine.clone(), settings.clone(), &dir);
+            let settings = integrations::settings::keep(dir);
+            integrations::scrobble::start(engine.clone(), settings.clone(), dir);
             settings
         }
         // No data directory: the settings last until the app quits, and no scrobbling.
@@ -169,19 +177,15 @@ async fn start_engine(
         library.as_ref().map(|(library, _)| library.clone()),
         integrations.subscribe(),
     );
-    let port_file = library
-        .is_some()
-        .then(library::data_dir)
-        .flatten()
-        .map(|dir| dir.join("desktop-port"));
+    let port_file = data_dir.as_ref().map(|dir| dir.join("desktop-port"));
     let config = server::Config {
         // Loopback; pairing opens the LAN on the same port (server::bind).
         addr: SocketAddr::from(([127, 0, 0, 1], stable_port(port_file.as_deref()))),
         ui,
         library: library.as_ref().map(|(library, _)| library.clone()),
         integrations,
-        pairing: match library.is_some().then(library::data_dir).flatten() {
-            Some(dir) => server::Pairing::open(&dir)?,
+        pairing: match &data_dir {
+            Some(dir) => server::Pairing::open(dir)?,
             None => server::Pairing::in_memory(),
         },
     };

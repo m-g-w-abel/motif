@@ -4,7 +4,7 @@
   import type { Preset } from '../../protocol/Preset';
   import type { Scope } from '../../protocol/Scope';
   import PairDialog from '../pairing/PairDialog.svelte';
-  import { addFolder } from '../../folders';
+  import { addFolder, androidStorage } from '../../folders';
   import { installTheme } from '../../layout/install';
   import { openUrl } from '../../openUrl';
   import { moveItem } from '../../reorder';
@@ -60,6 +60,9 @@
     if (!name) input.value = current;
     else if (name !== current) engine.pair({ type: 'rename', device, name });
   }
+
+  /** Android only: rechecked when the app comes back from the system toggle. */
+  let allFilesAccess = $state(androidStorage?.hasAllFilesAccess() ?? true);
 
   // Devices come and go; refresh the list whenever Playback shows.
   $effect(() => {
@@ -165,6 +168,7 @@
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && settingsView.close()} />
+<svelte:document onvisibilitychange={() => (allFilesAccess = androidStorage?.hasAllFilesAccess() ?? true)} />
 
 <!--
   To add a setting: put a `<div class="row">` with a `<span class="label">` and
@@ -364,6 +368,19 @@
           </div>
         </div>
       {:else if group === 'library'}
+        {#if !allFilesAccess && androidStorage}
+          {@const android = androidStorage}
+          <div class="row">
+            <span class="label">All files access</span>
+            <p class="status">
+              Motif plays music straight from the folders you add, with their cover images and lyrics files. Android only
+              allows that with All files access.
+            </p>
+            <div class="actions">
+              <button class="button primary" onclick={() => android.openAllFilesSettings()}>Allow All files access…</button>
+            </div>
+          </div>
+        {/if}
         {#if library.status}
           {@const status = library.status}
           <div class="row">
