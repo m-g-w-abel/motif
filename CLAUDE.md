@@ -92,9 +92,11 @@ for now, so these local runs are the only check. If no Rust changed (no
 In a new git worktree, run `scripts/seed-build.sh` before the first build: it
 copies the main checkout's compiled dependencies (never share one build folder
 between checkouts; cargo would mix their workspace crates).
-Don't wait on a build with `pgrep -f "<command>"` loops: the pattern is in the
-loop's own command line, so it matches itself, never ends, and blocks archiving
-the session. Run the build in the background and wait for its notification.
+Never use `pkill -f` or `pgrep -f`: the pattern is in the shell's own command
+line, so it matches that shell, killing it or never ending a wait loop (which
+blocks archiving the session). A hook in `.claude/settings.json` refuses them.
+Kill by PID (from `ss -ltnp` or `/proc/<pid>/cmdline`); to wait on a build,
+run it in the background and wait for its notification.
 
 ## Testing the UI
 
