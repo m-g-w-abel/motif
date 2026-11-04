@@ -36,20 +36,29 @@ export class PlayerSheet {
   /**
    * Tracks a vertical drag. `direction` is the way that opens the sheet:
    * -1 when dragging up opens it (from the bar), 1 when dragging down closes
-   * it (from the sheet). A tap without movement calls `onTap`.
+   * it (from the sheet). A tap without movement calls `onTap`. A touch that
+   * moves sideways first is a swipe (see `gestures.ts`), not a drag.
    */
   drag(e: PointerEvent, from: 'bar' | 'sheet', onTap?: () => void) {
     if (e.button !== 0) return;
+    const startX = e.clientX;
     const startY = e.clientY;
+    const touch = e.pointerType !== 'mouse';
     const startProgress = this.progress;
     const height = window.innerHeight;
     let lastY = startY;
     let lastT = performance.now();
     let velocity = 0;
     let moved = false;
+    let swiped = false;
 
     const move = (ev: PointerEvent) => {
       const dy = ev.clientY - startY;
+      const dx = ev.clientX - startX;
+      if (!moved && touch && Math.abs(dx) >= 8 && Math.abs(dx) > Math.abs(dy)) {
+        swiped = true;
+        return end();
+      }
       if (!moved && Math.abs(dy) < 8) return;
       if (!moved) this.measure?.();
       moved = true;
@@ -66,7 +75,7 @@ export class PlayerSheet {
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
       if (!moved) {
-        onTap?.();
+        if (!swiped) onTap?.();
         return;
       }
       // A flick decides by direction; a slow drag by how far it got.

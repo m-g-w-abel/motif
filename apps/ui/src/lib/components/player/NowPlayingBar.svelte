@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getApp } from '../../context';
   import { formatTime } from '../../format';
+  import { gesture } from '../../gestures';
   import { BAR_ART_SIZE } from '../../library.svelte';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
@@ -15,12 +16,14 @@
 
   /**
    * Dragging up anywhere on the bar pulls the now-playing sheet out of it;
-   * tapping the track expands it. Controls keep their own clicks.
+   * tapping the track expands it, and a sideways swipe (touch) skips.
+   * Controls keep their own clicks.
    */
   function onPointerDown(e: PointerEvent) {
     const target = e.target as HTMLElement;
     if (target.closest('button:not(.identity), [role="slider"]')) return;
     const onTrack = !!target.closest('.identity');
+    gesture(e, 'bar', { next: () => engine.run({ type: 'next' }), previous: () => engine.run({ type: 'previous' }) });
     sheet.drag(e, 'bar', onTrack ? () => sheet.expand() : undefined);
   }
 </script>
