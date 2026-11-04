@@ -35,7 +35,7 @@ use protocol::{
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
 
-pub use lyrics::LRCLIB;
+pub use lyrics::{LRCLIB, tls_roots};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -228,6 +228,38 @@ pub fn sidecars(path: &Path) -> Vec<Vec<LyricsLine>> {
         .collect()
 }
 
+/// `err` and what caused it: reqwest's own message alone ("error sending
+/// request") doesn't say whether DNS, TLS or the connection failed.
+fn with_causes(err: &dyn std::error::Error) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        text = format!("{text}: {cause}");
+        source = cause.source();
+    }
+    text
+}
+
+/// The certificate roots HTTPS clients trust: Mozilla's on Android, where
+/// reqwest's platform verifier fails every request until the app initialises
+/// it over JNI; `None` (the system's) elsewhere.
+// shortcut: Android ignores user-installed CAs; use rustls-platform-verifier's Android init (its Kotlin AAR in Gradle) if that matters.
+pub fn tls_roots() -> Option<Vec<reqwest::Certificate>> {
+    #[cfg(target_os = "android")]
+    {
+        Some(
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .iter()
+                .filter_map(|cert| reqwest::Certificate::from_der(cert).ok())
+                .collect(),
+        )
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        None
+    }
+}
+
 /// LRCLIB's synced (LRC) and plain lyrics, as cached.
 pub type Fetched = (Option<String>, Option<String>);
 
@@ -245,11 +277,15 @@ pub fn fetch(
         .get_or_init(|| {
             // Fails harmlessly once a provider is installed.
             let _ = rustls::crypto::ring::default_provider().install_default();
-            reqwest::blocking::Client::builder()
+            let builder = reqwest::blocking::Client::builder()
                 .user_agent(concat!("Motif/", env!("CARGO_PKG_VERSION")))
-                .timeout(Duration::from_secs(15))
-                .build()
-                .map_err(|e| e.to_string())
+                .timeout(Duration::from_secs(15));
+            match tls_roots() {
+                Some(roots) => builder.tls_certs_only(roots),
+                None => builder,
+            }
+            .build()
+            .map_err(|e| e.to_string())
         })
         .as_ref()?;
     let mut params = vec![
@@ -264,7 +300,7 @@ pub fn fetch(
     }
     let url = reqwest::Url::parse_with_params(&format!("{base}/api/get"), &params)
         .map_err(|e| e.to_string())?;
-    let response = client.get(url).send().map_err(|e| e.to_string())?;
+    let response = client.get(url).send().map_err(|e| with_causes(&e))?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }

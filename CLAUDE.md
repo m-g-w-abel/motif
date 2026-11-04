@@ -80,7 +80,10 @@ adb install -r apps/desktop/gen/android/app/build/outputs/apk/universal/debug/ap
 On first start, Settings → Library → Allow All files access opens the system
 toggle; "Add folder" then uses the system folder picker (phone storage or SD
 card). `adb logcat --pid=$(adb shell pidof io.github.mgwabel.motif)` shows the
-app's log (crashes, WebView console; the engine's own tracing isn't sent there yet).
+app's log (the engine's tracing is tagged `RustStdoutStderr`). In a debug build,
+`adb forward tcp:9333 localabstract:webview_devtools_remote_$(adb shell pidof io.github.mgwabel.motif)`
+opens the WebView to `chrome://inspect` and the DevTools protocol; a locked or
+hidden phone pauses it.
 
 `node scripts/soak.mjs [mode] [seconds]` soak-tests engine memory (see the
 script). Run all of these before saying work is done; GitHub CI is disabled

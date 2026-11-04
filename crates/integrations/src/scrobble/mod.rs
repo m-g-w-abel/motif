@@ -144,10 +144,14 @@ pub fn start(engine: Engine, settings: watch::Sender<IntegrationSettings>, dir: 
 fn client() -> reqwest::Result<reqwest::Client> {
     // Fails harmlessly once a provider is installed.
     let _ = rustls::crypto::ring::default_provider().install_default();
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .user_agent(concat!("Motif/", env!("CARGO_PKG_VERSION")))
-        .timeout(Duration::from_secs(30))
-        .build()
+        .timeout(Duration::from_secs(30));
+    match library::tls_roots() {
+        Some(roots) => builder.tls_certs_only(roots),
+        None => builder,
+    }
+    .build()
 }
 
 /// Turns engine states into now playing and scrobble actions.
