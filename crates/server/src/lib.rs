@@ -277,9 +277,9 @@ async fn art(
     Path(key): Path<String>,
     Query(params): Query<ArtParams>,
 ) -> Response {
-    let Some(who) = authorise(&state, peer, &headers, params.token.as_deref()) else {
+    if authorise(&state, peer, &headers, params.token.as_deref()).is_none() {
         return StatusCode::UNAUTHORIZED.into_response();
-    };
+    }
     let origin = headers.get(header::ORIGIN).cloned();
     let Some(library) = state.library else {
         return StatusCode::NOT_FOUND.into_response();
@@ -308,10 +308,9 @@ async fn art(
             ];
             let mut response = (headers, bytes).into_response();
             // The desktop window's page has another origin than this server,
-            // and it reads the cover's pixels for art colours.
-            if let Some(origin) = origin.filter(|o| {
-                matches!(who, Who::Device(_)) || origin_allowed(Some(o.to_str().unwrap_or("")))
-            }) {
+            // and it reads the cover's pixels for art colours. `authorise`
+            // has already refused local pages from other origins.
+            if let Some(origin) = origin {
                 response
                     .headers_mut()
                     .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);

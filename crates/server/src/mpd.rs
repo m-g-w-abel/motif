@@ -36,7 +36,7 @@
 //! Anything else answers `ACK [5@0]` (unknown command); `random 1`,
 //! `consume 1`, `shuffle` and stored playlists aren't supported.
 
-use std::{collections::HashMap, net::SocketAddr, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use engine::Engine;
 use library::Library;
@@ -47,7 +47,7 @@ use protocol::{
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
-    sync::mpsc,
+    sync::{Semaphore, mpsc},
     task::JoinSet,
 };
 
@@ -59,6 +59,9 @@ const MAX_LINE: u64 = 64 * 1024;
 /// Longer command lists close the connection, as MPD's
 /// `max_command_list_size` does.
 const MAX_LIST: usize = 2 * 1024 * 1024;
+/// Connections served at once; more are closed, as MPD's
+/// `max_connections` does.
+const MAX_CLIENTS: usize = 100;
 
 /// (command, needs control). Also the answer to `commands`.
 const COMMANDS: &[(&str, bool)] = &[
@@ -137,6 +140,7 @@ pub(crate) async fn serve(engine: Engine, library: Option<Library>, pairing: Pai
     let mut serving = None;
     let mut listener: Option<TcpListener> = None;
     let mut clients = JoinSet::new();
+    let slots = Arc::new(Semaphore::new(MAX_CLIENTS));
     let mut _advert = None;
     loop {
         let wanted = pairing.mpd_wanted();
@@ -162,9 +166,17 @@ pub(crate) async fn serve(engine: Engine, library: Option<Library>, pairing: Pai
         tokio::select! {
             Some(accepted) = async { Some(listener.as_ref()?.accept().await) } => match accepted {
                 Ok((stream, peer)) => {
+                    // Dropping the stream turns the extra connection away.
+                    let Ok(slot) = slots.clone().try_acquire_owned() else {
+                        tracing::debug!(%peer, "too many MPD clients");
+                        continue;
+                    };
                     let password = serving.as_ref().and_then(|(_, p)| p.clone());
                     let client = Client::new(engine.clone(), library.clone(), password);
-                    clients.spawn(client.run(stream, peer));
+                    clients.spawn(async move {
+                        client.run(stream, peer).await;
+                        drop(slot);
+                    });
                 }
                 Err(err) => {
                     tracing::debug!(%err, "MPD accept failed");
@@ -1684,6 +1696,41 @@ mod tests {
             read_list(&mut lines).await.unwrap().unwrap_err(),
             Ack(ACK_SYSTEM, "command list is too long".into())
         );
+    }
+
+    #[tokio::test]
+    async fn connections_are_capped() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let pairing = Pairing::in_memory();
+        pairing.set_mpd_port(port);
+        pairing.enable_mpd(true);
+        let mut listening = pairing.subscribe();
+        tokio::spawn(serve(
+            Engine::spawn(engine::LocalFiles),
+            None,
+            pairing.clone(),
+        ));
+        listening.wait_for(|s| s.mpd.listening).await.unwrap();
+        let greeting = |mut stream: TcpStream| async move {
+            let mut buf = vec![0; GREETING.len()];
+            stream.read_exact(&mut buf).await.map(|_| stream)
+        };
+        let mut open = Vec::new();
+        for _ in 0..MAX_CLIENTS {
+            let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            open.push(greeting(stream).await.unwrap());
+        }
+        let extra = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        assert!(greeting(extra).await.is_err(), "turned away");
+        drop(open.pop());
+        // The freed slot is taken back once its task notices the close.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let again = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        assert!(greeting(again).await.is_ok());
     }
 
     #[tokio::test]

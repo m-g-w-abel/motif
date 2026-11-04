@@ -27,22 +27,27 @@ export const COMMAND_SCOPES: Record<Command['type'], Scope> = {
   set_replay_gain: 'settings',
 };
 
-/** The scope a library query needs; `null` for reads, which every client may do. */
-export function queryScope(query: LibraryQuery): Scope | null {
-  switch (query.type) {
-    case 'play':
-    case 'play_album':
-      return 'playback';
-    case 'add_root':
-    case 'remove_root':
-    case 'rescan':
-    case 'set_watching':
-    case 'save_lyrics':
-      return 'library';
-    default:
-      return null;
-  }
-}
+/** The scope each library query needs; `null` for reads, which every client may do. */
+const QUERY_SCOPES: Record<LibraryQuery['type'], Scope | null> = {
+  status: null,
+  tracks: null,
+  groups: null,
+  albums: null,
+  album_position: null,
+  lookup: null,
+  album_tracks: null,
+  waveform: null,
+  lyrics: null,
+  play: 'playback',
+  play_album: 'playback',
+  add_root: 'library',
+  remove_root: 'library',
+  rescan: 'library',
+  set_watching: 'library',
+  save_lyrics: 'library',
+};
+
+export const queryScope = (query: LibraryQuery): Scope | null => QUERY_SCOPES[query.type];
 
 /** The presets offered when approving a device, with their names. */
 export const PRESETS: [Preset, string][] = [

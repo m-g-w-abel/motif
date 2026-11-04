@@ -281,18 +281,17 @@ impl Pairing {
             Who::Device(device) => Some(device.clone()),
         };
         let close = Arc::new(Notify::new());
+        // Last seen is saved on disconnecting only: connected devices show as
+        // connected, and every save waits for the disk under this lock.
         inner.connections.push((
             Connection {
                 id,
-                device: device.clone(),
+                device,
                 address: peer.to_string(),
                 connected_at_ms: now,
             },
             close.clone(),
         ));
-        if let Some(device) = device {
-            self.seen(&mut inner, &device, now);
-        }
         self.publish(&inner);
         (id, close)
     }
