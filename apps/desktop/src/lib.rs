@@ -4,6 +4,9 @@
 //! The window's UI then connects to it exactly as a remote client would; the
 //! only Tauri-specific call is [`engine_url`], which tells it where to connect.
 
+#[cfg(target_os = "android")]
+mod media;
+
 use std::{net::SocketAddr, sync::Arc};
 
 use engine::Engine;
@@ -57,26 +60,41 @@ pub fn run() {
         )
         .init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(media::init());
+    builder
         .setup(|app| {
-            // The OS media controls need the window on Windows.
-            #[cfg(windows)]
-            let hwnd = app
-                .get_webview_window("main")
-                .and_then(|window| window.hwnd().ok())
-                .map(|hwnd| hwnd.0);
-            #[cfg(not(windows))]
-            let hwnd = None;
+            #[cfg(target_os = "android")]
+            let media_controls = {
+                let kotlin = app.state::<media::Kotlin<tauri::Wry>>();
+                move |engine, library| media::start(&kotlin, engine, library)
+            };
+            #[cfg(not(target_os = "android"))]
+            let media_controls = {
+                // The OS media controls need the window on Windows.
+                #[cfg(windows)]
+                let hwnd = app
+                    .get_webview_window("main")
+                    .and_then(|window| window.hwnd().ok())
+                    .map(|hwnd| hwnd.0);
+                #[cfg(not(windows))]
+                let hwnd = None;
+                move |engine, library| integrations::media_controls::start(engine, library, hwnd)
+            };
             // Android has no user data directory; the library lives with the app.
             let data_dir = if cfg!(target_os = "android") {
                 app.path().app_data_dir().ok()
             } else {
                 library::data_dir()
             };
-            let url =
-                tauri::async_runtime::block_on(start_engine(hwnd, built_in_ui(app), data_dir))?;
+            let url = tauri::async_runtime::block_on(start_engine(
+                media_controls,
+                built_in_ui(app),
+                data_dir,
+            ))?;
             tracing::info!(%url, "engine");
             app.manage(EngineUrl(url));
             Ok(())
@@ -132,9 +150,10 @@ fn built_in_ui(app: &tauri::App) -> Option<server::Ui> {
 
 /// Starts the embedded engine and returns its address. If another engine
 /// (e.g. the headless one) already owns this machine's library, the window
-/// connects to that one instead.
+/// connects to that one instead. `media_controls` mirrors the engine in the
+/// OS media controls.
 async fn start_engine(
-    hwnd: Option<*mut std::ffi::c_void>,
+    media_controls: impl FnOnce(Engine, Option<library::Library>),
     ui: Option<server::Ui>,
     data_dir: Option<std::path::PathBuf>,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -158,10 +177,9 @@ async fn start_engine(
             dir.join("engine.json"),
         ));
     }
-    integrations::media_controls::start(
+    media_controls(
         engine.clone(),
         library.as_ref().map(|(library, _)| library.clone()),
-        hwnd,
     );
     let integrations = match &data_dir {
         Some(dir) => {

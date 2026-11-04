@@ -328,6 +328,28 @@ the navigation bar and the toolbar under the status bar. Not tested yet:
 real (not forced) overnight Doze, Sony's STAMINA mode, other vendors'
 battery killers, and release builds.
 
+### Background playback (#119, 2026-11-04)
+
+Without a foreground service, Android freezes Motif about 3 s after it
+goes to the background on battery, even mid-track (Sony, Android 15,
+`dumpsys battery unplug`; on USB power it was never frozen, which hides
+the problem). `PlaybackService.kt` now runs as a `mediaPlayback` foreground
+service while the engine plays or is paused, with a media session for the
+notification, lock screen and headset. `MediaPlugin.kt` is a Tauri plugin
+registered from the shell (`apps/desktop/src/media.rs`): Rust follows the
+engine with `integrations::media_controls::follow` and calls `show`; the
+buttons come back over a Rust `Channel` as plain `protocol::Command` JSON.
+Kotlin-to-Rust calls for later Android work can use the same pattern.
+
+- The notification needs no `POST_NOTIFICATIONS` permission: media-session
+  notifications are exempt, so none is asked.
+- Android 12+ refuses to start a foreground service from the background.
+  Playback started from the UI is fine, and the service stays up while
+  paused, so the media buttons never need to start it. Playback started by
+  a remote client while Motif is in the background plays without the
+  service (so it can be frozen) until Motif is next opened. Fine while the
+  phone is not a pairable host.
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game

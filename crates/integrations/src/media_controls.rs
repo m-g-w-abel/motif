@@ -15,15 +15,24 @@ use souvlaki::{
 /// How far the seek buttons jump.
 const SEEK_STEP: Duration = Duration::from_secs(10);
 
-enum Update {
+/// What the media controls show. Android's shell gets these as JSON
+/// (`MediaPlugin.kt`); desktop maps them onto souvlaki.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Update {
     Metadata {
         title: Option<String>,
         artist: Option<String>,
         album: Option<String>,
-        duration: Option<Duration>,
+        duration_ms: Option<u64>,
+        /// A `file://` URL of the artwork.
         cover: Option<String>,
     },
-    Playback(MediaPlayback),
+    /// Sent on every engine state change; the position is current as of sending.
+    Playback {
+        status: PlaybackStatus,
+        position_ms: u64,
+    },
 }
 
 /// Starts mirroring `engine` in the OS media controls, on a thread of its
@@ -116,26 +125,27 @@ fn controls_thread(
                 title,
                 artist,
                 album,
-                duration,
+                duration_ms,
                 cover,
             } => controls.set_metadata(MediaMetadata {
                 title: title.as_deref(),
                 artist: artist.as_deref(),
                 album: album.as_deref(),
-                duration,
+                duration: duration_ms.map(Duration::from_millis),
                 cover_url: cover.as_deref(),
             }),
-            Update::Playback(playback) => {
-                if let MediaPlayback::Playing {
-                    progress: Some(MediaPosition(at)),
-                }
-                | MediaPlayback::Paused {
-                    progress: Some(MediaPosition(at)),
-                } = &playback
-                {
-                    *position.lock().unwrap_or_else(|e| e.into_inner()) = *at;
-                }
-                controls.set_playback(playback)
+            Update::Playback {
+                status,
+                position_ms,
+            } => {
+                let at = Duration::from_millis(position_ms);
+                *position.lock().unwrap_or_else(|e| e.into_inner()) = at;
+                let progress = Some(MediaPosition(at));
+                controls.set_playback(match status {
+                    PlaybackStatus::Playing => MediaPlayback::Playing { progress },
+                    PlaybackStatus::Paused => MediaPlayback::Paused { progress },
+                    PlaybackStatus::Stopped => MediaPlayback::Stopped,
+                })
             }
         };
         if let Err(err) = result {
@@ -144,8 +154,9 @@ fn controls_thread(
     }
 }
 
-/// Sends the controls thread what to show whenever the engine changes.
-async fn follow(engine: Engine, library: Option<Library>, updates: mpsc::Sender<Update>) {
+/// Sends `updates` what to show whenever the engine changes, until the
+/// receiver is dropped.
+pub async fn follow(engine: Engine, library: Option<Library>, updates: mpsc::Sender<Update>) {
     let mut states = engine.subscribe();
     let mut shown: Option<u64> = None;
     loop {
@@ -162,7 +173,7 @@ async fn follow(engine: Engine, library: Option<Library>, updates: mpsc::Sender<
                 title: track.title,
                 artist: track.artist,
                 album: track.album,
-                duration: track.duration_ms.map(Duration::from_millis),
+                duration_ms: track.duration_ms,
                 cover,
             };
             if updates.send(update).is_err() {
@@ -171,18 +182,15 @@ async fn follow(engine: Engine, library: Option<Library>, updates: mpsc::Sender<
         }
         // Where playback is now, counting time since the snapshot was taken.
         let elapsed = engine::wall_clock_ms().saturating_sub(state.sampled_at_ms);
-        let at = |playing: bool| {
-            let ms = state.position_ms + if playing { elapsed } else { 0 };
-            Some(MediaPosition(Duration::from_millis(ms)))
+        let playback = Update::Playback {
+            status: state.status,
+            position_ms: state.position_ms
+                + match state.status {
+                    PlaybackStatus::Playing => elapsed,
+                    _ => 0,
+                },
         };
-        let playback = match state.status {
-            PlaybackStatus::Playing => MediaPlayback::Playing { progress: at(true) },
-            PlaybackStatus::Paused => MediaPlayback::Paused {
-                progress: at(false),
-            },
-            PlaybackStatus::Stopped => MediaPlayback::Stopped,
-        };
-        if updates.send(Update::Playback(playback)).is_err() || states.changed().await.is_err() {
+        if updates.send(playback).is_err() || states.changed().await.is_err() {
             return;
         }
     }
@@ -232,5 +240,29 @@ mod tests {
             "file:///home/a%20b/%C3%BC.jpg"
         );
         assert_eq!(super::file_url("C:\\Art\\x.jpg"), "file:///C:/Art/x.jpg");
+    }
+
+    /// Android's `MediaPlugin.kt` reads these field names.
+    #[test]
+    fn updates_serialize_for_android() {
+        let playback = super::Update::Playback {
+            status: protocol::PlaybackStatus::Paused,
+            position_ms: 1500,
+        };
+        assert_eq!(
+            serde_json::to_value(playback).unwrap(),
+            serde_json::json!({"type": "playback", "status": "paused", "position_ms": 1500})
+        );
+        let metadata = super::Update::Metadata {
+            title: Some("T".into()),
+            artist: None,
+            album: Some("A".into()),
+            duration_ms: Some(2000),
+            cover: None,
+        };
+        assert_eq!(
+            serde_json::to_value(metadata).unwrap(),
+            serde_json::json!({"type": "metadata", "title": "T", "artist": null, "album": "A", "duration_ms": 2000, "cover": null})
+        );
     }
 }

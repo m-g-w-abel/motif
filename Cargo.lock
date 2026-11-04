@@ -1138,6 +1138,8 @@ dependencies = [
  "integrations",
  "library",
  "mimalloc",
+ "protocol",
+ "serde_json",
  "server",
  "tauri",
  "tauri-build",
