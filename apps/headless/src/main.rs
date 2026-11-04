@@ -10,6 +10,10 @@
 //!   same port, advertised as `_motif._tcp` over mDNS) when a pairing code is
 //!   live or a device is paired; `off` closes it without unpairing anyone.
 //!   Starting a pairing turns it on.
+//! - `MOTIF_MPD`: `on` or `off` sets the MPD server switch, kept across
+//!   restarts (off by default). It serves MPD clients on this machine, or the
+//!   LAN while the LAN switch is on; see the `server` crate's `mpd.rs`.
+//! - `MOTIF_MPD_PORT`: the MPD port, default 6600.
 //! - `MOTIF_PAIR`: `1` starts pairing a new device. The QR code, code and URL
 //!   are printed here, also when a client starts a pairing.
 
@@ -77,6 +81,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok("off") => pairing.allow_lan(false),
         Ok(other) => return Err(format!("MOTIF_LAN is on or off, not {other:?}").into()),
         Err(_) => {}
+    }
+    match std::env::var("MOTIF_MPD").as_deref() {
+        Ok("on") => pairing.enable_mpd(true),
+        Ok("off") => pairing.enable_mpd(false),
+        Ok(other) => return Err(format!("MOTIF_MPD is on or off, not {other:?}").into()),
+        Err(_) => {}
+    }
+    if let Ok(port) = std::env::var("MOTIF_MPD_PORT") {
+        pairing.set_mpd_port(port.parse()?);
     }
     let mut states = pairing.subscribe();
     tokio::spawn(async move {

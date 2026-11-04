@@ -14,7 +14,7 @@ use std::{
 use axum::http::StatusCode;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use protocol::{
-    Connection, LanState, PairRequest, Paired, PairedDevice, PairingAction, PairingCode,
+    Connection, LanState, MpdState, PairRequest, Paired, PairedDevice, PairingAction, PairingCode,
     PairingCommand, PairingLogEntry, PairingState, PendingDevice, Preset, Scope,
 };
 use serde::{Deserialize, Serialize};
@@ -56,6 +56,15 @@ struct Saved {
     /// The LAN switch, [`LanState::allowed`].
     #[serde(default)]
     lan: bool,
+    #[serde(default)]
+    mpd: SavedMpd,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct SavedMpd {
+    enabled: bool,
+    /// Plain text: MPD clients send it so anyway.
+    password: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -74,6 +83,8 @@ struct Inner {
     next_id: u32,
     /// Where the server listens on the LAN; `None` while it doesn't.
     lan: Option<Vec<SocketAddr>>,
+    mpd_port: u16,
+    mpd_listening: bool,
 }
 
 impl Pairing {
@@ -124,6 +135,8 @@ impl Pairing {
                 connections: Vec::new(),
                 next_id: 1,
                 lan: None,
+                mpd_port: 6600,
+                mpd_listening: false,
             }),
             state: watch::Sender::new(PairingState::default()),
         }));
@@ -167,6 +180,41 @@ impl Pairing {
         let wanted = inner.saved.lan
             && (expires.is_some() || !inner.pending.is_empty() || !inner.saved.devices.is_empty());
         (wanted, expires)
+    }
+
+    /// Turns the MPD server on or off ([`MpdState::enabled`]).
+    pub fn enable_mpd(&self, enabled: bool) {
+        self.command(PairingCommand::SetMpd { enabled })
+            .expect("SetMpd can't fail");
+    }
+
+    /// The MPD server's port (6600 unless set); not saved.
+    pub fn set_mpd_port(&self, port: u16) {
+        let mut inner = self.lock();
+        inner.mpd_port = port;
+        self.publish(&inner);
+    }
+
+    /// Where the MPD server should listen and its password; `None` while
+    /// it is off.
+    pub(crate) fn mpd_wanted(&self) -> Option<(SocketAddr, Option<String>)> {
+        let inner = self.lock();
+        let mpd = &inner.saved.mpd;
+        let ip: std::net::IpAddr = if inner.saved.lan {
+            std::net::Ipv4Addr::UNSPECIFIED.into()
+        } else {
+            std::net::Ipv4Addr::LOCALHOST.into()
+        };
+        mpd.enabled
+            .then(|| (SocketAddr::new(ip, inner.mpd_port), mpd.password.clone()))
+    }
+
+    pub(crate) fn set_mpd_listening(&self, listening: bool) {
+        let mut inner = self.lock();
+        if inner.mpd_listening != listening {
+            inner.mpd_listening = listening;
+            self.publish(&inner);
+        }
     }
 
     pub(crate) fn lan_open(&self) -> bool {
@@ -375,6 +423,10 @@ impl Pairing {
                 log(inner, now, PairingAction::Revoked, stored.device.name);
             }
             PairingCommand::SetLan { allowed } => inner.saved.lan = allowed,
+            PairingCommand::SetMpd { enabled } => inner.saved.mpd.enabled = enabled,
+            PairingCommand::SetMpdPassword { password } => {
+                inner.saved.mpd.password = Some(password).filter(|p| !p.is_empty());
+            }
             PairingCommand::Disconnect { connection } => {
                 let (_, close) = inner
                     .connections
@@ -467,6 +519,12 @@ impl Pairing {
                         .collect(),
                     None => Vec::new(),
                 },
+            },
+            mpd: MpdState {
+                enabled: inner.saved.mpd.enabled,
+                password_set: inner.saved.mpd.password.is_some(),
+                port: inner.mpd_port,
+                listening: inner.mpd_listening,
             },
         });
     }

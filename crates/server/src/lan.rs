@@ -82,7 +82,7 @@ impl LanListener {
         let addresses = open.then(|| lan_addresses(self.local.port()));
         if open != self.advert.is_some() {
             self.advert = open
-                .then(|| Advert::start(&self.pairing, self.local.port()))
+                .then(|| Advert::start("_motif._tcp", &self.pairing, self.local.port()))
                 .flatten();
         }
         let stale = {
@@ -141,18 +141,19 @@ impl axum::serve::Listener for LanListener {
     }
 }
 
-/// `_motif._tcp` with the engine key in TXT, withdrawn when dropped.
-struct Advert {
+/// A service (`_motif._tcp`, `_mpd._tcp`) with the engine key in TXT,
+/// withdrawn when dropped.
+pub(crate) struct Advert {
     daemon: ServiceDaemon,
     name: String,
 }
 
 impl Advert {
-    fn start(pairing: &Pairing, port: u16) -> Option<Self> {
+    pub(crate) fn start(service: &str, pairing: &Pairing, port: u16) -> Option<Self> {
         let key = pairing.engine_key();
         let short = &key[..8];
         let service = ServiceInfo::new(
-            "_motif._tcp.local.",
+            &format!("{service}.local."),
             &format!("Motif {short}"),
             &format!("motif-{short}.local."),
             (),
