@@ -12,8 +12,6 @@ interface AndroidStorage {
 
 export const androidStorage = (globalThis as { MotifAndroid?: AndroidStorage }).MotifAndroid;
 
-export const ALL_FILES_ACCESS_MISSING =
-  'Motif needs All files access to read your music. Allow it in Settings → Library, then add the folder again.';
 
 /**
  * The plain path of a folder picked in Android's folder picker, or null when
@@ -50,7 +48,8 @@ export async function addFolder(engine: EngineClient): Promise<void> {
   let path: string | null;
   if (androidStorage) {
     if (!androidStorage.hasAllFilesAccess()) {
-      engine.error = ALL_FILES_ACCESS_MISSING;
+      engine.error = 'Motif needs All files access to read your music. Allow it, then add the folder again.';
+      androidStorage.openAllFilesSettings();
       return;
     }
     const uri = await pickAndroidFolder(androidStorage);
