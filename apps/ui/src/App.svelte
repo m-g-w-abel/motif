@@ -8,6 +8,7 @@
   import { EngineClient, engines, PlaybackPosition } from './lib/engine.svelte';
   import { addEngine, LOCAL_ID, switchTo } from './lib/engines';
   import { accentFromPixels, artPalette } from './lib/artAccent';
+  import { setBarIconsDark, trackSystemBars } from './lib/folders';
   import { LibraryClient } from './lib/library.svelte';
   import { installLayoutFiles } from './lib/layout/install';
   import { LayoutStore } from './lib/layout/store.svelte';
@@ -69,6 +70,7 @@
     const root = document.documentElement;
     for (const [token, value] of Object.entries({ ...theme.tokens, ...art?.tokens })) root.style.setProperty(`--${token}`, value);
     root.style.colorScheme = art?.scheme ?? theme.scheme;
+    setBarIconsDark(root.style.colorScheme === 'light');
     // The user's own font beats the theme's, which beats the app's.
     for (const [prop, themed] of [['--font-sans', theme.fonts?.sans], ['--font-mono', theme.fonts?.mono]] as const) {
       const value = (prop === '--font-sans' && FONT_LIST.test(font) && font) || themed;
@@ -86,6 +88,8 @@
   });
 
   $effect(() => void applyDecorations(settings.current.ownDecorations));
+
+  trackSystemBars();
 
   // Waveforms for the playing track and the next two, so the seek bar has them when they play (#16).
   $effect(() => {
@@ -332,7 +336,7 @@
     display: flex;
     height: calc(100vh / var(--scale, 1));
     height: calc(100dvh / var(--scale, 1));
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+    padding: var(--inset-top) var(--inset-right) var(--inset-bottom) var(--inset-left);
   }
 
   .body {
@@ -379,7 +383,7 @@
   .toasts {
     position: fixed;
     left: 50%;
-    bottom: calc(var(--bar-height) + 16px);
+    bottom: calc(var(--bar-height) + var(--inset-bottom) + 16px);
     z-index: 60;
     display: flex;
     flex-direction: column;

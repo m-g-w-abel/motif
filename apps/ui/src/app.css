@@ -40,6 +40,13 @@
   --row-height: 26px;
   --bar-height: 64px;
   --nav-width: 190px;
+
+  /* System bar insets: the WebView's own where it reports them; on Android
+     App.svelte overwrites them with the ones MainActivity.kt measures. */
+  --inset-top: env(safe-area-inset-top, 0px);
+  --inset-right: env(safe-area-inset-right, 0px);
+  --inset-bottom: env(safe-area-inset-bottom, 0px);
+  --inset-left: env(safe-area-inset-left, 0px);
 }
 
 [data-density='comfortable'] {

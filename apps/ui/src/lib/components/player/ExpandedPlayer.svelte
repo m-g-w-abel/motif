@@ -457,8 +457,8 @@
     .sheet {
       position: fixed;
       z-index: 45;
-      padding-top: env(safe-area-inset-top);
-      padding-bottom: env(safe-area-inset-bottom);
+      padding-top: var(--inset-top);
+      padding-bottom: var(--inset-bottom);
     }
 
     .body {

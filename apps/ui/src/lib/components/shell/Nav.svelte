@@ -251,7 +251,7 @@
       left: 0;
       z-index: 46;
       width: min(280px, 85vw);
-      padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+      padding: var(--inset-top) 0 var(--inset-bottom);
       box-shadow: var(--shadow);
       transform: translateX(-100%);
       transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);

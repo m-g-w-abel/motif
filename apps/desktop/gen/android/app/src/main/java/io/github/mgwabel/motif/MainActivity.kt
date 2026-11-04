@@ -11,15 +11,30 @@ import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // The WebView's env(safe-area-inset-*) can't be relied on, so the UI reads these (apps/ui/src/lib/folders.ts).
+    ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { view, insets ->
+      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+      val d = resources.displayMetrics.density
+      this.insets = "${bars.top / d} ${bars.right / d} ${bars.bottom / d} ${bars.left / d}"
+      webView?.evaluateJavascript("window.motifInsets?.()", null)
+      ViewCompat.onApplyWindowInsets(view, insets)
+    }
   }
 
+  private var insets = "0 0 0 0"
+  private var webView: WebView? = null
+
   override fun onWebViewCreate(webView: WebView) {
+    this.webView = webView
     webView.addJavascriptInterface(Storage(webView), "MotifAndroid")
   }
 
@@ -38,6 +53,17 @@ class MainActivity : TauriActivity() {
         )
       } else {
         requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)) {}
+      }
+    }
+
+    @JavascriptInterface
+    fun insets(): String = this@MainActivity.insets
+
+    @JavascriptInterface
+    fun setBarIconsDark(dark: Boolean) = runOnUiThread {
+      WindowCompat.getInsetsController(window, window.decorView).apply {
+        isAppearanceLightStatusBars = dark
+        isAppearanceLightNavigationBars = dark
       }
     }
 
