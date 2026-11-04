@@ -18,7 +18,8 @@
     const box = button.getBoundingClientRect();
     const others = engines.list.engines.filter((other) => other.id !== engines.list.current);
     const items = others.map((other) => ({ label: `Switch to ${other.name}`, run: () => engines.update((list) => switchTo(list, other.id)) }));
-    contextMenu.show(items, box.left, box.bottom, button);
+    // At the bottom of the screen: opens upwards from the button's top edge.
+    contextMenu.show(items, box.left, box.top - 4, button);
   }
 
   const sources: { id: Source; label: string; icon: IconName; count: () => number }[] = [
