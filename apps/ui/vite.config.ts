@@ -22,6 +22,8 @@ export default defineConfig(({ command }) => ({
       '/ws': { target: 'ws://127.0.0.1:7700', ws: true },
       '/art': 'http://127.0.0.1:7700',
       '/images': 'http://127.0.0.1:7700',
+      // Redeeming a code; the page at GET /pair is the UI's own.
+      '/pair': { target: 'http://127.0.0.1:7700', bypass: (req) => (req.method === 'GET' ? req.url : undefined) },
     },
   },
   build: {

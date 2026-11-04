@@ -429,6 +429,8 @@ async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr)
     let event_tx = out_tx.clone();
     let publisher = tokio::spawn(async move {
         let _no_library = no_library;
+        // What this connection may do, as last sent.
+        let mut scopes: Option<Vec<Scope>> = None;
         loop {
             // Biased towards the entries: the engine updates them before the
             // state that refers to them.
@@ -444,7 +446,15 @@ async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr)
                 Ok(()) = integrations.changed() => Event::Integrations { settings: integrations.borrow_and_update().clone() },
                 Ok(()) = pairing.changed() => {
                     let state = pairing.borrow_and_update().clone();
-                    if !pairing_handle.allows(&publisher_who, Scope::Pairing) {
+                    let now = pairing_handle.scopes(&publisher_who);
+                    if scopes.as_ref() != Some(&now) {
+                        scopes = Some(now.clone());
+                        let event = Event::Access { scopes: now.clone() };
+                        if event_tx.send(ServerMessage::Event { event }).await.is_err() {
+                            break;
+                        }
+                    }
+                    if !now.contains(&Scope::Pairing) {
                         continue;
                     }
                     Event::Pairing { state }
@@ -665,6 +675,7 @@ mod tests {
                         Event::Queue { .. }
                         | Event::Context { .. }
                         | Event::Integrations { .. }
+                        | Event::Access { .. }
                         | Event::Pairing { .. },
                 } => {}
                 other => panic!("unexpected {other:?}"),
@@ -965,6 +976,33 @@ mod tests {
             }
         }
         assert_eq!(pairing.subscribe().borrow().code, None);
+    }
+
+    #[tokio::test]
+    async fn devices_hear_what_they_may_do() {
+        let pairing = Pairing::in_memory();
+        let addr = lan_server(pairing.clone()).await;
+        let token = token(&pairing, protocol::Preset::ViewOnly).await;
+        let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
+            .await
+            .unwrap();
+        let mut access = async || loop {
+            if let ServerMessage::Event {
+                event: Event::Access { scopes },
+            } = next_message(&mut ws).await
+            {
+                break scopes;
+            }
+        };
+        assert_eq!(access().await, vec![]);
+        let device = pairing.subscribe().borrow().devices[0].id.clone();
+        pairing
+            .command(protocol::PairingCommand::SetPreset {
+                device,
+                preset: protocol::Preset::ControlPlayback,
+            })
+            .unwrap();
+        assert_eq!(access().await, protocol::Preset::ControlPlayback.scopes());
     }
 
     #[tokio::test]

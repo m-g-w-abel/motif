@@ -412,7 +412,7 @@
     {#if count === 0 && albums?.loaded !== false}
       <div class="empty">
         <p>{library.status?.roots.length ? 'No albums found.' : 'No music folders yet.'}</p>
-        {#if !library.status?.roots.length}
+        {#if !library.status?.roots.length && engine.can('library')}
           <button class="button primary" onclick={() => addFolder(engine)}>Add folder…</button>
         {/if}
       </div>

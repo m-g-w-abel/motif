@@ -500,7 +500,7 @@
     <div class="empty">
       <p>{data.empty.message}</p>
       {#if data.empty.hint}<p class="hint">{data.empty.hint}</p>{/if}
-      {#if data.empty.addFolder}
+      {#if data.empty.addFolder && engine.can('library')}
         <button class="button primary" onclick={() => addFolder(engine)}>Add folder…</button>
       {/if}
     </div>

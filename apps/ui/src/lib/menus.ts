@@ -51,6 +51,7 @@ export async function queueTracks(
   next = false,
   label?: string,
 ) {
+  if (!engine.can('queue')) return;
   try {
     const list = await tracks;
     if (!list.length) return;
@@ -62,7 +63,13 @@ export async function queueTracks(
   }
 }
 
+/** Play, if this device may: `play` runs it. */
+function playItem(engine: EngineClient, play: () => void): MenuItem[] {
+  return engine.can('playback') ? [{ label: 'Play', run: play }] : [];
+}
+
 function queueItems(engine: EngineClient, tracks: TrackRef[]): MenuItem[] {
+  if (!engine.can('queue')) return [];
   return [
     { label: 'Queue next', run: () => queueTracks(engine, tracks, true) },
     { label: 'Add to queue', run: () => queueTracks(engine, tracks) },
@@ -75,9 +82,9 @@ export function trackMenu(engine: EngineClient, data: TrackListData, view: ViewS
   if (!track) return [];
   if (inSelection(view.browse.picked, data.key(i))) {
     const tracks = ordered(view.browse.picked);
-    return [{ label: 'Play', run: () => playTracks(engine, tracks) }, ...queueItems(engine, tracks)];
+    return [...playItem(engine, () => playTracks(engine, tracks)), ...queueItems(engine, tracks)];
   }
-  const items: MenuItem[] = [{ label: 'Play', run: () => data.play(i) }, ...queueItems(engine, [track])];
+  const items: MenuItem[] = [...playItem(engine, () => data.play(i)), ...queueItems(engine, [track])];
   if (track.album) {
     const artist = data.details?.(i)?.album_artist ?? track.artist ?? '';
     items.push({ label: 'Go to album', run: () => (view.browse.focusAlbum = albumKey({ ...track, artist })) });
@@ -89,8 +96,8 @@ export function trackMenu(engine: EngineClient, data: TrackListData, view: ViewS
 /** The menu of an entry under Up next: one in the queue (`queued`) or coming from the context. */
 export function queueMenu(engine: EngineClient, item: QueueItem, queued: boolean): MenuItem[] {
   const { track } = item;
-  const items: MenuItem[] = [{ label: 'Play', run: () => engine.run({ type: 'play_item', item_id: item.id }) }];
-  if (queued) items.push({ label: 'Remove from queue', run: () => engine.run({ type: 'remove_item', item_id: item.id }) });
+  const items = playItem(engine, () => engine.run({ type: 'play_item', item_id: item.id }));
+  if (queued && engine.can('queue')) items.push({ label: 'Remove from queue', run: () => engine.run({ type: 'remove_item', item_id: item.id }) });
   else items.push(...queueItems(engine, [track]));
   if (track.source === 'local' && inDesktop()) items.push({ label: 'Show in folder', run: () => showInFolder(track.id) });
   return [...items, ...copyItems(track)];
@@ -108,11 +115,13 @@ export function albumMenu(
   count = 1,
 ): MenuItem[] {
   const label = count > 1 ? `${count} albums` : album.title || 'Unknown album';
-  const items: MenuItem[] = [
-    { label: 'Play', run: play },
-    { label: 'Queue next', run: () => queueTracks(engine, tracks(), true, label) },
-    { label: 'Add to queue', run: () => queueTracks(engine, tracks(), false, label) },
-  ];
+  const items: MenuItem[] = [...playItem(engine, play)];
+  if (engine.can('queue')) {
+    items.push(
+      { label: 'Queue next', run: () => queueTracks(engine, tracks(), true, label) },
+      { label: 'Add to queue', run: () => queueTracks(engine, tracks(), false, label) },
+    );
+  }
   if (count > 1) return items;
   if (album.title) items.push({ label: 'Copy album title', run: () => copy(album.title) });
   if (album.title && album.artist) items.push({ label: 'Copy artist – album', run: () => copy(`${album.artist} – ${album.title}`) });

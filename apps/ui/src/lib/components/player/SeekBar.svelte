@@ -27,7 +27,7 @@
     max={duration || 1}
     label="Seek"
     valueText="{formatTime(shown)} of {formatTime(duration)}"
-    disabled={!duration}
+    disabled={!duration || !engine.can('playback')}
     variant={variant === 'strip' ? 'strip' : 'normal'}
     running={engine.player?.status === 'playing'}
     {levels}

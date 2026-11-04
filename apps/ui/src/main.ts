@@ -1,5 +1,8 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
+import PairPage from './lib/components/pairing/PairPage.svelte';
 import './app.css';
 
-export default mount(App, { target: document.getElementById('app')! });
+// A new device opens the host's pairing QR code at /pair.
+const target = document.getElementById('app')!;
+export default location.pathname === '/pair' ? mount(PairPage, { target }) : mount(App, { target });

@@ -29,6 +29,7 @@
       label="Volume"
       valueText="{Math.round(volume * 100)}%"
       variant="muted"
+      disabled={!engine.can('playback')}
       oninput={setVolume}
     />
   </div>
