@@ -1141,6 +1141,7 @@ dependencies = [
  "mimalloc",
  "protocol",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "server",

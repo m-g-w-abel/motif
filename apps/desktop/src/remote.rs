@@ -79,12 +79,15 @@ pub async fn discover_engines() -> Result<Vec<Found>, String> {
 /// host's approval (up to 5 minutes). Errors are texts for the user.
 #[tauri::command]
 pub async fn pair_engine(address: String, code: String, name: String) -> Result<Paired, String> {
+    // The other crates build reqwest without a TLS provider; it panics without one even for http.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| e.to_string())?;
     let request = PairRequest {
-        code: code.trim().to_owned(),
+        // Shown as "ABCD EFGH"; the host compares the bare code.
+        code: code.split_whitespace().collect(),
         name: name.trim().to_owned(),
         public_key: None,
     };
@@ -142,5 +145,63 @@ mod tests {
     fn services_without_a_key_or_an_address_are_skipped() {
         assert_eq!(found(&resolved("192.168.1.20", None)), None);
         assert_eq!(found(&resolved("169.254.3.3", Some("k"))), None);
+    }
+
+    /// A real engine on this machine's LAN: found over mDNS, paired by code.
+    #[tokio::test]
+    async fn finds_an_engine_and_pairs_with_its_code() {
+        // Allows every device by itself, as a host does that has chosen so.
+        let dir = std::env::temp_dir().join(format!("motif-remote-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("pairing.json"),
+            r#"{"auto_approve":"view_only","devices":[],"log":[],"lan":true}"#,
+        )
+        .unwrap();
+        let pairing = server::Pairing::open(&dir).unwrap();
+        let key = pairing.engine_key().to_owned();
+        let config = server::Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui: None,
+            library: None,
+            integrations: tokio::sync::watch::channel(Default::default()).0,
+            pairing: pairing.clone(),
+        };
+        let (_, serve) = server::bind(engine::Engine::spawn(engine::LocalFiles), config)
+            .await
+            .unwrap();
+        tokio::spawn(serve);
+        // A live code opens the LAN and starts the advert.
+        let code = pairing.start().code;
+        let mut engine = None;
+        for _ in 0..4 {
+            let seen = tauri::async_runtime::spawn_blocking(browse)
+                .await
+                .unwrap()
+                .unwrap();
+            engine = seen.into_iter().find(|e| e.id == key);
+            if engine.is_some() {
+                break;
+            }
+        }
+        let engine = engine.expect("the engine shows up in the browse");
+        let address = engine.addresses[0].clone();
+
+        let wrong = pair_engine(address.clone(), "WRONG".into(), "Phone".into()).await;
+        assert_eq!(wrong.unwrap_err(), "unknown code");
+        // The code has a space in the middle on screen.
+        let spaced = format!("{} {}", &code[..4], &code[4..]);
+        let paired = pair_engine(address.clone(), spaced, "Phone".into())
+            .await
+            .unwrap();
+        assert_eq!(paired.engine_key, key);
+        // A retried request finds the code used up and adds no second device.
+        let again = pair_engine(address, code, "Phone".into()).await;
+        assert_eq!(again.unwrap_err(), "unknown code");
+        assert_eq!(pairing.subscribe().borrow().devices.len(), 1);
+
+        let gone = pair_engine("127.0.0.1:9".into(), "X".into(), "Phone".into()).await;
+        assert_eq!(gone.unwrap_err(), "can't reach 127.0.0.1:9");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

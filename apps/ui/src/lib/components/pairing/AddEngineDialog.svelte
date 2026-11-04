@@ -51,7 +51,7 @@
     let reason = '';
     for (const address of chosen.addresses) {
       try {
-        const paired = await pairEngine(address, code.replace(/\s/g, ''), name);
+        const paired = await pairEngine(address, code, name);
         if (cancelled) return;
         if (paired.engine_key !== chosen.id) throw new Error("this isn't the engine that was picked");
         const engine = { id: chosen.id, name: chosen.name, addresses: chosen.addresses, token: paired.token };

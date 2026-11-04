@@ -213,7 +213,7 @@
           <p class="status">Controls one engine at a time. Music playing on this device keeps playing while you control another.</p>
         </div>
       {/if}
-      {#if group === 'devices' && canDiscover}
+      {#if group === 'devices' && canDiscover()}
         <div class="row">
           <span class="label">Other engines</span>
           <p class="status">Control Motif running on another computer on this network.</p>
