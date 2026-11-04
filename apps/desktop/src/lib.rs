@@ -169,9 +169,14 @@ async fn start_engine(
         library.as_ref().map(|(library, _)| library.clone()),
         integrations.subscribe(),
     );
+    let port_file = library
+        .is_some()
+        .then(library::data_dir)
+        .flatten()
+        .map(|dir| dir.join("desktop-port"));
     let config = server::Config {
         // Loopback; pairing opens the LAN on the same port (server::bind).
-        addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+        addr: SocketAddr::from(([127, 0, 0, 1], stable_port(port_file.as_deref()))),
         ui,
         library: library.as_ref().map(|(library, _)| library.clone()),
         integrations,
@@ -181,6 +186,9 @@ async fn start_engine(
         },
     };
     let (addr, serve) = server::bind(engine, config).await?;
+    if let Some(file) = &port_file {
+        let _ = std::fs::write(file, addr.port().to_string());
+    }
     let url = format!("ws://{addr}/ws");
     if let Some((_, mut claim)) = library {
         claim.publish(&url)?;
@@ -193,4 +201,48 @@ async fn start_engine(
         }
     });
     Ok(url)
+}
+
+const DEFAULT_PORT: u16 = 7700;
+
+/// The loopback port to listen on: the one used last time (so paired browsers,
+/// stored per origin, keep working), else 7700, else 0 (any free port).
+fn stable_port(file: Option<&std::path::Path>) -> u16 {
+    let last = file
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|s| s.trim().parse::<u16>().ok());
+    let port = first_free(last.into_iter().chain([DEFAULT_PORT]));
+    if let Some(last) = last.filter(|last| *last != port) {
+        tracing::warn!(
+            last,
+            "last port is taken, using a new one; paired browsers must pair again"
+        );
+    }
+    port
+}
+
+/// The first candidate that can be bound on loopback, or 0 if none can.
+// shortcut: probe then rebind, so another process could take it in between; bind then fails, fine for a desktop app.
+fn first_free(candidates: impl IntoIterator<Item = u16>) -> u16 {
+    candidates
+        .into_iter()
+        .find(|port| std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], *port))).is_ok())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skips_taken_ports() {
+        let taken = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+        let busy = taken.local_addr().unwrap().port();
+        let free = {
+            let l = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+            l.local_addr().unwrap().port()
+        };
+        assert_eq!(first_free([busy, free]), free);
+        assert_eq!(first_free([busy]), 0);
+    }
 }
