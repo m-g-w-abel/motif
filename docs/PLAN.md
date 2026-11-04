@@ -233,6 +233,26 @@ be saved back to the file or a sidecar.
 - **MPD** is off by default, loopback only unless LAN is also allowed; a
   password gives control, without one it is read-only.
 
+## Phase 5 decisions (2026-11-04)
+
+Tickets #117–#133 (milestone "Phase 5").
+- **Storage:** All files access (`MANAGE_EXTERNAL_STORAGE`) with plain paths,
+  so the scanner and sidecars work unchanged. Fine off the Play Store.
+- **One engine at a time:** the app shows "This phone" or one paired engine
+  and switches between them; local playback keeps going in the background.
+  Engines and their tokens are client settings.
+- **Adding an engine:** mDNS list + code, in-app QR scan, and pairing links
+  that open the app.
+- **The phone is not a pairable host in phase 5,** but "This phone" is an
+  engine entry like any other so it can become one later.
+- **Remote playback controls** (notification, lock screen) are opt-in, off
+  by default. Volume keys control the remote engine in remote mode.
+- **Gestures** (touch only, also on touchscreen desktops): swipe the bar or
+  artwork to skip, long-press a row to queue, vertical drag on the artwork
+  for volume. All remappable.
+- **Deferred:** signed release builds, F-Droid metadata and battery-killer
+  testing on release builds.
+
 ## Phase 0 checklist
 
 - [x] Licence, workspace, repository layout
