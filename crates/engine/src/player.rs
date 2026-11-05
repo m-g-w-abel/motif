@@ -50,6 +50,21 @@ pub struct Playback {
     position_ms: u64,
 }
 
+impl Playback {
+    /// Moves the saved position to `position_ms` if `item` is still the
+    /// current entry, so the position can be saved more often than the rest.
+    pub fn seek(&mut self, item: u64, position_ms: u64) {
+        let current = match &self.current {
+            Some(Current::Context(i)) => self.context.get(*i),
+            Some(Current::Item(item)) => Some(&**item),
+            None => None,
+        };
+        if current.is_some_and(|current| current.id == item) {
+            self.position_ms = position_ms;
+        }
+    }
+}
+
 /// Context, queue and transport state. Time is passed in and track resolution
 /// goes through a [`Resolver`], so behaviour is deterministic under test.
 ///
@@ -1246,6 +1261,22 @@ mod tests {
             "the current one is gone: the next"
         );
         assert_eq!(r.status(), PlaybackStatus::Paused);
+    }
+
+    #[test]
+    fn a_later_position_applies_only_to_the_same_entry() {
+        let t0 = Instant::now();
+        let mut p = Player::default();
+        set_context(&mut p, &[("a", 60_000), ("b", 60_000)], Some(0), t0);
+        let a = id(&p, "a");
+        let mut saved = p.playback(t0);
+        saved.seek(a + 1, 9_000);
+        let mut r = Player::default();
+        r.restore(saved.clone(), &FakeResolver);
+        assert_eq!(r.position(t0), ms(0), "another entry's position is ignored");
+        saved.seek(a, 7_000);
+        r.restore(saved, &FakeResolver);
+        assert_eq!(r.position(t0), ms(7_000));
     }
 
     #[test]
