@@ -6,6 +6,8 @@
 
 #[cfg(target_os = "android")]
 mod media;
+#[cfg(any(test, target_os = "android"))]
+mod volume;
 
 use std::{net::SocketAddr, sync::Arc};
 

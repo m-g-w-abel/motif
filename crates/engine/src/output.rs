@@ -128,7 +128,12 @@ impl Output {
             *sent = gain;
         }
         audio.set_playing(player.status() == PlaybackStatus::Playing);
-        audio.set_volume(player.volume());
+        // On Android the volume is the system media volume (`apps/desktop/src/media.rs`), so no gain of our own.
+        audio.set_volume(if cfg!(target_os = "android") {
+            1.0
+        } else {
+            player.volume()
+        });
 
         let upcoming = player
             .upcoming()

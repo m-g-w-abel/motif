@@ -51,7 +51,11 @@ pub async fn keep(engine: Engine, file: PathBuf) {
             Command::SetReplayGain {
                 settings: saved.replay_gain,
             },
-        ] {
+        ]
+        .into_iter()
+        // Android's volume is the system media volume; a stale saved one mustn't mute it.
+        .filter(|c| !(cfg!(target_os = "android") && matches!(c, Command::SetVolume { .. })))
+        {
             if let Err(err) = engine.send(command).await {
                 tracing::warn!(%err, "ignoring a saved setting");
             }
