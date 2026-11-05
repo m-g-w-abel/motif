@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import androidx.appcompat.app.AppCompatActivity
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -32,7 +33,19 @@ class VolumeArgs {
 class MediaPlugin(private val activity: Activity) : Plugin(activity) {
   private val main = Handler(Looper.getMainLooper())
 
-  override fun onResume() = Playback.sync(activity.applicationContext)
+  override fun onResume(activity: AppCompatActivity) {
+    Background.visible(true)
+    Playback.sync(activity.applicationContext)
+  }
+
+  override fun onStop(activity: AppCompatActivity) = Background.visible(false)
+
+  /** Where "hold background work" goes, as `{ held }` (now, then on each change). */
+  @Command
+  fun listenBackground(invoke: Invoke) {
+    Background.listen(invoke.parseArgs(ListenArgs::class.java).channel)
+    invoke.resolve()
+  }
 
   /** Where the media buttons go, as engine commands. */
   @Command
@@ -106,5 +119,36 @@ object Volume {
     }.also { context.contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, it) }
     sent = -1
     report()
+  }
+}
+
+/**
+ * Whether the library should hold its background work (hashing, thumbnails):
+ * while the app is out of sight and [PlaybackService] isn't keeping it in the
+ * foreground, Android kills it for using the CPU. The Rust side is `apps/desktop/src/media.rs`.
+ */
+object Background {
+  private var channel: Channel? = null
+  private var visible = true
+  private var sent: Boolean? = null
+
+  @Synchronized fun listen(channel: Channel) {
+    this.channel = channel
+    sent = null
+    report()
+  }
+
+  @Synchronized fun visible(now: Boolean) {
+    visible = now
+    report()
+  }
+
+  /** Call when [visible] or [Playback.running] changes. */
+  @Synchronized fun report() {
+    val held = !visible && !Playback.running
+    val channel = channel ?: return
+    if (held == sent) return
+    sent = held
+    channel.send(JSObject().put("held", held))
   }
 }

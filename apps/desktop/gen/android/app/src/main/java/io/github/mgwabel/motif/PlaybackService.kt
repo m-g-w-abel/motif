@@ -158,6 +158,7 @@ class PlaybackService : Service() {
   override fun onCreate() {
     super.onCreate()
     Playback.running = true
+    Background.report()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -173,6 +174,7 @@ class PlaybackService : Service() {
 
   override fun onDestroy() {
     Playback.running = false
+    Background.report()
     super.onDestroy()
   }
 
