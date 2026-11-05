@@ -20,6 +20,7 @@
   import { PlayerSheet } from './lib/sheet.svelte';
   import CopyButton from './lib/components/CopyButton.svelte';
   import { toasts } from './lib/toast.svelte';
+  import { routeVolumeKeys } from './lib/volumeKeys';
   import { applyDecorations } from './lib/windowChrome';
   import { shortcutFor } from './lib/shortcuts';
   import ResizeEdges from './lib/components/shell/ResizeEdges.svelte';
@@ -253,6 +254,7 @@
   }
 
   const remote = engines.current.id !== LOCAL_ID;
+  $effect(() => (remote ? routeVolumeKeys(engine) : undefined));
 
   let editing = $state(false);
   const player = $derived(settings.current.player);

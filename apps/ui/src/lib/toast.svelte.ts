@@ -13,6 +13,7 @@ class Toasts {
     const id = this.#nextId++;
     this.items = [...this.items, { id, message, kind }];
     setTimeout(() => this.dismiss(id), kind === 'error' ? 8000 : 3000);
+    return id;
   }
 
   dismiss(id: number) {

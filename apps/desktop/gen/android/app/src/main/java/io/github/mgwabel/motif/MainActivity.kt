@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.KeyEvent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
@@ -18,6 +19,9 @@ import org.json.JSONObject
 
 class MainActivity : TauriActivity() {
   private var multicastLock: WifiManager.MulticastLock? = null
+  private var webView: WebView? = null
+  /** Set by the UI while a remote engine is current (`apps/ui/src/lib/volumeKeys.ts`). */
+  @Volatile private var volumeKeys = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -30,7 +34,20 @@ class MainActivity : TauriActivity() {
     super.onDestroy()
   }
 
+  /** While [volumeKeys], the volume keys go to the UI (each press and repeat) instead of the phone's volume. */
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    val direction = when (event.keyCode) {
+      KeyEvent.KEYCODE_VOLUME_UP -> 1
+      KeyEvent.KEYCODE_VOLUME_DOWN -> -1
+      else -> 0
+    }
+    if (!volumeKeys || direction == 0) return super.dispatchKeyEvent(event)
+    if (event.action == KeyEvent.ACTION_DOWN) webView?.evaluateJavascript("window.motifVolumeKey?.($direction)", null)
+    return true
+  }
+
   override fun onWebViewCreate(webView: WebView) {
+    this.webView = webView
     webView.addJavascriptInterface(Storage(webView), "MotifAndroid")
   }
 
@@ -62,6 +79,11 @@ class MainActivity : TauriActivity() {
         multicastLock?.release()
         multicastLock = null
       }
+    }
+
+    @JavascriptInterface
+    fun setVolumeKeys(on: Boolean) {
+      volumeKeys = on
     }
 
     @JavascriptInterface
