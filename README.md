@@ -58,7 +58,8 @@ control isn't an add-on: it's the normal code path.
 **Android** (in progress): the same engine runs in-process behind the same UI,
 with background playback that held up through 30 minutes of forced deep Doze.
 The phone's volume keys and Motif's volume are the same control, whichever
-device sets it.
+device sets it; while the phone controls another engine, the keys set that
+engine's volume.
 
 ## Engineering notes
 
