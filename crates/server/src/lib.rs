@@ -13,6 +13,7 @@
 mod lan;
 mod mpd;
 mod pairing;
+pub mod playback;
 mod resolver;
 pub mod settings;
 

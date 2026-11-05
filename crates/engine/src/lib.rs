@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use output::Output;
 
-pub use player::Player;
+pub use player::{Playback, Player};
 pub use resolve::{LocalFiles, Playable, Resolver};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -38,9 +38,13 @@ pub enum EngineError {
     Stopped,
 }
 
-struct Request {
-    command: Command,
-    reply: oneshot::Sender<Result<(), EngineError>>,
+enum Request {
+    Command {
+        command: Command,
+        reply: oneshot::Sender<Result<(), EngineError>>,
+    },
+    Playback(oneshot::Sender<Playback>),
+    Restore(Box<Playback>),
 }
 
 /// Handle to a running engine. Cheap to clone.
@@ -93,12 +97,24 @@ impl Engine {
                 let mut now = Instant::now();
                 let changed = tokio::select! {
                     request = rx.recv() => {
-                        let Some(Request { command, reply }) = request else { break };
-                        tracing::debug!(?command, "engine command");
-                        let result = player.apply(command, now);
-                        let changed = result.is_ok();
-                        let _ = reply.send(result);
-                        changed
+                        match request {
+                            None => break,
+                            Some(Request::Command { command, reply }) => {
+                                tracing::debug!(?command, "engine command");
+                                let result = player.apply(command, now);
+                                let changed = result.is_ok();
+                                let _ = reply.send(result);
+                                changed
+                            }
+                            Some(Request::Playback(reply)) => {
+                                let _ = reply.send(player.playback(now));
+                                false
+                            }
+                            Some(Request::Restore(saved)) => {
+                                player.restore(*saved, &resolver);
+                                true
+                            }
+                        }
                     }
                     Some(event) = audio_events.recv() => {
                         output.handle(event, &mut player, now);
@@ -171,11 +187,27 @@ impl Engine {
     /// Applies a command and waits for the engine to accept or reject it.
     pub async fn send(&self, command: Command) -> Result<(), EngineError> {
         let (reply, response) = oneshot::channel();
-        self.requests
-            .send(Request { command, reply })
-            .await
-            .map_err(|_| EngineError::Stopped)?;
+        self.request(Request::Command { command, reply }).await?;
         response.await.map_err(|_| EngineError::Stopped)?
+    }
+
+    /// Where playback is, to save for [`Self::restore`].
+    pub async fn playback(&self) -> Result<Playback, EngineError> {
+        let (reply, response) = oneshot::channel();
+        self.request(Request::Playback(reply)).await?;
+        response.await.map_err(|_| EngineError::Stopped)
+    }
+
+    /// Goes back to saved playback, paused (see [`Player::restore`]).
+    pub async fn restore(&self, saved: Playback) -> Result<(), EngineError> {
+        self.request(Request::Restore(Box::new(saved))).await
+    }
+
+    async fn request(&self, request: Request) -> Result<(), EngineError> {
+        self.requests
+            .send(request)
+            .await
+            .map_err(|_| EngineError::Stopped)
     }
 
     /// The most recent state snapshot.
