@@ -350,6 +350,17 @@ Kotlin-to-Rust calls for later Android work can use the same pattern.
   service (so it can be frozen) until Motif is next opened. Fine while the
   phone is not a pairable host.
 
+### Background library work (#140, 2026-11-05)
+
+Without the playback service, Android killed a backgrounded Motif for
+"excessive cpu" mid-hash: `top -H` showed the `library-scan` thread at one
+full core (nice -10). Now `MediaPlugin.kt` reports "hold" while the app is
+out of sight (`onStop`) and `PlaybackService` isn't running, and the shell
+calls `Library::hold_background`: hashing and thumbnails wait, scans still
+run. Backgrounded 11 min on `dumpsys battery unplug` + `deviceidle
+force-idle` mid-hash (3069 files left), the thread used no CPU and Motif
+survived; opening it resumed hashing.
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game

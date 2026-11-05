@@ -392,6 +392,30 @@ fn scans_queries_matches_and_rescans() {
 }
 
 #[test]
+fn held_background_work_waits_until_released() {
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &music,
+    );
+    let library = Library::open(&data).unwrap();
+    library.hold_background(true);
+    library.hold_background(true);
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    // Scans still run while held; only hashing and thumbnails wait.
+    wait_until(&library, |s| s.tracks == 4 && !s.scanning);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(library.status().hashing, 4);
+
+    library.hold_background(false);
+    wait_until(&library, |s| s.hashing == 0);
+}
+
+#[test]
 fn a_folder_copy_of_the_embedded_cover_lists_once() {
     use lofty::{
         config::WriteOptions,

@@ -3,7 +3,9 @@
 //! follows from the engine, and its buttons come back as ordinary commands.
 //! While something is queued its foreground service keeps Android from
 //! freezing the app, so playback goes on in the background. The engine's
-//! volume is the system media volume ([`crate::volume`]).
+//! volume is the system media volume ([`crate::volume`]). Without that
+//! service, the library holds its background work while the app is out of
+//! sight, or Android kills it for using the CPU.
 
 use crate::volume::System;
 use engine::Engine;
@@ -34,6 +36,18 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 pub fn start<R: Runtime>(kotlin: &Kotlin<R>, engine: Engine, library: Option<Library>) {
     let kotlin = kotlin.0.clone();
     start_volume(kotlin.clone(), engine.clone());
+    let background = library.clone().map(|library| {
+        Channel::<serde_json::Value>::new(move |body| {
+            if let InvokeResponseBody::Json(json) = body {
+                match serde_json::from_str::<serde_json::Value>(&json).map(|v| v["held"].as_bool())
+                {
+                    Ok(Some(held)) => library.hold_background(held),
+                    _ => tracing::warn!(json, "unknown background change"),
+                }
+            }
+            Ok(())
+        })
+    });
     let runtime = tokio::runtime::Handle::current();
     let commands = engine.clone();
     let buttons: Channel<serde_json::Value> = Channel::new(move |body| {
@@ -61,6 +75,14 @@ pub fn start<R: Runtime>(kotlin: &Kotlin<R>, engine: Engine, library: Option<Lib
             let listen = serde_json::json!({ "channel": buttons });
             if let Err(err) = kotlin.run_mobile_plugin::<serde_json::Value>("listen", listen) {
                 tracing::warn!(%err, "no media session buttons");
+            }
+            if let Some(channel) = background {
+                let listen = serde_json::json!({ "channel": channel });
+                if let Err(err) =
+                    kotlin.run_mobile_plugin::<serde_json::Value>("listenBackground", listen)
+                {
+                    tracing::warn!(%err, "library work won't pause in the background");
+                }
             }
             for update in rx {
                 if let Err(err) = kotlin.run_mobile_plugin::<serde_json::Value>("show", update) {

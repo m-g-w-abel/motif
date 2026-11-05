@@ -27,6 +27,9 @@ pub enum Request {
     Changed,
     /// The roots or the watch setting changed: rewatch and rescan.
     Roots,
+    /// Hold (or resume) hashing and thumbnails, e.g. while a phone app is
+    /// in the background, where using the CPU gets it killed.
+    Hold(bool),
 }
 
 /// Waits this long after the last file change before rescanning, so copying
@@ -48,6 +51,7 @@ pub fn run(
     let mut pending = true; // scan at start-up
     let mut changed_at: Option<Instant> = None;
     let mut thumbs = Vec::new();
+    let mut held = false;
     loop {
         if pending {
             pending = false;
@@ -58,23 +62,26 @@ pub fn run(
             thumbs = missing_bar_thumbs(&shared, &conn);
         }
         // Make bar thumbnails, then hash, in the background, one file at a
-        // time, giving way to scans.
+        // time, giving way to scans and holds.
         let request = match changed_at {
             Some(at) => requests.recv_timeout(SETTLE.saturating_sub(at.elapsed())),
-            None if thumb_next(&shared, &mut thumbs) || hash_next(&shared, &conn) => {
-                match requests.try_recv() {
-                    Ok(r) => Ok(r),
-                    Err(mpsc::TryRecvError::Empty) => continue,
-                    Err(mpsc::TryRecvError::Disconnected) => return,
+            None => match requests.try_recv() {
+                Ok(r) => Ok(r),
+                Err(mpsc::TryRecvError::Disconnected) => return,
+                Err(mpsc::TryRecvError::Empty)
+                    if !held && (thumb_next(&shared, &mut thumbs) || hash_next(&shared, &conn)) =>
+                {
+                    continue;
                 }
-            }
-            None => requests
-                .recv()
-                .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+                Err(mpsc::TryRecvError::Empty) => requests
+                    .recv()
+                    .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+            },
         };
         match request {
             Ok(Request::Rescan) => pending = true,
             Ok(Request::Changed) => changed_at = Some(Instant::now()),
+            Ok(Request::Hold(now)) => held = now,
             Ok(Request::Roots) => {
                 rewatch(&mut watcher, &notify_tx, &conn);
                 pending = true;

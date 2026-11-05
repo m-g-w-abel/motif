@@ -123,6 +123,12 @@ impl Library {
         })
     }
 
+    /// Holds (or lets go of) background work: audio hashing and thumbnails.
+    /// Scans still run. Safe to repeat.
+    pub fn hold_background(&self, held: bool) {
+        let _ = self.scanner.send(scan::Request::Hold(held));
+    }
+
     pub fn subscribe(&self) -> watch::Receiver<LibraryStatus> {
         self.shared.status.subscribe()
     }
