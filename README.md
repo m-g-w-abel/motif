@@ -29,6 +29,7 @@ control isn't an add-on: it's the normal code path.
 - A lock-free ring buffer between the decode thread and the audio callback.
   The playhead comes from samples actually played, not a timer.
 - ReplayGain, with loudness measured on demand for untagged files.
+- A restarted engine comes back paused to the same queue, track and position.
 
 **Library**
 - Incremental scanning into SQLite with FTS5 search, folder watching, artwork

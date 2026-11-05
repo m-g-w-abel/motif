@@ -183,6 +183,10 @@ async fn start_engine(
             engine.clone(),
             dir.join("engine.json"),
         ));
+        tauri::async_runtime::spawn(server::playback::keep(
+            engine.clone(),
+            dir.join("playback.json"),
+        ));
     }
     media_controls(
         engine.clone(),

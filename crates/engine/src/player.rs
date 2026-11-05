@@ -4,6 +4,7 @@ use protocol::{
     Command, ContextKind, OutputDevice, PlayContext, PlaybackStatus, PlayerState, QueueItem,
     RepeatMode, ReplayGain, ReplayGainMode, ReplayGainSettings, TrackRef,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{EngineError, Playable, Resolver, audio::decoder};
 
@@ -18,7 +19,7 @@ const WINDOW_STEP: usize = 100;
 const WINDOW_BEHIND: usize = 20;
 
 /// Where the current entry came from.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 enum Current {
     /// An index into the context.
     Context(usize),
@@ -34,6 +35,19 @@ enum Step {
     /// The front of the queue.
     Queue,
     Context(usize),
+}
+
+/// Where playback was, saved so a restarted engine comes back to it (see
+/// [`Player::restore`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Playback {
+    context: Vec<QueueItem>,
+    context_meta: Option<(ContextKind, Option<String>)>,
+    context_next: usize,
+    queue: Vec<QueueItem>,
+    current: Option<Current>,
+    history: Vec<QueueItem>,
+    position_ms: u64,
 }
 
 /// Context, queue and transport state. Time is passed in and track resolution
@@ -226,6 +240,68 @@ impl Player {
                 _ => None,
             },
         }
+    }
+
+    /// Where playback is, to [`Self::restore`] after a restart.
+    pub fn playback(&self, now: Instant) -> Playback {
+        Playback {
+            context: self.context.clone(),
+            context_meta: self.context_meta.clone(),
+            context_next: self.context_next,
+            queue: self.queue.clone(),
+            current: self.current.clone(),
+            history: self.history.clone(),
+            position_ms: self.position(now).as_millis() as u64,
+        }
+    }
+
+    /// Goes back to `saved`, paused. Queued tracks that no longer resolve
+    /// are dropped; a current one that doesn't is skipped once resolved.
+    // shortcut: context entries aren't checked here (one lookup each, slow for big contexts); gone ones are marked and skipped when they come up.
+    pub fn restore(&mut self, saved: Playback, resolver: &dyn Resolver) {
+        let Playback {
+            mut context,
+            context_meta,
+            context_next,
+            mut queue,
+            mut current,
+            mut history,
+            position_ms,
+        } = saved;
+        queue.retain(|item| resolver.resolve(&item.track).is_ok());
+        if let Some(Current::Context(i)) = current
+            && i >= context.len()
+        {
+            current = None;
+        }
+        let mut current_item = match &mut current {
+            Some(Current::Item(item)) => Some(&mut **item),
+            _ => None,
+        };
+        // Old errors may be fixed by now; entries are tried again when they come up.
+        let entries = (current_item.iter_mut().map(|item| &mut **item))
+            .chain(&mut context)
+            .chain(&mut queue)
+            .chain(&mut history);
+        let mut last_id = 0;
+        for item in entries {
+            item.error = None;
+            last_id = last_id.max(item.id);
+        }
+        self.next_id = last_id + 1;
+        self.context_next = context_next.min(context.len());
+        self.context = context;
+        self.context_meta = context_meta;
+        self.queue = queue;
+        self.history = history;
+        self.status = match current {
+            Some(_) => PlaybackStatus::Paused,
+            None => PlaybackStatus::Stopped,
+        };
+        self.current = current;
+        self.base = Duration::from_millis(position_ms);
+        self.since = None;
+        self.resolved = None;
     }
 
     /// The queue: what plays before the context resumes.
@@ -1101,6 +1177,82 @@ mod tests {
         let state = p.snapshot(t0, 0);
         assert_eq!(name(state.current.as_ref()), Some("x"));
         assert_eq!(state.context.unwrap().index, None, "x isn't in the context");
+    }
+
+    /// Saves `p` and restores it into a new player through JSON, as the server does.
+    fn reload(p: &Player, now: Instant, resolver: &dyn Resolver) -> Player {
+        let json = serde_json::to_string(&p.playback(now)).unwrap();
+        let mut restored = Player::default();
+        restored.restore(serde_json::from_str(&json).unwrap(), resolver);
+        restored
+    }
+
+    #[test]
+    fn a_restored_player_comes_back_paused_where_it_was() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b", "c"], t0);
+        p.apply(Command::Next, t0).unwrap();
+        enqueue(&mut p, &["x", "y"], t0);
+        p.apply(Command::Seek { position_ms: 400 }, t0).unwrap();
+        let before = p.snapshot(t0 + ms(100), 0);
+
+        let t1 = t0 + ms(5000);
+        let mut r = reload(&p, t0 + ms(100), &FakeResolver);
+        assert_eq!(r.status(), PlaybackStatus::Paused);
+        assert_eq!(now_playing(&r), Some("b"));
+        assert_eq!(
+            r.position(t1),
+            ms(500),
+            "exactly where it was, and not moving"
+        );
+        assert_eq!(queued(&r), ["x", "y"]);
+        assert_eq!(r.snapshot(t1, 0).context, before.context);
+
+        r.apply(Command::Previous, t1).unwrap();
+        assert_eq!(now_playing(&r), Some("a"), "history survives");
+        assert_eq!(r.snapshot(t1, 0).context.unwrap().index, Some(0));
+        assert_eq!(nexts(&mut r, 4, t1), ["x", "y", "b", "c"]);
+    }
+
+    #[test]
+    fn a_queued_current_entry_is_restored() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        enqueue(&mut p, &["x"], t0);
+        p.apply(Command::Next, t0).unwrap();
+        let mut r = reload(&p, t0, &FakeResolver);
+        assert_eq!(now_playing(&r), Some("x"));
+        assert_eq!(r.snapshot(t0, 0).context.unwrap().index, None);
+        enqueue(&mut r, &["new"], t0);
+        assert_ne!(
+            id(&r, "new"),
+            r.current_item().unwrap().id,
+            "ids stay unique"
+        );
+        assert_eq!(nexts(&mut r, 2, t0), ["new", "b"]);
+    }
+
+    #[test]
+    fn restoring_drops_tracks_that_are_gone() {
+        let t0 = Instant::now();
+        let mut p = playing(&["missing-a", "b"], t0);
+        enqueue(&mut p, &["x", "missing-y", "z"], t0);
+        let mut r = reload(&p, t0, &FakeResolver);
+        assert_eq!(queued(&r), ["x", "z"]);
+        r.resolve_current(&FakeResolver, t0);
+        assert_eq!(
+            now_playing(&r),
+            Some("x"),
+            "the current one is gone: the next"
+        );
+        assert_eq!(r.status(), PlaybackStatus::Paused);
+    }
+
+    #[test]
+    fn nothing_playing_restores_stopped() {
+        let r = reload(&Player::default(), Instant::now(), &FakeResolver);
+        assert_eq!(r.status(), PlaybackStatus::Stopped);
+        assert!(r.current_item().is_none());
     }
 
     #[test]
