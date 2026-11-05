@@ -13,11 +13,15 @@ export function stepVolume(volume: number, direction: 1 | -1): number {
   return Math.min(STEPS, Math.max(0, from + direction)) / STEPS;
 }
 
-/** A key press handler: sends absolute volumes (safe to retry), stepping from `read()` or the last press. */
-export function volumeKeys(read: () => number, send: (volume: number) => void, now = Date.now) {
+/**
+ * A key press handler: sends absolute volumes (safe to retry), stepping from
+ * `read()` or the last press. Drops presses while `read()` is null (volume not known yet).
+ */
+export function volumeKeys(read: () => number | null, send: (volume: number) => void, now = Date.now) {
   let last: { volume: number; at: number } | null = null;
   return (direction: 1 | -1) => {
     const base = last && now() - last.at < SETTLE_MS ? last.volume : read();
+    if (base === null) return;
     last = { volume: stepVolume(base, direction), at: now() };
     send(last.volume);
   };
@@ -36,7 +40,7 @@ export function routeVolumeKeys(engine: EngineClient): () => void {
   if (!android) return () => {};
   let toast: number | null = null;
   hook.motifVolumeKey = volumeKeys(
-    () => engine.player?.volume ?? 1,
+    () => engine.player?.volume ?? null,
     (volume) => {
       engine.run({ type: 'set_volume', volume });
       // The volume slider is hidden on a phone; one toast, replaced on each press.

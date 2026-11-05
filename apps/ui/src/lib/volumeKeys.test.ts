@@ -29,6 +29,14 @@ describe('volumeKeys', () => {
     expect(sent.map((v) => Math.round(v * 15))).toEqual([1, 2]);
   });
 
+  it("drops presses until the engine's volume is known", () => {
+    const sent: number[] = [];
+    const press = volumeKeys(() => null, (v) => sent.push(v));
+    press(1);
+    press(-1);
+    expect(sent).toEqual([]);
+  });
+
   it("steps from the engine's volume after a pause", () => {
     const sent: number[] = [];
     let now = 0;
