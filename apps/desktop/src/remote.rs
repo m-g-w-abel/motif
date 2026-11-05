@@ -176,8 +176,13 @@ mod tests {
     async fn pairing_by_code_and_its_errors() {
         let (pairing, address, dir) = local_engine().await;
         let code = pairing.start().code;
-        // A connection made before the server first looks at the new code is reset.
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        // Connecting while the listener moves can fail once (#141).
+        let mut states = pairing.subscribe();
+        let open = states.wait_for(|s| s.lan.open);
+        tokio::time::timeout(Duration::from_secs(5), open)
+            .await
+            .unwrap()
+            .unwrap();
         let key = pairing.engine_key().to_owned();
 
         let wrong = pair_engine(address.clone(), "WRONG".into(), "Phone".into()).await;
