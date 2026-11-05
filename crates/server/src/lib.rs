@@ -934,6 +934,80 @@ mod tests {
         );
     }
 
+    /// Moving the listener mustn't reset connections waiting to be accepted
+    /// (#141), such as the desktop UI's own reconnecting WebSocket.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn moving_the_listener_resets_no_connection() {
+        let pairing = Pairing::in_memory();
+        let config = Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui: None,
+            library: None,
+            integrations: watch::channel(Default::default()).0,
+            pairing: pairing.clone(),
+        };
+        let (addr, serve) = bind(Engine::spawn(engine::LocalFiles), config)
+            .await
+            .unwrap();
+        tokio::spawn(serve);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let client = tokio::task::spawn_blocking({
+            let done = done.clone();
+            move || {
+                use std::io::{ErrorKind, Read, Write};
+                let (mut served, mut refused, mut reset) = (0, 0, Vec::new());
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    // A handshake under way as the old socket closes, or one in
+                    // the moment before the new one binds, fails at once
+                    // (refused or reset) and the client retries: unavoidable
+                    // without SO_REUSEPORT.
+                    let mut stream = match std::net::TcpStream::connect(addr) {
+                        Ok(stream) => stream,
+                        Err(err)
+                            if matches!(
+                                err.kind(),
+                                ErrorKind::ConnectionRefused | ErrorKind::ConnectionReset
+                            ) =>
+                        {
+                            refused += 1;
+                            continue;
+                        }
+                        Err(err) => panic!("{err}"),
+                    };
+                    let limit = Some(std::time::Duration::from_secs(5));
+                    stream.set_read_timeout(limit).unwrap();
+                    let mut response = String::new();
+                    let got = stream
+                        .write_all(
+                            b"GET /nothing HTTP/1.1\r\nHost: motif\r\nConnection: close\r\n\r\n",
+                        )
+                        .and_then(|()| stream.read_to_string(&mut response));
+                    match got {
+                        Ok(_) if response.starts_with("HTTP/1.1") => served += 1,
+                        Ok(_) => reset.push("closed without a response".to_owned()),
+                        Err(err) => reset.push(err.to_string()),
+                    }
+                }
+                (served, refused, reset)
+            }
+        });
+        for _ in 0..100 {
+            pairing.start();
+            lan_open(&pairing, true).await;
+            pairing.command(protocol::PairingCommand::Cancel).unwrap();
+            lan_open(&pairing, false).await;
+        }
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        let client = tokio::time::timeout(std::time::Duration::from_secs(10), client);
+        let (served, refused, reset) = client.await.expect("the client hangs").unwrap();
+        eprintln!(
+            "served {served}, failed to connect {refused}, reset {}",
+            reset.len()
+        );
+        assert!(served > 0);
+        assert_eq!(reset, Vec::<String>::new());
+    }
+
     #[tokio::test]
     async fn closing_the_lan_cuts_other_machines_off() {
         let pairing = Pairing::in_memory();

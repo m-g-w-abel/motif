@@ -25,6 +25,8 @@ pub(crate) struct LanListener {
     pairing: Pairing,
     states: watch::Receiver<protocol::PairingState>,
     advert: Option<Advert>,
+    /// Taken from an old listener's backlog as it closed; handed out first.
+    drained: Vec<(TcpStream, SocketAddr)>,
 }
 
 impl LanListener {
@@ -40,6 +42,7 @@ impl LanListener {
             states: pairing.subscribe(),
             pairing,
             advert: None,
+            drained: Vec::new(),
         };
         me.update().await;
         Ok(me)
@@ -63,8 +66,14 @@ impl LanListener {
             self.local
         };
         if target != self.bound || self.listener.is_none() {
-            // Frees the port first: the new socket can't share it.
-            self.listener = None;
+            // Frees the port first: the new socket can't share it (SO_REUSEPORT
+            // could, but only on Linux, and lets a second engine share the port).
+            // Closing resets what waits in the backlog, so that is accepted first.
+            // A handshake under way then, or a connection in the microseconds
+            // until the bind, still fails at connect and is retried (#141).
+            if let Some(old) = self.listener.take() {
+                self.drained.extend(drain(old));
+            }
             match TcpListener::bind(target).await {
                 Ok(listener) => {
                     tracing::info!(%target, "listening");
@@ -100,6 +109,22 @@ impl LanListener {
     }
 }
 
+/// Accepts everything waiting on `listener`, without waiting, and closes it.
+fn drain(listener: TcpListener) -> Vec<(TcpStream, SocketAddr)> {
+    // std's accept asks the OS directly; tokio's only once its reactor has seen
+    // the socket readable.
+    let Ok(listener) = listener.into_std() else {
+        return Vec::new();
+    };
+    std::iter::from_fn(|| listener.accept().ok())
+        .filter_map(|(stream, peer)| {
+            // Accepted sockets are blocking on Linux, whatever the listener is.
+            stream.set_nonblocking(true).ok()?;
+            Some((TcpStream::from_std(stream).ok()?, peer))
+        })
+        .collect()
+}
+
 fn addresses_text(addresses: Option<&[SocketAddr]>) -> Vec<String> {
     addresses
         .unwrap_or_default()
@@ -115,6 +140,9 @@ impl axum::serve::Listener for LanListener {
     async fn accept(&mut self) -> (TcpStream, SocketAddr) {
         let mut wait = None;
         loop {
+            if let Some(accepted) = self.drained.pop() {
+                return accepted;
+            }
             let sleep = tokio::time::sleep(wait.unwrap_or(Duration::MAX));
             let listener = &self.listener;
             tokio::select! {
