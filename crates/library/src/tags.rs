@@ -55,7 +55,7 @@ pub struct Tags {
 /// Tags and audio properties. Files lofty can't parse still get a row
 /// (named after the file) so they stay playable.
 pub fn read(path: &Path) -> Tags {
-    let tagged = match lofty::read_from_path(path) {
+    let tagged = match lofty::read_from_path(path).or_else(|_| read_without_cover(path)) {
         Ok(tagged) => tagged,
         Err(err) => {
             tracing::debug!(path = %path.display(), %err, "lofty can't read it, trying symphonia");
@@ -113,6 +113,30 @@ pub fn read(path: &Path) -> Tags {
         .map(|p| (p.data().to_vec(), image_ext(p.data())));
     tags
 }
+
+/// Second try for files whose comment header is over lofty's 16 MiB limit (a huge
+/// embedded cover): the limit is raised for this thread's read only, and the
+/// picture is skipped so it is never decoded or kept. Memory stays at the
+/// header packet and one comment, about twice the header, per file.
+fn read_without_cover(
+    path: &Path,
+) -> Result<lofty::file::TaggedFile, lofty::error::FileParseError> {
+    use lofty::{
+        config::{GlobalOptions, ParseOptions, apply_global_options},
+        probe::Probe,
+    };
+    apply_global_options(GlobalOptions::new().allocation_limit(HUGE_HEADER_LIMIT));
+    let tagged = Probe::open(path).and_then(|probe| {
+        probe
+            .options(ParseOptions::new().read_cover_art(false))
+            .read()
+    });
+    apply_global_options(GlobalOptions::new());
+    tagged
+}
+
+/// Largest comment header the second read accepts.
+const HUGE_HEADER_LIMIT: usize = 64 << 20;
 
 /// The number a gain or peak tag starts with (`-6.54 dB`, `0.988`).
 fn parse_number(s: &str) -> Option<f32> {
@@ -387,4 +411,54 @@ pub fn flac_md5(path: &Path) -> Option<u128> {
     )
     .ok()?;
     Some(flac.properties().signature()).filter(|&md5| md5 != 0)
+}
+
+#[cfg(test)]
+#[test]
+fn opus_with_oversized_cover_still_gets_its_tags() {
+    use lofty::{
+        picture::{MimeType, Picture},
+        prelude::TaggedFileExt as _,
+        tag::{Accessor as _, TagExt as _},
+    };
+    let dir = std::env::temp_dir().join(format!("motif-bigcover-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("big.opus");
+    let ffmpeg = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1",
+            "-c:a",
+            "libopus",
+        ])
+        .arg(&path)
+        .status()
+        .expect("ffmpeg is needed for this test");
+    assert!(ffmpeg.success());
+    let mut file = lofty::read_from_path(&path).unwrap();
+    let tag = file
+        .primary_tag_mut()
+        .expect("ffmpeg writes a comment header");
+    tag.set_title("Big cover".into());
+    tag.set_artist("Squid".into());
+    // More than lofty's 16 MiB limit once base64-encoded in the comment header.
+    tag.push_picture(
+        Picture::unchecked(vec![0; 17 << 20])
+            .mime_type(MimeType::Png)
+            .build(),
+    );
+    tag.save_to_path(&path, Default::default()).unwrap();
+
+    let tags = read(&path);
+    fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(tags.title.as_deref(), Some("Big cover"));
+    assert_eq!(tags.artist.as_deref(), Some("Squid"));
+    assert_eq!(tags.codec.as_deref(), Some("Opus"));
+    assert!(tags.duration_ms.is_some());
+    assert!(tags.picture.is_none(), "oversized covers are skipped");
 }
