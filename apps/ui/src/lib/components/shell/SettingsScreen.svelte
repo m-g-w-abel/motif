@@ -25,6 +25,7 @@
   import { kdlAccept, isAndroid } from '../../platform';
   import { canDecorate } from '../../windowChrome';
   import { canDiscover } from '../../discover';
+  import { canShowRemoteMedia } from '../../remoteMedia';
   import { engines } from '../../engine.svelte';
   import { LOCAL_ID, removeEngine, switchTo } from '../../engines';
   import WindowButtons from './WindowButtons.svelte';
@@ -247,6 +248,24 @@
           <div class="actions">
             <button class="button" onclick={() => (settingsView.addingEngine = true)}>Add an engine…</button>
           </div>
+        </div>
+      {/if}
+      {#if group === 'devices' && canShowRemoteMedia}
+        <div class="row">
+          <span class="label">Remote playback controls</span>
+          <div class="segmented" role="radiogroup" aria-label="Remote playback controls">
+            {#each [[false, 'Off'], [true, 'On']] as [value, text] (text)}
+              <button
+                role="radio"
+                aria-checked={settings.current.remoteControls === value}
+                class:active={settings.current.remoteControls === value}
+                onclick={() => settings.set('remoteControls', value as boolean)}
+              >
+                {text}
+              </button>
+            {/each}
+          </div>
+          <p class="status">While you control another engine, its track and buttons show in the notification and on the lock screen.</p>
         </div>
       {/if}
       {#if !allowed}

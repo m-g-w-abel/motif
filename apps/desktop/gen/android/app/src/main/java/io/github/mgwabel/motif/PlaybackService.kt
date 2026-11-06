@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import app.tauri.plugin.Channel
 import app.tauri.plugin.JSObject
+import org.json.JSONObject
 
 /**
  * The media session and its notification, shown by [MediaPlugin]. Runs on the
@@ -31,10 +32,18 @@ import app.tauri.plugin.JSObject
 object Playback {
   @Volatile var buttons: Channel? = null
   private var session: MediaSessionCompat? = null
-  private var state = PlaybackStateCompat.STATE_NONE
-  private var title: String? = null
-  private var artist: String? = null
-  private var art: Bitmap? = null
+
+  /** What the session shows: the track and its playback state. */
+  private class Shown {
+    var metadata: MediaMetadataCompat? = null
+    var state = PlaybackStateCompat.STATE_NONE
+    var positionMs = 0L
+  }
+  /** The phone's engine. */
+  private val local = Shown()
+  /** A remote engine the UI controls ([showRemote]), shown instead of [local], with where its buttons go. */
+  private var remote: Pair<Shown, (JSObject) -> Unit>? = null
+  private val shown get() = remote?.first ?: local
   /** Whether [PlaybackService] is running. */
   var running = false
 
@@ -45,9 +54,17 @@ object Playback {
     PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_STOP or
     PlaybackStateCompat.ACTION_SEEK_TO
 
-  /** Sends the engine a command (`protocol::Command`) without arguments. */
-  fun send(type: String) {
+  /** Sends the shown engine a command (`protocol::Command`) without arguments. */
+  fun send(type: String) = send(JSObject().put("type", type))
+
+  /** Sends the phone's engine a command, whichever is shown. */
+  fun sendLocal(type: String) {
     buttons?.send(JSObject().put("type", type))
+  }
+
+  private fun send(command: JSObject) {
+    val remote = remote
+    if (remote != null) remote.second(command) else buttons?.send(command)
   }
 
   private fun session(context: Context) = session ?: MediaSessionCompat(context, "Motif").apply {
@@ -59,52 +76,82 @@ object Playback {
       override fun onSkipToNext() = send("next")
       override fun onSkipToPrevious() = send("previous")
       override fun onStop() = send("stop")
-      override fun onSeekTo(pos: Long) {
-        buttons?.send(JSObject().put("type", "seek").put("position_ms", pos))
-      }
+      override fun onSeekTo(pos: Long) = send(JSObject().put("type", "seek").put("position_ms", pos))
     })
     session = this
   }
 
-  fun showTrack(context: Context, title: String?, artist: String?, album: String?, durationMs: Long, art: Bitmap?) {
-    this.title = title
-    this.artist = artist
-    this.art = art
-    session(context).setMetadata(
-      MediaMetadataCompat.Builder()
-        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
-        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
-        .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
-        .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
-        .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art)
-        .build()
-    )
-    refresh(context)
-  }
+  private fun metadata(title: String?, artist: String?, album: String?, durationMs: Long, art: Bitmap?) =
+    MediaMetadataCompat.Builder()
+      .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+      .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+      .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
+      .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
+      .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art)
+      .build()
 
   /** `status` is a `protocol::PlaybackStatus`. */
+  private fun state(status: String) = when (status) {
+    "playing" -> PlaybackStateCompat.STATE_PLAYING
+    "paused" -> PlaybackStateCompat.STATE_PAUSED
+    else -> PlaybackStateCompat.STATE_STOPPED
+  }
+
+  fun showTrack(context: Context, title: String?, artist: String?, album: String?, durationMs: Long, art: Bitmap?) {
+    local.metadata = metadata(title, artist, album, durationMs, art)
+    if (remote == null) show(context)
+  }
+
   fun showStatus(context: Context, status: String, positionMs: Long) {
-    val was = state
-    state = when (status) {
-      "playing" -> PlaybackStateCompat.STATE_PLAYING
-      "paused" -> PlaybackStateCompat.STATE_PAUSED
-      else -> PlaybackStateCompat.STATE_STOPPED
-    }
-    val session = session(context)
-    session.setPlaybackState(
-      PlaybackStateCompat.Builder().setActions(ACTIONS).setState(state, positionMs, 1f).build()
-    )
-    session.isActive = state != PlaybackStateCompat.STATE_STOPPED
+    val was = local.state
+    local.state = state(status)
+    local.positionMs = positionMs
+    // Focus is the phone's audio, whatever the session shows.
     when {
-      state == PlaybackStateCompat.STATE_PLAYING && was != state -> Focus.request(context)
-      state == PlaybackStateCompat.STATE_STOPPED && was != state -> Focus.abandon(context)
+      local.state == PlaybackStateCompat.STATE_PLAYING && was != local.state -> Focus.request(context)
+      local.state == PlaybackStateCompat.STATE_STOPPED && was != local.state -> Focus.abandon(context)
     }
+    if (remote == null) show(context)
+  }
+
+  /**
+   * Shows a remote engine's playback (`RemoteMedia` in `apps/ui/src/lib/remoteMedia.ts`) until
+   * [endRemote], its buttons going to [send].
+   */
+  fun showRemote(context: Context, media: JSONObject, art: Bitmap?, send: (JSObject) -> Unit) {
+    fun string(key: String) = if (media.isNull(key)) null else media.getString(key)
+    remote = Shown().apply {
+      metadata = metadata(
+        string("title"), string("artist"), string("album"),
+        if (media.isNull("duration_ms")) -1L else media.getLong("duration_ms"), art
+      )
+      state = state(media.getString("status"))
+      positionMs = media.getLong("position_ms")
+    } to send
+    show(context)
+  }
+
+  /** Back to the phone's engine. */
+  fun endRemote(context: Context) {
+    if (remote == null) return
+    remote = null
+    show(context)
+  }
+
+  private fun show(context: Context) {
+    val session = session(context)
+    session.setMetadata(shown.metadata)
+    session.setPlaybackState(
+      PlaybackStateCompat.Builder().setActions(ACTIONS).setState(shown.state, shown.positionMs, 1f).build()
+    )
+    session.isActive = shown.state != PlaybackStateCompat.STATE_STOPPED
     sync(context)
   }
 
   /** Runs [PlaybackService] while something plays or is paused. */
   fun sync(context: Context) {
     val service = Intent(context, PlaybackService::class.java)
+    val state = shown.state
     when {
       state != PlaybackStateCompat.STATE_PLAYING && state != PlaybackStateCompat.STATE_PAUSED ->
         context.stopService(service)
@@ -128,7 +175,8 @@ object Playback {
     context.getSystemService(NotificationManager::class.java).createNotificationChannel(
       NotificationChannel(CHANNEL, "Playback", NotificationManager.IMPORTANCE_LOW)
     )
-    val playing = state == PlaybackStateCompat.STATE_PLAYING
+    val playing = shown.state == PlaybackStateCompat.STATE_PLAYING
+    val metadata = shown.metadata
     fun button(icon: Int, label: String, command: String) = NotificationCompat.Action(
       icon, label,
       PendingIntent.getService(
@@ -138,9 +186,9 @@ object Playback {
     )
     return NotificationCompat.Builder(context, CHANNEL)
       .setSmallIcon(android.R.drawable.ic_media_play)
-      .setContentTitle(title)
-      .setContentText(artist)
-      .setLargeIcon(art)
+      .setContentTitle(metadata?.getString(MediaMetadataCompat.METADATA_KEY_TITLE))
+      .setContentText(metadata?.getString(MediaMetadataCompat.METADATA_KEY_ARTIST))
+      .setLargeIcon(metadata?.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART))
       .setContentIntent(
         PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
       )

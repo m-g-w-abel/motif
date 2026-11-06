@@ -28,6 +28,8 @@ export interface Settings {
   ownDecorations: boolean;
   /** Touch gestures remapped from their defaults (gestures.ts); empty keeps them all. */
   gestures: Overrides;
+  /** Android: a remote engine's playback shows in the notification and lock screen. Off: only this phone's does. */
+  remoteControls: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -43,6 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   vimKeys: false,
   ownDecorations: false,
   gestures: {},
+  remoteControls: false,
 };
 
 const KEY = 'settings';

@@ -21,6 +21,7 @@
   import CopyButton from './lib/components/CopyButton.svelte';
   import { toasts } from './lib/toast.svelte';
   import { routeVolumeKeys } from './lib/volumeKeys';
+  import { remoteMedia, routeRemoteButtons, showRemoteMedia } from './lib/remoteMedia';
   import { routeBack } from './lib/back';
   import { contextMenu } from './lib/contextMenu.svelte';
   import { applyDecorations } from './lib/windowChrome';
@@ -257,6 +258,15 @@
 
   const remote = engines.current.id !== LOCAL_ID;
   $effect(() => (remote ? routeVolumeKeys(engine) : undefined));
+  // Apart from the updates below, so each change redraws the notification instead of hiding it first.
+  const remoteControls = $derived(remote && settings.current.remoteControls);
+  $effect(() => (remoteControls ? routeRemoteButtons(engine) : undefined));
+  $effect(() => {
+    if (!remoteControls) return;
+    const art = library.details(engine.current?.track)?.art;
+    const cover = art ? library.artUrl(art, 512, true) : null;
+    showRemoteMedia(remoteMedia(engine.status, engine.player, position.at(Date.now()), cover));
+  });
 
   let editing = $state(false);
 
