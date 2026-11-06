@@ -86,6 +86,10 @@ class MainActivity : TauriActivity() {
       volumeKeys = on
     }
 
+    /** What back does on the root screen since Android 12: the task goes behind, the page and playback stay. */
+    @JavascriptInterface
+    fun moveToBack() = runOnUiThread { moveTaskToBack(true) }
+
     @JavascriptInterface
     fun setBarIconsDark(dark: Boolean) = runOnUiThread {
       WindowCompat.getInsetsController(window, window.decorView).apply {
