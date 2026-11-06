@@ -14,7 +14,7 @@
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { scrollMemory } from '../../scrollMemory';
   import { menu } from '../../contextMenu.svelte';
-  import { gesture } from '../../gestures';
+  import { gesture, mapped } from '../../gestures';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
@@ -208,7 +208,7 @@
   let pressing = false;
   function press(e: PointerEvent, i: number) {
     pressing = true;
-    gesture(e, 'row', { queue: () => queueRow(i) });
+    gesture(e, mapped(settings.current.gestures, 'row'), { queue: () => queueRow(i), 'play-next': () => queueRow(i, true) });
     const key = data.key(i);
     if (e.button === 2) {
       if (!picked.has(key)) select(i);
@@ -224,9 +224,9 @@
     } else if (!inSelection(picked, key)) select(i);
   }
   /** Middle-click or long-press: queues the row, or the selection it is part of. */
-  function queueRow(i: number) {
+  function queueRow(i: number, next = false) {
     if (!inSelection(picked, data.key(i))) select(i);
-    queueTracks(engine, tracksAt(i));
+    queueTracks(engine, tracksAt(i), next);
   }
   function release(e: MouseEvent, i: number) {
     if (!e.shiftKey && !e.ctrlKey && !e.metaKey) select(i);

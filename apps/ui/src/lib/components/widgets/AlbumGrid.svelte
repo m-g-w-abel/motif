@@ -5,7 +5,7 @@
   import { demoLibrary, isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
-  import { gesture } from '../../gestures';
+  import { gesture, mapped } from '../../gestures';
   import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
@@ -124,7 +124,10 @@
   // As in the track list: a press inside a selection waits for the click,
   // so a right-click acts on all of it.
   function press(e: PointerEvent, i: number, album: Card) {
-    gesture(e, 'row', { queue: () => queueAlbum(i, album) });
+    gesture(e, mapped(settings.current.gestures, 'row'), {
+      queue: () => queueAlbum(i, album),
+      'play-next': () => queueAlbum(i, album, true),
+    });
     if (e.button === 2) {
       if (!picked.has(album.key)) select(i);
     } else if (e.button !== 0) {
@@ -139,10 +142,10 @@
     } else if (!inSelection(picked, album.key)) select(i);
   }
   /** Middle-click or long-press: queues the album, or the picked albums it is part of. */
-  function queueAlbum(i: number, album: Card) {
+  function queueAlbum(i: number, album: Card, next = false) {
     if (!inSelection(picked, album.key)) select(i);
     const keys = keysFor(album);
-    queueTracks(engine, albumTracks(keys), false, keys.length > 1 ? `${keys.length} albums` : album.title || 'Unknown album');
+    queueTracks(engine, albumTracks(keys), next, keys.length > 1 ? `${keys.length} albums` : album.title || 'Unknown album');
   }
   function release(e: MouseEvent, i: number) {
     if (!e.shiftKey && !e.ctrlKey && !e.metaKey) select(i);

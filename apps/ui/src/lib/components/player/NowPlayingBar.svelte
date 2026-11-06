@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getApp } from '../../context';
   import { formatTime } from '../../format';
-  import { gesture, slide } from '../../gestures';
+  import { gesture, mapped, slide } from '../../gestures';
   import { BAR_ART_SIZE } from '../../library.svelte';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
@@ -11,7 +11,7 @@
   import Transport from './Transport.svelte';
   import Volume from './Volume.svelte';
 
-  const { engine, position, sheet } = getApp();
+  const { engine, position, sheet, settings } = getApp();
   let sliding = $state<HTMLElement>();
   const duration = $derived(engine.current?.track.duration_ms ?? 0);
 
@@ -26,7 +26,7 @@
     const onTrack = !!target.closest('.identity');
     gesture(
       e,
-      'bar',
+      mapped(settings.current.gestures, 'bar'),
       { next: () => engine.run({ type: 'next' }), previous: () => engine.run({ type: 'previous' }) },
       sliding ? slide(sliding) : undefined,
     );

@@ -20,6 +20,7 @@
   import Scrollbar from '../Scrollbar.svelte';
   import ShortcutList from './ShortcutList.svelte';
   import Slider from '../Slider.svelte';
+  import { CHOICES, mapped, type Action, type Gesture, type Surface } from '../../gestures';
   import { FONT_LIST } from '../../themeFile';
   import { kdlAccept, isAndroid } from '../../platform';
   import { canDecorate } from '../../windowChrome';
@@ -36,6 +37,7 @@
     { id: 'library', label: 'Library' },
     { id: 'playback', label: 'Playback' },
     { id: 'keyboard', label: 'Keyboard' },
+    { id: 'gestures', label: 'Gestures' },
     { id: 'integrations', label: 'Integrations' },
     { id: 'devices', label: 'Devices' },
     { id: 'technical', label: 'Technical' },
@@ -123,6 +125,30 @@
     { key: 'player', label: 'Player', options: [['bar', 'Bar'], ['floating', 'Floating']] },
     { key: 'seekBar', label: 'Seek bar', options: [['waveform', 'Waveform'], ['plain', 'Plain']] },
   ] as [Choice<'density'>, Choice<'player'>, Choice<'seekBar'>];
+
+  const SURFACES: Record<Surface, string> = { bar: 'the player bar', artwork: 'the artwork', row: 'a track or album' };
+  const GESTURE_NAMES: Record<Gesture, string> = {
+    'swipe-left': 'Swipe left on',
+    'swipe-right': 'Swipe right on',
+    'drag-vertical': 'Drag up or down on',
+    'long-press': 'Long-press',
+  };
+  const ACTIONS: Record<Action | 'none', string> = {
+    next: 'Next track',
+    previous: 'Previous track',
+    queue: 'Add to queue',
+    'play-next': 'Queue next',
+    volume: 'Volume',
+    seek: 'Seek',
+    none: 'None',
+  };
+  const gestureRows = (Object.keys(CHOICES) as Surface[]).flatMap((surface) =>
+    (Object.entries(CHOICES[surface]) as [Gesture, Action[]][]).map(([gesture, options]) => ({
+      surface,
+      gesture,
+      options: [...options, 'none'] as const,
+    })),
+  );
 
   const snapScale = (v: number) => 90 + Math.round(v / 5) * 5;
   // The number follows the thumb; the layout is only redone on release.
@@ -520,6 +546,30 @@
           </div>
         </div>
         <ShortcutList />
+      {:else if group === 'gestures'}
+        <p class="status">Touch and pen only; the mouse keeps its clicks and drags.</p>
+        {#each gestureRows as { surface, gesture, options } (`${surface}:${gesture}`)}
+          {@const label = `${GESTURE_NAMES[gesture]} ${SURFACES[surface]}`}
+          {@const current = mapped(settings.current.gestures, surface)[gesture] ?? 'none'}
+          <div class="row">
+            <span class="label">{label}</span>
+            <div class="segmented" role="radiogroup" aria-label={label}>
+              {#each options as action (action)}
+                <button
+                  role="radio"
+                  aria-checked={current === action}
+                  class:active={current === action}
+                  onclick={() => settings.remap(surface, gesture, action)}
+                >
+                  {ACTIONS[action]}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/each}
+        <div class="actions">
+          <button class="button" onclick={() => settings.set('gestures', {})}>Reset to defaults</button>
+        </div>
       {:else if group === 'integrations'}
         {#if engine.integrations}
           {@const integrations = engine.integrations}
