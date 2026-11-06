@@ -302,7 +302,29 @@ What was wrong, and the fixes:
   the bars used the Web Animations API; with GPU rendering on, the phone
   layout then froze for ~1.4 s every 2 s. Plain timer updates don't.
 
-Android is untested until it has a build.
+Android (2026-11-06, #131): Sony Xperia (XQ-DC54, 60 Hz), Android 15,
+Android System WebView 156, debug APK's WebView navigated to the dev server
+over `adb reverse`, 50k tracks. Portrait (384×896 CSS px, phone layout):
+
+| | Track list | Album grid | List + grid (stacked) |
+|---|---|---|---|
+| With the blurred panel | 60 | 60 | 12–33 |
+| Scroll only | 60 | 60 | — |
+
+Renderer memory stays near 300 MB for one widget, but the stacked list +
+grid renders all 50,000 rows and every card (2.2–2.7 GB): the first run got
+the renderer killed by Android's low-memory killer, taking the app and its
+playback with it. Tickets: #157 (stacked splits), #158 (survive a renderer
+death). Landscape (896×384, desktop layout) gave 60 everywhere except list
++ grid scroll-only at 46–51.
+
+**The playback clock looped on phones.** Its tick read the clock state it
+had just written, so the effect that starts it reran on its own write for
+as long as `Date.now()` moved on between runs: on the phone Svelte's update
+limit was hit every tick, with ~500 forced style and layout passes a
+second. Phone Chrome 156 with the same page (the app's WebView can't reach
+a test engine): playing cost 62% of a core with the sheet closed, 76% open,
+87% on the lyrics view. Fixed: 7.1%, 7.3%, 8.6% (paused: 4.5%).
 
 ### Android background-audio spike (2026-10-24)
 

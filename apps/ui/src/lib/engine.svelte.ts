@@ -354,8 +354,12 @@ export class PlaybackPosition {
     if (this.engine.player?.status !== 'playing') return;
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
-      this.#now = Date.now();
-      timer = setTimeout(tick, 1000 - (this.ms % 1000));
+      const now = Date.now();
+      this.#now = now;
+      // Not `this.ms`: reading `#now` here makes the calling effect rerun on
+      // its own write, which loops for as long as the clock moves on between
+      // runs (a phone at 70% of a core, Svelte's update limit hit each tick).
+      timer = setTimeout(tick, 1000 - (this.at(now) % 1000));
     };
     tick();
     return () => clearTimeout(timer);
