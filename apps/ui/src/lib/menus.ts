@@ -6,6 +6,7 @@ import type { EngineClient } from './engine.svelte';
 import type { QueueItem } from './protocol/QueueItem';
 import type { TrackRef } from './protocol/TrackRef';
 import { inSelection, ordered } from './selection';
+import { isAndroid } from './platform';
 import type { TrackListData } from './sources.svelte';
 import { toasts } from './toast.svelte';
 
@@ -18,7 +19,8 @@ async function copy(text: string) {
   }
 }
 
-const inDesktop = () => '__TAURI_INTERNALS__' in window;
+/** A file manager to show files in: the desktop app's, never Android's. */
+const inDesktop = () => '__TAURI_INTERNALS__' in window && !isAndroid;
 
 async function showInFolder(path: string) {
   const { invoke } = await import('@tauri-apps/api/core');

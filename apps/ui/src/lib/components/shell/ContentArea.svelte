@@ -16,6 +16,7 @@
   import Scrollbar from '../Scrollbar.svelte';
   import { rootPath } from '../../layout/overlay';
   import LayoutNode from './LayoutNode.svelte';
+  import { kdlAccept, isAndroid } from '../../platform';
   import { canDecorate } from '../../windowChrome';
   import WindowButtons from './WindowButtons.svelte';
 
@@ -284,7 +285,7 @@
                 Remove “{layout.layout.name}”
               </button>
             {/if}
-            <p class="tip">Or drop a .kdl file onto the window.</p>
+            {#if !isAndroid}<p class="tip">Or drop a .kdl file onto the window.</p>{/if}
           </div>
         {/if}
       </div>
@@ -301,7 +302,7 @@
   <input
     bind:this={fileInput}
     type="file"
-    accept=".kdl"
+    accept={kdlAccept}
     multiple
     hidden
     onchange={async (e) => {
