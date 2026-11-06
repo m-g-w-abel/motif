@@ -72,15 +72,15 @@
   async function scanQr() {
     error = null;
     cameraDenied = false;
-    const scanner = await import('@tauri-apps/plugin-barcode-scanner');
-    let permission = await scanner.checkPermissions();
-    if (permission !== 'granted') permission = await scanner.requestPermissions();
-    if (permission !== 'granted') {
-      cameraDenied = true;
-      return;
-    }
     let content: string;
     try {
+      const scanner = await import('@tauri-apps/plugin-barcode-scanner');
+      let permission = await scanner.checkPermissions();
+      if (permission !== 'granted') permission = await scanner.requestPermissions();
+      if (permission !== 'granted') {
+        cameraDenied = true;
+        return;
+      }
       content = (await scanner.scan({ formats: [scanner.Format.QRCode] })).content;
     } catch (err) {
       // Backing out of the camera rejects too; that needs no message.
@@ -163,7 +163,8 @@
       <div class="actions">
         {#if cameraDenied}
           <button class="button" onclick={() => import('@tauri-apps/plugin-barcode-scanner').then((s) => s.openAppSettings())}>Open settings</button>
-        {:else if isAndroid}
+        {/if}
+        {#if isAndroid}
           <button class="button" onclick={scanQr}>Scan QR</button>
         {/if}
         <button class="button primary" onclick={onClose}>Done</button>
