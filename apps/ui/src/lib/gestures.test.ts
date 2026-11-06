@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GESTURES, HOLD, Press, SLOP, SWIPE, dragValue } from './gestures';
+import { CHOICES, GESTURES, HOLD, Press, SLOP, SWIPE, dragValue, mapped } from './gestures';
 
 describe('Press', () => {
   it('picks no axis for small movements', () => {
@@ -76,5 +76,49 @@ describe('GESTURES', () => {
     expect(GESTURES.bar).toEqual({ 'swipe-left': 'next', 'swipe-right': 'previous' });
     expect(GESTURES.artwork).toEqual({ 'swipe-left': 'next', 'swipe-right': 'previous', 'drag-vertical': 'volume' });
     expect(GESTURES.row).toEqual({ 'long-press': 'queue' });
+  });
+});
+
+describe('CHOICES', () => {
+  it('offers every default gesture, with its default among its actions', () => {
+    for (const [surface, map] of Object.entries(GESTURES)) {
+      for (const [g, action] of Object.entries(map)) {
+        expect(CHOICES[surface as keyof typeof CHOICES][g as keyof typeof map]).toContain(action);
+      }
+    }
+  });
+});
+
+describe('mapped', () => {
+  it('is the defaults with no overrides', () => {
+    expect(mapped({}, 'artwork')).toEqual(GESTURES.artwork);
+    expect(mapped({}, 'row')).toEqual(GESTURES.row);
+  });
+
+  it('applies an override and keeps the other gestures', () => {
+    expect(mapped({ artwork: { 'drag-vertical': 'seek' } }, 'artwork')).toEqual({
+      'swipe-left': 'next',
+      'swipe-right': 'previous',
+      'drag-vertical': 'seek',
+    });
+    expect(mapped({ bar: { 'swipe-left': 'previous', 'swipe-right': 'next' } }, 'bar')).toEqual({
+      'swipe-left': 'previous',
+      'swipe-right': 'next',
+    });
+    expect(mapped({ row: { 'long-press': 'play-next' } }, 'row')).toEqual({ 'long-press': 'play-next' });
+  });
+
+  it('drops a gesture mapped to none', () => {
+    expect(mapped({ bar: { 'swipe-left': 'none' } }, 'bar')).toEqual({ 'swipe-right': 'previous' });
+    expect(mapped({ row: { 'long-press': 'none' } }, 'row')).toEqual({});
+  });
+
+  it('ignores stored overrides the gesture does not offer, and garbage', () => {
+    const bad = { row: { 'long-press': 'volume', 'swipe-left': 'next' }, bar: { 'long-press': 'queue' }, artwork: 'x' };
+    expect(mapped(bad, 'row')).toEqual(GESTURES.row);
+    expect(mapped(bad, 'bar')).toEqual(GESTURES.bar);
+    expect(mapped(bad, 'artwork')).toEqual(GESTURES.artwork);
+    expect(mapped(null, 'bar')).toEqual(GESTURES.bar);
+    expect(mapped('x', 'bar')).toEqual(GESTURES.bar);
   });
 });

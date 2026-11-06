@@ -10,12 +10,13 @@
   import { albumKey } from '../../albums';
   import { menu } from '../../contextMenu.svelte';
   import { demoLibrary, isDemo } from '../../demo';
-  import { dragValue, gesture, slide } from '../../gestures';
+  import { dragValue, gesture, mapped, slide } from '../../gestures';
   import { albumMenu, playTracks, queueTracks } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { viewSort } from '../../sort.svelte';
   import type { LibraryTrack } from '../../protocol/LibraryTrack';
   import type { TrackImage } from '../../protocol/TrackImage';
+  import { formatTime } from '../../format';
   import { volumeSetter } from '../../volume';
   import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
@@ -24,7 +25,7 @@
   /** In the main window a click expands the player; inside it, it doesn't. `playing` shows the playing track, not the selected one. */
   let { expands = true, playing = false }: { expands?: boolean; playing?: boolean } = $props();
 
-  const { engine, sheet, library } = getApp();
+  const { engine, sheet, library, settings, position } = getApp();
   const view = getViewState();
   const track = $derived(playing ? engine.current?.track : (view.browse.selectedTrack ?? undefined));
 
@@ -127,24 +128,41 @@
   const PADDING = 12;
   const side = $derived(Math.max(0, Math.min(width, height) - 2 * PADDING));
 
-  // In the sheet, touch gestures: swipe to skip, drag up or down for the volume, shown while it changes.
-  let level = $state<number | null>(null);
+  // In the sheet, touch gestures: swipe to skip, drag up or down for the volume (or seek), shown while it changes.
+  let level = $state<{ value: number; text: string; icon: 'volume' | 'play' } | null>(null);
   let hide: ReturnType<typeof setTimeout> | undefined;
+  let seekTimer: ReturnType<typeof setTimeout> | undefined;
+  const show = (value: number, text: string, icon: 'volume' | 'play') => {
+    level = { value, text, icon };
+    clearTimeout(hide);
+    hide = setTimeout(() => (level = null), 800);
+  };
   function onPointerDown(e: PointerEvent) {
     if ((e.target as HTMLElement).closest('button:not(.shade)')) return;
     // The carousel's stage follows a swipe: the centre card's own transform is the sheet's morph.
     const stage = (e.currentTarget as HTMLElement).querySelector<HTMLElement>('.coverflow .stage');
-    gesture(e, 'artwork', {
+    gesture(e, mapped(settings.current.gestures, 'artwork'), {
       next: () => engine.run({ type: 'next' }),
       previous: () => engine.run({ type: 'previous' }),
       volume: () => {
         const start = engine.player?.volume ?? 1;
         const set = volumeSetter(engine);
         return (dy) => {
-          level = dragValue(start, dy, Math.max(side, 200));
-          set(level);
-          clearTimeout(hide);
-          hide = setTimeout(() => (level = null), 800);
+          const v = dragValue(start, dy, Math.max(side, 200));
+          set(v);
+          show(v, `${Math.round(v * 100)}%`, 'volume');
+        };
+      },
+      seek: () => {
+        const duration = engine.current?.track.duration_ms ?? 0;
+        if (!duration) return undefined;
+        const start = position.ms / duration;
+        return (dy) => {
+          const ms = Math.round(dragValue(start, dy, Math.max(side, 200)) * duration);
+          show(ms / duration, formatTime(ms), 'play');
+          // Seeks once the finger rests, not on every move.
+          clearTimeout(seekTimer);
+          seekTimer = setTimeout(() => engine.run({ type: 'seek', position_ms: ms }), 150);
         };
       },
     }, stage ? slide(stage) : undefined);
@@ -161,9 +179,9 @@
 >
   {#if level !== null}
     <div class="level" aria-hidden="true">
-      <Icon name="volume" size={16} />
-      <span class="track"><span class="fill" style:transform="scaleX({level})"></span></span>
-      {Math.round(level * 100)}%
+      <Icon name={level.icon} size={16} />
+      <span class="track"><span class="fill" style:transform="scaleX({level.value})"></span></span>
+      {level.text}
     </div>
   {/if}
   {#if !expands}

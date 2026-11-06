@@ -45,7 +45,7 @@ control isn't an add-on: it's the normal code path.
 - **[Theme files](docs/THEMES.md)**, colour palettes taken from the album art,
   a waveform seek bar, and a spectrum visualiser fed by an FFT in the engine.
 - Synced, karaoke-style lyrics from embedded tags, `.lrc` sidecars or LRCLIB.
-- A phone layout with a drawer, a full-screen now-playing sheet and gestures.
+- A phone layout with a drawer, a full-screen now-playing sheet and touch gestures, each remappable in Settings.
 
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable

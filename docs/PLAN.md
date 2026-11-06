@@ -249,7 +249,7 @@ Tickets #117–#133 (milestone "Phase 5").
   by default. Volume keys control the remote engine in remote mode.
 - **Gestures** (touch only, also on touchscreen desktops): swipe the bar or
   artwork to skip, long-press a row to queue, vertical drag on the artwork
-  for volume. All remappable.
+  for volume. All remappable (Settings → Gestures: also seek, queue next or none).
 - **Deferred:** signed release builds, F-Droid metadata and battery-killer
   testing on release builds.
 

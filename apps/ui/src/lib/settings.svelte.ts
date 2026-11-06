@@ -1,4 +1,5 @@
 import type { ArtColours } from './artAccent';
+import type { Action, Gesture, Overrides, Surface } from './gestures';
 
 /**
  * Appearance and player preferences. Client-side and per device; layouts
@@ -25,6 +26,8 @@ export interface Settings {
   vimKeys: boolean;
   /** Desktop: the app draws its own window buttons instead of the system title bar. */
   ownDecorations: boolean;
+  /** Touch gestures remapped from their defaults (gestures.ts); empty keeps them all. */
+  gestures: Overrides;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -39,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   navCollapsed: false,
   vimKeys: false,
   ownDecorations: false,
+  gestures: {},
 };
 
 const KEY = 'settings';
@@ -67,5 +71,11 @@ export class SettingsStore {
     } catch {
       // Applies until reload.
     }
+  }
+
+  /** Maps one gesture to `action`, keeping the others. */
+  remap(surface: Surface, gesture: Gesture, action: Action | 'none') {
+    const g = this.current.gestures;
+    this.set('gestures', { ...g, [surface]: { ...g[surface], [gesture]: action } });
   }
 }

@@ -15,16 +15,41 @@ export type Gesture = 'swipe-left' | 'swipe-right' | 'long-press' | 'drag-vertic
 export type Surface = 'bar' | 'artwork' | 'row';
 
 /** Actions done once, when the gesture completes. */
-type Once = 'next' | 'previous' | 'queue';
+type Once = 'next' | 'previous' | 'queue' | 'play-next';
 /** Actions that follow the finger while it drags. */
-type Follow = 'volume';
+type Follow = 'volume' | 'seek';
 export type Action = Once | Follow;
+export type GestureMap = Partial<Record<Gesture, Action>>;
 
-export const GESTURES: Record<Surface, Partial<Record<Gesture, Action>>> = {
+export const GESTURES: Record<Surface, GestureMap> = {
   bar: { 'swipe-left': 'next', 'swipe-right': 'previous' },
   artwork: { 'swipe-left': 'next', 'swipe-right': 'previous', 'drag-vertical': 'volume' },
   row: { 'long-press': 'queue' },
 };
+
+const SKIP: Action[] = ['next', 'previous'];
+/** What each gesture may be remapped to in Settings, besides none. */
+export const CHOICES: Record<Surface, Partial<Record<Gesture, Action[]>>> = {
+  bar: { 'swipe-left': SKIP, 'swipe-right': SKIP },
+  artwork: { 'swipe-left': SKIP, 'swipe-right': SKIP, 'drag-vertical': ['volume', 'seek'] },
+  row: { 'long-press': ['queue', 'play-next'] },
+};
+
+/** The user's remappings (Settings), per surface: an action, or none to turn the gesture off. */
+export type Overrides = Partial<Record<Surface, Partial<Record<Gesture, Action | 'none'>>>>;
+
+/** A surface's gestures with `overrides` applied; anything the gesture doesn't offer (from storage) is ignored. */
+export function mapped(overrides: unknown, surface: Surface): GestureMap {
+  const map = { ...GESTURES[surface] };
+  const own: unknown = (overrides as Record<string, unknown> | null)?.[surface];
+  if (typeof own !== 'object' || own === null) return map;
+  for (const [g, choices] of Object.entries(CHOICES[surface]) as [Gesture, Action[]][]) {
+    const action = (own as Record<string, unknown>)[g];
+    if (action === 'none') delete map[g];
+    else if (choices.includes(action as Action)) map[g] = action as Action;
+  }
+  return map;
+}
 
 /** One press, from where (px) and when (ms) it started. */
 export class Press {
@@ -62,13 +87,15 @@ export class Press {
   }
 }
 
+const isFollow = (a: Action): a is Follow => a === 'volume' || a === 'seek';
+
 /** A 0..1 value dragged from `start`: up raises it, by the whole range over `span` px. */
 export function dragValue(start: number, dy: number, span: number) {
   return Math.min(1, Math.max(0, start - dy / span));
 }
 
-/** What a surface can do; a `Follow` action starts a drag and gets its vertical distance (down positive). */
-export type Handlers = Partial<Record<Once, () => void> & Record<Follow, () => (dy: number) => void>>;
+/** What a surface can do; a `Follow` action starts a drag (undefined: not now) and gets its vertical distance (down positive). */
+export type Handlers = Partial<Record<Once, () => void> & Record<Follow, () => ((dy: number) => void) | undefined>>;
 
 /** Shows a swipe under way: `move` as the finger goes, then `end` with the swipe it completed (null: none). */
 export interface Slide {
@@ -102,15 +129,15 @@ export function slide(el: HTMLElement): Slide {
 }
 
 /**
- * Tracks a touch or pen press on `surface` and runs what its gestures map
- * to; `shown` shows its swipes. On surfaces with a long-press, the browser's
+ * Tracks a touch or pen press on a surface and runs what its gestures map
+ * to (`mapped`); `shown` shows its swipes that do something. On surfaces with a long-press, the browser's
  * own long-press (the context menu) is held back; menus stay on right-click.
  */
-export function gesture(e: PointerEvent, surface: Surface, on: Handlers, shown?: Slide) {
+export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: Slide) {
   if (e.pointerType === 'mouse' || !e.isPrimary) return;
-  const map = GESTURES[surface];
   const press = new Press(e.clientX, e.clientY, performance.now());
   const holds = !!map['long-press'];
+  const swipes = !!(map['swipe-left'] || map['swipe-right']);
   let follow: ((dy: number) => void) | undefined;
   let longPressed = false;
   // Its own function per press, so one press's cleanup never removes another's.
@@ -121,7 +148,7 @@ export function gesture(e: PointerEvent, surface: Surface, on: Handlers, shown?:
 
   const run = (g: Gesture) => {
     const action = map[g];
-    if (action && action !== 'volume') on[action]?.();
+    if (action && !isFollow(action)) on[action]?.();
   };
   const timer = holds
     ? setTimeout(() => {
@@ -134,11 +161,11 @@ export function gesture(e: PointerEvent, surface: Surface, on: Handlers, shown?:
   const move = (ev: PointerEvent) => {
     if (ev.pointerId !== e.pointerId) return;
     const axis = press.move(ev.clientX, ev.clientY);
-    if (axis === 'x') shown?.move(press.offset(ev.clientX));
+    if (axis === 'x' && swipes) shown?.move(press.offset(ev.clientX));
     if (axis !== 'y') return;
     const action = map['drag-vertical'];
-    if (action === 'volume') {
-      follow ??= on.volume?.();
+    if (action && isFollow(action)) {
+      follow ??= on[action]?.();
       follow?.(ev.clientY - press.y);
     }
   };
@@ -146,11 +173,11 @@ export function gesture(e: PointerEvent, surface: Surface, on: Handlers, shown?:
     if (ev.pointerId !== e.pointerId) return;
     const swipe = longPressed ? null : press.swipe(ev.clientX);
     if (swipe) run(swipe);
-    if (press.axis === 'x') shown?.end(swipe);
+    if (press.axis === 'x' && swipes) shown?.end(swipe && map[swipe] ? swipe : null);
     end();
   };
   const end = (ev?: PointerEvent) => {
-    if (ev?.type === 'pointercancel' && press.axis === 'x') shown?.end(null);
+    if (ev?.type === 'pointercancel' && press.axis === 'x' && swipes) shown?.end(null);
     clearTimeout(timer);
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
