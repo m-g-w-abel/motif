@@ -62,7 +62,8 @@ device sets it; while the phone controls another engine, the keys set that
 engine's volume. It behaves like a good Android audio app: calls and alarms
 pause it until they end, another player pauses it for good, unplugging
 headphones pauses it, and navigation prompts duck it without touching the
-user's volume.
+user's volume. System back closes the topmost menu, dialog, screen, sheet or
+drawer before it leaves the app.
 
 ## Engineering notes
 
