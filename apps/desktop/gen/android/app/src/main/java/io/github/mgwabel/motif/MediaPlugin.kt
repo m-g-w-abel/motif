@@ -1,15 +1,21 @@
 package io.github.mgwabel.motif
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
 import android.graphics.BitmapFactory
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -51,6 +57,15 @@ class MediaPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun listen(invoke: Invoke) {
     Playback.buttons = invoke.parseArgs(ListenArgs::class.java).channel
+    invoke.resolve()
+  }
+
+  /** Where audio focus changes and unplugged headphones go, as `crate::focus::Change`. */
+  @Command
+  fun listenFocus(invoke: Invoke) {
+    val channel = invoke.parseArgs(ListenArgs::class.java).channel
+    val context = activity.applicationContext
+    main.post { Focus.listen(context, channel) }
     invoke.resolve()
   }
 
@@ -119,6 +134,65 @@ object Volume {
     }.also { context.contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, it) }
     sent = -1
     report()
+  }
+}
+
+/**
+ * Audio focus, held from playing until stopped, and headphones or Bluetooth
+ * audio disconnecting. Reported to `apps/desktop/src/focus.rs`, which pauses,
+ * resumes and ducks (Android doesn't duck AAudio streams itself).
+ */
+object Focus {
+  private var channel: Channel? = null
+  private var noisy: BroadcastReceiver? = null
+  private val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+    .setAudioAttributes(
+      AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+        .build()
+    )
+    .setOnAudioFocusChangeListener { change ->
+      when (change) {
+        AudioManager.AUDIOFOCUS_GAIN -> "gain"
+        AudioManager.AUDIOFOCUS_LOSS -> "loss"
+        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "loss_transient"
+        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> "loss_transient_can_duck"
+        else -> null
+      }?.let(::send)
+    }
+    .build()
+
+  private fun send(change: String) {
+    channel?.sendObject(change)
+  }
+
+  /** On the main thread. */
+  fun listen(context: Context, channel: Channel) {
+    this.channel = channel
+    if (noisy != null) return
+    noisy = object : BroadcastReceiver() {
+      override fun onReceive(context: Context, intent: Intent) = send("noisy")
+    }.also {
+      ContextCompat.registerReceiver(
+        context, it, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED
+      )
+    }
+  }
+
+  /**
+   * On starting to play. Granted, it counts as a gain (Android reports none), which ends a duck;
+   * during a call Android refuses, and the music pauses again.
+   */
+  fun request(context: Context) {
+    when (Volume.audio(context).requestAudioFocus(request)) {
+      AudioManager.AUDIOFOCUS_REQUEST_GRANTED -> send("gain")
+      AudioManager.AUDIOFOCUS_REQUEST_FAILED -> Playback.send("pause")
+    }
+  }
+
+  fun abandon(context: Context) {
+    Volume.audio(context).abandonAudioFocusRequest(request)
   }
 }
 

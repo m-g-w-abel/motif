@@ -4,6 +4,8 @@
 //! The window's UI then connects to it exactly as a remote client would; the
 //! only Tauri-specific call is [`engine_url`], which tells it where to connect.
 
+#[cfg(any(test, target_os = "android"))]
+mod focus;
 #[cfg(target_os = "android")]
 mod media;
 #[cfg(any(test, target_os = "android"))]

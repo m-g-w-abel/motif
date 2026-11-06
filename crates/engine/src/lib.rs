@@ -45,6 +45,7 @@ enum Request {
     },
     Playback(oneshot::Sender<Playback>),
     Restore(Box<Playback>),
+    Duck(bool),
 }
 
 /// Handle to a running engine. Cheap to clone.
@@ -112,6 +113,10 @@ impl Engine {
                             }
                             Some(Request::Restore(saved)) => {
                                 player.restore(*saved, &resolver);
+                                true
+                            }
+                            Some(Request::Duck(ducked)) => {
+                                output.duck(ducked);
                                 true
                             }
                         }
@@ -201,6 +206,12 @@ impl Engine {
     /// Goes back to saved playback, paused (see [`Player::restore`]).
     pub async fn restore(&self, saved: Playback) -> Result<(), EngineError> {
         self.request(Request::Restore(Box::new(saved))).await
+    }
+
+    /// Lowers the output while another app talks over it (Android's
+    /// navigation prompts). The state's volume, the user's, doesn't change.
+    pub async fn duck(&self, ducked: bool) -> Result<(), EngineError> {
+        self.request(Request::Duck(ducked)).await
     }
 
     async fn request(&self, request: Request) -> Result<(), EngineError> {
