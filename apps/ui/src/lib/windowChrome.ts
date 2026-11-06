@@ -1,5 +1,7 @@
+import { isAndroid } from './platform';
+
 /** Own window decorations only make sense in the desktop app, never on Android. */
-export const canDecorate = '__TAURI_INTERNALS__' in window && !/Android/i.test(navigator.userAgent);
+export const canDecorate = '__TAURI_INTERNALS__' in window && !isAndroid;
 const mac = /Mac/i.test(navigator.userAgent);
 /** macOS keeps its own traffic lights, so only the other systems get buttons. */
 export const drawsButtons = canDecorate && !mac;

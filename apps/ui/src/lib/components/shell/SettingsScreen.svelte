@@ -21,6 +21,7 @@
   import ShortcutList from './ShortcutList.svelte';
   import Slider from '../Slider.svelte';
   import { FONT_LIST } from '../../themeFile';
+  import { kdlAccept, isAndroid } from '../../platform';
   import { canDecorate } from '../../windowChrome';
   import { canDiscover } from '../../discover';
   import { engines } from '../../engine.svelte';
@@ -263,9 +264,9 @@
                 Remove “{activeUserTheme.name}”
               </button>
             {/if}
-            <input bind:this={themeInput} type="file" accept=".kdl" multiple hidden onchange={(e) => pickThemes(e.currentTarget.files)} />
+            <input bind:this={themeInput} type="file" accept={kdlAccept} multiple hidden onchange={(e) => pickThemes(e.currentTarget.files)} />
           </div>
-          <p class="status">Or drop a theme .kdl file onto the window.</p>
+          {#if !isAndroid}<p class="status">Or drop a theme .kdl file onto the window.</p>{/if}
         </div>
 
         {#each choices as choice (choice.key)}
@@ -597,6 +598,8 @@
             <p class="status">Scrobbles what this engine plays, from any window or none.</p>
           </div>
           {/each}
+          <!-- The phone's own engine can't reach Discord; a computer's engine still can, from the phone. -->
+          {#if !storage}
           <div class="row">
             <span class="label">Discord status</span>
             <div class="segmented" role="radiogroup" aria-label="Discord status">
@@ -606,6 +609,7 @@
             </div>
             <p class="status">Shows what plays on your Discord profile, as "Listening to" the artist, while Discord runs on the computer playing. Cover art comes from the Cover Art Archive for tracks tagged with a MusicBrainz release.</p>
           </div>
+          {/if}
           {#if integrations.secrets_unencrypted}
             <p class="status">No system keyring found: sign-ins are stored unencrypted, readable only by your user.</p>
           {/if}
