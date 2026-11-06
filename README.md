@@ -60,7 +60,9 @@ with background playback that held up through 30 minutes of forced deep Doze.
 The phone's volume keys and Motif's volume are the same control, whichever
 device sets it; while the phone controls another engine, the keys set that
 engine's volume, and (opt-in) its track and buttons show in the notification
-and on the lock screen. It behaves like a good Android audio app: calls and alarms
+and on the lock screen. It adds another engine by scanning that host's pairing
+QR with the camera, or by picking it from the LAN and typing its code. It
+behaves like a good Android audio app: calls and alarms
 pause it until they end, another player pauses it for good, unplugging
 headphones pauses it, and navigation prompts duck it without touching the
 user's volume. System back closes the topmost menu, dialog, screen, sheet or
