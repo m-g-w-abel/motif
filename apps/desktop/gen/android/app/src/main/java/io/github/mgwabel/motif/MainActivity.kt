@@ -4,24 +4,35 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.util.Log
 import android.view.KeyEvent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
 import org.json.JSONObject
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
 
 class MainActivity : TauriActivity() {
   private var multicastLock: WifiManager.MulticastLock? = null
   private var webView: WebView? = null
   /** Set by the UI while a remote engine is current (`apps/ui/src/lib/volumeKeys.ts`). */
   @Volatile private var volumeKeys = false
+  /** Remote engine updates, in order, off the UI's thread: artwork downloads. */
+  private val remoteMedia = Executors.newSingleThreadExecutor()
+  /** The last remote artwork, by URL; only on [remoteMedia]. */
+  private var cover: Pair<String, Bitmap?>? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -29,6 +40,8 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onDestroy() {
+    // Nothing is left to send its buttons to.
+    Playback.endRemote(applicationContext)
     multicastLock?.release()
     multicastLock = null
     super.onDestroy()
@@ -86,6 +99,23 @@ class MainActivity : TauriActivity() {
       volumeKeys = on
     }
 
+    /** A remote engine's playback for the notification (`apps/ui/src/lib/remoteMedia.ts`), or null for the phone's. */
+    @JavascriptInterface
+    fun setRemoteMedia(json: String?) = remoteMedia.execute {
+      val media = json?.let(::JSONObject)
+      val url = media?.takeUnless { it.isNull("cover") }?.getString("cover")
+      val known = cover
+      // A failed download stays failed for that track, so updates don't each wait for it again.
+      val art = if (url == null) null else if (known?.first == url) known.second else download(url).also { cover = url to it }
+      runOnUiThread {
+        if (isDestroyed) return@runOnUiThread
+        if (media == null) Playback.endRemote(applicationContext)
+        else Playback.showRemote(applicationContext, media, art) { command ->
+          webView.evaluateJavascript("window.motifRemoteButton?.($command)", null)
+        }
+      }
+    }
+
     /** What back does on the root screen since Android 12: the task goes behind, the page and playback stay. */
     @JavascriptInterface
     fun moveToBack() = runOnUiThread { moveTaskToBack(true) }
@@ -96,6 +126,17 @@ class MainActivity : TauriActivity() {
         isAppearanceLightStatusBars = dark
         isAppearanceLightNavigationBars = dark
       }
+    }
+
+    private fun download(url: String): Bitmap? = try {
+      (URL(url).openConnection() as HttpURLConnection).run {
+        connectTimeout = 5000
+        readTimeout = 5000
+        try { inputStream.use(BitmapFactory::decodeStream) } finally { disconnect() }
+      }
+    } catch (e: IOException) {
+      Log.w("Motif", "can't fetch the remote engine's artwork", e)
+      null
     }
 
     @JavascriptInterface

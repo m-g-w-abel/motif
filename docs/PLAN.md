@@ -372,6 +372,29 @@ Kotlin-to-Rust calls for later Android work can use the same pattern.
   service (so it can be frozen) until Motif is next opened. Fine while the
   phone is not a pairable host.
 
+### Remote playback controls (#126, 2026-11-06)
+
+With Settings → Devices → Remote playback controls on, a remote engine's
+playback takes over the phone's one media session (`Playback` in
+`PlaybackService.kt` keeps the phone's and the remote's state apart and
+shows the remote's while it's set). The UI's existing connection drives it:
+`apps/ui/src/lib/remoteMedia.ts` sends the remote's track, state and
+artwork URL to `MainActivity.setRemoteMedia` on every change, Kotlin
+downloads the art, and the buttons come back as `protocol::Command` JSON
+that the UI sends to the remote engine. Nothing goes through the phone's
+engine. Disconnected, stopped or nothing queued sends `null`: the phone's
+engine shows again and the service stops if that is idle too. Audio focus
+stays with the phone's engine.
+
+- The connection stays in the WebView. Wry's `onPause` calls
+  `WebView.onPause()`, which doesn't pause JavaScript, and the foreground
+  service keeps the process from being frozen, so the socket stays up.
+  Moving it to the native side would mean a second client with its own
+  pairing token; only worth it if the phone test shows the WebView dropping
+  it.
+- Not yet checked on the phone: lock screen, buttons, the notification
+  going on disconnect, and the hour-idle battery number.
+
 ### Background library work (#140, 2026-11-05)
 
 Without the playback service, Android killed a backgrounded Motif for

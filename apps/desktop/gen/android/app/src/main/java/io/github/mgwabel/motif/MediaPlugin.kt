@@ -187,7 +187,7 @@ object Focus {
   fun request(context: Context) {
     when (Volume.audio(context).requestAudioFocus(request)) {
       AudioManager.AUDIOFOCUS_REQUEST_GRANTED -> send("gain")
-      AudioManager.AUDIOFOCUS_REQUEST_FAILED -> Playback.send("pause")
+      AudioManager.AUDIOFOCUS_REQUEST_FAILED -> Playback.sendLocal("pause")
     }
   }
 
