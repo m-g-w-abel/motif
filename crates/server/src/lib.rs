@@ -960,7 +960,8 @@ mod tests {
                     // A handshake under way as the old socket closes, or one in
                     // the moment before the new one binds, fails at once
                     // (refused or reset) and the client retries: unavoidable
-                    // without SO_REUSEPORT.
+                    // without SO_REUSEPORT. A reset after any response byte
+                    // still fails the test.
                     let mut stream = match std::net::TcpStream::connect(addr) {
                         Ok(stream) => stream,
                         Err(err)
@@ -976,15 +977,27 @@ mod tests {
                     };
                     let limit = Some(std::time::Duration::from_secs(5));
                     stream.set_read_timeout(limit).unwrap();
-                    let mut response = String::new();
+                    let mut response = Vec::new();
                     let got = stream
                         .write_all(
                             b"GET /nothing HTTP/1.1\r\nHost: motif\r\nConnection: close\r\n\r\n",
                         )
-                        .and_then(|()| stream.read_to_string(&mut response));
+                        .and_then(|()| stream.read_to_end(&mut response));
                     match got {
-                        Ok(_) if response.starts_with("HTTP/1.1") => served += 1,
+                        Ok(_) if response.starts_with(b"HTTP/1.1") => served += 1,
                         Ok(_) => reset.push("closed without a response".to_owned()),
+                        // Completed on the old socket after its backlog was
+                        // drained, before it closed (#141's gap): the server
+                        // never read it, so the client retries as if refused.
+                        Err(err)
+                            if response.is_empty()
+                                && matches!(
+                                    err.kind(),
+                                    ErrorKind::ConnectionReset | ErrorKind::BrokenPipe
+                                ) =>
+                        {
+                            refused += 1
+                        }
                         Err(err) => reset.push(err.to_string()),
                     }
                 }
