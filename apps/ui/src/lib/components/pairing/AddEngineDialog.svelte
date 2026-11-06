@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getApp } from '../../context';
   import { guessName } from '../../deviceName';
   import { discoverEngines, holdMulticast, pairEngine, parsePairLink, type FoundEngine } from '../../discover';
   import { engines } from '../../engine.svelte';
@@ -7,6 +8,7 @@
 
   /** Add an engine from the LAN: pick one found over mDNS and type the code its host shows (or scan its QR), wait for the host to allow it. */
   let { onClose }: { onClose: () => void } = $props();
+  const { settingsView } = getApp();
 
   let found = $state.raw<FoundEngine[]>([]);
   let searched = $state(false);
@@ -81,11 +83,15 @@
         cameraDenied = true;
         return;
       }
+      settingsView.scanning = true;
       content = (await scanner.scan({ formats: [scanner.Format.QRCode] })).content;
     } catch (err) {
-      // Backing out of the camera rejects too; that needs no message.
-      if (!/cancel/i.test(String(err))) error = `Can't scan: ${err}`;
+      // Plugins reject with `{ message }`. Backing out of the camera rejects too; that needs no message.
+      const reason = (err as { message?: string } | null)?.message ?? String(err);
+      if (!/cancel/i.test(reason)) error = `Can't scan: ${reason}`;
       return;
+    } finally {
+      settingsView.scanning = false;
     }
     const link = parsePairLink(content);
     if (!link) {

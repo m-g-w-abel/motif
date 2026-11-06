@@ -8,6 +8,8 @@ export class SettingsView {
   pairing = $state(false);
   /** The Add an engine dialog is open. */
   addingEngine = $state(false);
+  /** Its camera is scanning a QR; system back closes the camera, not the dialog. */
+  scanning = $state(false);
 
   open(group: SettingsGroup = 'interface') {
     this.group = group;
