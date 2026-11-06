@@ -21,6 +21,8 @@
   import CopyButton from './lib/components/CopyButton.svelte';
   import { toasts } from './lib/toast.svelte';
   import { routeVolumeKeys } from './lib/volumeKeys';
+  import { routeBack } from './lib/back';
+  import { contextMenu } from './lib/contextMenu.svelte';
   import { applyDecorations } from './lib/windowChrome';
   import { shortcutFor } from './lib/shortcuts';
   import ResizeEdges from './lib/components/shell/ResizeEdges.svelte';
@@ -257,6 +259,21 @@
   $effect(() => (remote ? routeVolumeKeys(engine) : undefined));
 
   let editing = $state(false);
+
+  // Android back closes the topmost layer. Menus and dialogs close through
+  // their own Esc handling (the pair dialog also cancels its code there).
+  const escape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  $effect(() =>
+    routeBack(() => [
+      { open: contextMenu.items.length > 0, close: escape },
+      { open: helpOpen || settingsView.pairing || settingsView.addingEngine, close: escape },
+      { open: editing, close: () => (editing = false) },
+      { open: layout.arranging, close: () => (layout.arranging = false) },
+      { open: !!settingsView.group, close: () => settingsView.close() },
+      { open: sheet.open, close: () => sheet.collapse() },
+      { open: drawer.open, close: () => drawer.close() },
+    ]),
+  );
   const player = $derived(settings.current.player);
 </script>
 
