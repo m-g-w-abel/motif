@@ -16,6 +16,14 @@ allprojects {
     }
 }
 
+// Tauri's own modules live in ~/.cargo/registry, shared by every checkout, and would
+// build there: parallel builds in two worktrees then delete each other's files.
+subprojects {
+    if (!projectDir.startsWith(rootDir)) {
+        layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("tauri/$name"))
+    }
+}
+
 tasks.register("clean").configure {
     delete("build")
 }
