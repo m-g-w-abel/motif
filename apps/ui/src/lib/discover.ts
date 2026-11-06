@@ -27,3 +27,26 @@ export const pairEngine = (address: string, code: string, name: string) => invok
 export function holdMulticast(on: boolean) {
   (globalThis as { MotifAndroid?: { setMulticast(on: boolean): void } }).MotifAndroid?.setMulticast(on);
 }
+
+export interface PairLink {
+  /** `host:port`. */
+  address: string;
+  code: string;
+  /** The engine key. */
+  id: string;
+}
+
+/** Reads the link in a host's pairing QR (`pair_url` in the server); null for anything else. */
+export function parsePairLink(text: string): PairLink | null {
+  let url: URL;
+  try {
+    url = new URL(text.trim());
+  } catch {
+    return null;
+  }
+  const code = url.searchParams.get('code');
+  const id = url.searchParams.get('id');
+  if (url.protocol !== 'http:' || url.pathname !== '/pair' || url.username || !code || !id) return null;
+  // URL drops the default port; saved addresses always carry one.
+  return { address: url.port ? url.host : `${url.host}:80`, code, id };
+}

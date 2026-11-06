@@ -1,11 +1,14 @@
 <script lang="ts">
+  import { getApp } from '../../context';
   import { guessName } from '../../deviceName';
-  import { discoverEngines, holdMulticast, pairEngine, type FoundEngine } from '../../discover';
+  import { discoverEngines, holdMulticast, pairEngine, parsePairLink, type FoundEngine } from '../../discover';
   import { engines } from '../../engine.svelte';
   import { addEngine, switchTo } from '../../engines';
+  import { isAndroid } from '../../platform';
 
-  /** Add an engine from the LAN: pick one found over mDNS, type the code its host shows, wait for the host to allow it. */
+  /** Add an engine from the LAN: pick one found over mDNS and type the code its host shows (or scan its QR), wait for the host to allow it. */
   let { onClose }: { onClose: () => void } = $props();
+  const { settingsView } = getApp();
 
   let found = $state.raw<FoundEngine[]>([]);
   let searched = $state(false);
@@ -16,6 +19,7 @@
   let waiting = $state(false);
   let cancelled = false;
   let error = $state<string | null>(null);
+  let cameraDenied = $state(false);
 
   // Looks again as long as the dialog is open; closing it stops all multicast.
   $effect(() => {
@@ -41,8 +45,8 @@
 
   const saved = (id: string) => engines.list.engines.some((e) => e.id === id);
 
-  async function pair(e: SubmitEvent) {
-    e.preventDefault();
+  async function pair(e?: SubmitEvent) {
+    e?.preventDefault();
     if (!chosen) return;
     error = null;
     cancelled = false;
@@ -65,6 +69,40 @@
     }
     waiting = false;
     if (!cancelled) error = reason.charAt(0).toUpperCase() + reason.slice(1);
+  }
+
+  async function scanQr() {
+    error = null;
+    cameraDenied = false;
+    let content: string;
+    try {
+      const scanner = await import('@tauri-apps/plugin-barcode-scanner');
+      let permission = await scanner.checkPermissions();
+      if (permission !== 'granted') permission = await scanner.requestPermissions();
+      if (permission !== 'granted') {
+        cameraDenied = true;
+        return;
+      }
+      settingsView.scanning = true;
+      content = (await scanner.scan({ formats: [scanner.Format.QRCode] })).content;
+    } catch (err) {
+      // Plugins reject with `{ message }`. Backing out of the camera rejects too; that needs no message.
+      const reason = (err as { message?: string } | null)?.message ?? String(err);
+      if (!/cancel/i.test(reason)) error = `Can't scan: ${reason}`;
+      return;
+    } finally {
+      settingsView.scanning = false;
+    }
+    const link = parsePairLink(content);
+    if (!link) {
+      error = "That isn't a Motif pairing QR. On the other computer: Settings → Devices → Pair a device.";
+      return;
+    }
+    // Seen on the LAN too: its name, and its other addresses to fall back on.
+    const known = found.find((e) => e.id === link.id);
+    chosen = { id: link.id, name: known?.name ?? link.address, addresses: [link.address, ...(known?.addresses.filter((a) => a !== link.address) ?? [])] };
+    code = link.code;
+    await pair();
   }
 
   /** The request can't be recalled: if the host allows it later, the engine is added to the list (not switched to). */
@@ -124,7 +162,19 @@
       {:else if !found.length}
         <p class="hint">{searched ? 'None found yet. Both devices need to be on the same network, and the other computer must be allowed to open to it (Settings → Devices).' : 'Looking…'}</p>
       {/if}
-      <div class="actions"><button class="button primary" onclick={onClose}>Done</button></div>
+      {#if cameraDenied}
+        <p class="error" role="alert">Motif isn't allowed to use the camera. Allow it in Android's settings: Permissions → Camera.</p>
+      {/if}
+      {#if error}<p class="error selectable" role="alert">{error}</p>{/if}
+      <div class="actions">
+        {#if cameraDenied}
+          <button class="button" onclick={() => import('@tauri-apps/plugin-barcode-scanner').then((s) => s.openAppSettings())}>Open settings</button>
+        {/if}
+        {#if isAndroid}
+          <button class="button" onclick={scanQr}>Scan QR</button>
+        {/if}
+        <button class="button primary" onclick={onClose}>Done</button>
+      </div>
     {/if}
   </div>
 </div>

@@ -70,7 +70,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(media::init());
+    let builder = builder
+        .plugin(media::init())
+        .plugin(tauri_plugin_barcode_scanner::init());
     builder
         .setup(|app| {
             #[cfg(target_os = "android")]

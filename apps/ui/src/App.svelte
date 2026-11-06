@@ -275,6 +275,7 @@
   const escape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   $effect(() =>
     routeBack(() => [
+      { open: settingsView.scanning, close: () => void import('@tauri-apps/plugin-barcode-scanner').then((s) => s.cancel()) },
       { open: contextMenu.items.length > 0, close: escape },
       { open: helpOpen || settingsView.pairing || settingsView.addingEngine, close: escape },
       { open: editing, close: () => (editing = false) },
