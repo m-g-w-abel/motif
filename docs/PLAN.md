@@ -392,8 +392,17 @@ stays with the phone's engine.
   Moving it to the native side would mean a second client with its own
   pairing token; only worth it if the phone test shows the WebView dropping
   it.
-- Not yet checked on the phone: lock screen, buttons, the notification
-  going on disconnect, and the hour-idle battery number.
+- Phone test (Sony, Android 15, 2026-11-06, a muted headless engine on
+  the LAN): track and art show in the notification and on the lock screen;
+  play, pause, next, previous and seek from both reach the remote (checked
+  against its state); stopping it, killing it (back within 4 s) or turning
+  the setting Off hands the session back to the phone's engine, and
+  reconnecting brings the remote back. The phone's engine had a paused
+  queue, so its own notification showed then instead of none, as designed.
+  With the setting Off, the phone's own playback and buttons work as before.
+- Not checked yet: the connection over minutes in the background with the
+  screen locked (the buttons were tried on the lock screen right after
+  locking), and the hour-idle battery number.
 
 ### Background library work (#140, 2026-11-05)
 
