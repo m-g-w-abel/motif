@@ -84,6 +84,7 @@ object Playback {
 
   /** `status` is a `protocol::PlaybackStatus`. */
   fun showStatus(context: Context, status: String, positionMs: Long) {
+    val was = state
     state = when (status) {
       "playing" -> PlaybackStateCompat.STATE_PLAYING
       "paused" -> PlaybackStateCompat.STATE_PAUSED
@@ -94,6 +95,10 @@ object Playback {
       PlaybackStateCompat.Builder().setActions(ACTIONS).setState(state, positionMs, 1f).build()
     )
     session.isActive = state != PlaybackStateCompat.STATE_STOPPED
+    when {
+      state == PlaybackStateCompat.STATE_PLAYING && was != state -> Focus.request(context)
+      state == PlaybackStateCompat.STATE_STOPPED && was != state -> Focus.abandon(context)
+    }
     sync(context)
   }
 

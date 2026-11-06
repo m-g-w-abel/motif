@@ -20,6 +20,9 @@ use crate::{
 /// corrected (and published).
 const MAX_DRIFT: Duration = Duration::from_millis(150);
 
+/// The volume factor while ducked: about -13 dB on the cubic volume curve.
+const DUCKED: f32 = 0.6;
+
 pub struct Output {
     /// Opened on first use and dropped if the device fails.
     audio: Option<Audio>,
@@ -37,6 +40,8 @@ pub struct Output {
     underruns: u64,
     /// Whether a visualiser wants [`Output::bands`].
     tap: bool,
+    /// Whether another app is talking over us ([`crate::Engine::duck`]).
+    ducked: bool,
 }
 
 struct Preloaded {
@@ -64,6 +69,7 @@ impl Output {
             seeks: 0,
             underruns: 0,
             tap: false,
+            ducked: false,
         }
     }
 
@@ -129,11 +135,12 @@ impl Output {
         }
         audio.set_playing(player.status() == PlaybackStatus::Playing);
         // On Android the volume is the system media volume (`apps/desktop/src/media.rs`), so no gain of our own.
-        audio.set_volume(if cfg!(target_os = "android") {
+        let volume = if cfg!(target_os = "android") {
             1.0
         } else {
             player.volume()
-        });
+        };
+        audio.set_volume(if self.ducked { volume * DUCKED } else { volume });
 
         let upcoming = player
             .upcoming()
@@ -226,6 +233,11 @@ impl Output {
             return true;
         }
         false
+    }
+
+    /// Lowers the output while ducked; applied on the next [`Output::reconcile`].
+    pub fn duck(&mut self, ducked: bool) {
+        self.ducked = ducked;
     }
 
     /// Starts or stops collecting audio for [`Output::bands`].

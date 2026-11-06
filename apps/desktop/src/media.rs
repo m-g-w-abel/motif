@@ -5,12 +5,16 @@
 //! freezing the app, so playback goes on in the background. The engine's
 //! volume is the system media volume ([`crate::volume`]). Without that
 //! service, the library holds its background work while the app is out of
-//! sight, or Android kills it for using the CPU.
+//! sight, or Android kills it for using the CPU. Audio focus and unplugged
+//! headphones pause, resume and duck it ([`crate::focus`]).
 
-use crate::volume::System;
+use crate::{
+    focus::{Change, Focus},
+    volume::System,
+};
 use engine::Engine;
 use library::Library;
-use protocol::Command;
+use protocol::{Command, PlaybackStatus};
 use tauri::{
     Manager, Runtime,
     ipc::{Channel, InvokeResponseBody},
@@ -49,6 +53,7 @@ pub fn start<R: Runtime>(kotlin: &Kotlin<R>, engine: Engine, library: Option<Lib
         })
     });
     let runtime = tokio::runtime::Handle::current();
+    let focus = focus_changes(engine.clone(), runtime.clone());
     let commands = engine.clone();
     let buttons: Channel<serde_json::Value> = Channel::new(move |body| {
         let InvokeResponseBody::Json(json) = body else {
@@ -76,6 +81,10 @@ pub fn start<R: Runtime>(kotlin: &Kotlin<R>, engine: Engine, library: Option<Lib
             if let Err(err) = kotlin.run_mobile_plugin::<serde_json::Value>("listen", listen) {
                 tracing::warn!(%err, "no media session buttons");
             }
+            let listen = serde_json::json!({ "channel": focus });
+            if let Err(err) = kotlin.run_mobile_plugin::<serde_json::Value>("listenFocus", listen) {
+                tracing::warn!(%err, "no audio focus");
+            }
             if let Some(channel) = background {
                 let listen = serde_json::json!({ "channel": channel });
                 if let Err(err) =
@@ -97,6 +106,38 @@ pub fn start<R: Runtime>(kotlin: &Kotlin<R>, engine: Engine, library: Option<Lib
     tokio::spawn(integrations::media_controls::follow(
         engine, library, updates,
     ));
+}
+
+/// Where `MediaPlugin.kt` reports audio focus and unplugged headphones.
+fn focus_changes(engine: Engine, runtime: tokio::runtime::Handle) -> Channel<serde_json::Value> {
+    let focus = std::sync::Mutex::new(Focus::default());
+    Channel::new(move |body| {
+        let InvokeResponseBody::Json(json) = body else {
+            return Ok(());
+        };
+        match serde_json::from_str::<Change>(&json) {
+            Ok(change) => {
+                let playing = engine.state().status == PlaybackStatus::Playing;
+                let (command, ducked) = {
+                    let mut focus = focus.lock().expect("focus state");
+                    (focus.on(change, playing), focus.ducked())
+                };
+                let engine = engine.clone();
+                runtime.spawn(async move {
+                    if let Err(err) = engine.duck(ducked).await {
+                        tracing::warn!(%err, "can't duck");
+                    }
+                    if let Some(command) = command
+                        && let Err(err) = engine.send(command).await
+                    {
+                        tracing::warn!(%err, "audio focus command rejected");
+                    }
+                });
+            }
+            Err(err) => tracing::warn!(%err, json, "unknown audio focus change"),
+        }
+        Ok(())
+    })
 }
 
 /// Keeps the engine's volume and Android's media volume the same.
