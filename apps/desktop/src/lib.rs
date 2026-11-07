@@ -8,6 +8,8 @@
 mod focus;
 #[cfg(target_os = "android")]
 mod media;
+#[cfg(target_os = "android")]
+mod secrets;
 #[cfg(any(test, target_os = "android"))]
 mod volume;
 
@@ -72,6 +74,7 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder
         .plugin(media::init())
+        .plugin(secrets::init())
         .plugin(tauri_plugin_barcode_scanner::init());
     builder
         .setup(|app| {

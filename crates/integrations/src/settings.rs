@@ -62,10 +62,15 @@ impl Secrets {
     }
 
     pub fn get(&self, name: &str) -> Option<String> {
-        match self.entry(name).map(|e| e.get_password()) {
-            Some(Ok(secret)) => Some(secret),
-            _ => self.read_file().remove(name),
+        if let Some(Ok(secret)) = self.entry(name).map(|e| e.get_password()) {
+            return Some(secret);
         }
+        let secret = self.read_file().remove(name)?;
+        // Moves a secret kept before there was a keyring (Android before #132) into it.
+        if let Err(err) = self.set(name, Some(&secret)) {
+            tracing::warn!(%err, "can't move a secret to the keyring");
+        }
+        Some(secret)
     }
 
     /// Stores `secret` under `name`, or forgets it if `None`.
@@ -99,15 +104,12 @@ impl Secrets {
         })
     }
 
-    #[cfg(not(target_os = "android"))]
+    /// On Android the app shell makes the Keystore `keyring`'s store. Its
+    /// fallback mock forgets everything on quit, so it never counts.
     fn entry(&self, name: &str) -> Option<keyring::Entry> {
-        keyring::Entry::new(&self.service, name).ok()
-    }
-
-    // shortcut: no keyring on Android, so secrets always use the file; use the Android Keystore when phase 5 brings sign-in there.
-    #[cfg(target_os = "android")]
-    fn entry(&self, _name: &str) -> Option<keyring::Entry> {
-        None
+        keyring::Entry::new(&self.service, name)
+            .ok()
+            .filter(|e| !e.get_credential().is::<keyring::mock::MockCredential>())
     }
 
     fn read_file(&self) -> BTreeMap<String, String> {
@@ -175,6 +177,29 @@ mod tests {
         }
         secrets.set(&name, None).unwrap();
         assert_eq!(secrets.get(&name), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn file_secrets_move_to_the_keyring() {
+        let dir = temp_dir("migrate");
+        let secrets = Secrets {
+            service: "motif-test".into(),
+            file: dir.join(SECRETS_FILE),
+        };
+        let name = format!("old-token-{}", std::process::id());
+        let mut kept = BTreeMap::new();
+        kept.insert(name.clone(), "hunter2".to_string());
+        secrets.write_file(&kept).unwrap();
+        assert_eq!(secrets.get(&name).as_deref(), Some("hunter2"));
+        let in_file = std::fs::read_to_string(&secrets.file).unwrap();
+        assert_eq!(in_file.contains("hunter2"), !secrets.keyring_available());
+        assert_eq!(
+            secrets.get(&name).as_deref(),
+            Some("hunter2"),
+            "after moving"
+        );
+        secrets.set(&name, None).unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 

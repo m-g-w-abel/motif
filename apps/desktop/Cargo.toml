@@ -37,6 +37,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
+# Only its store interface, which `secrets` fills with the Android Keystore.
+keyring = { version = "=3.6.3", default-features = false }
 serde_json.workspace = true
 tauri-plugin-barcode-scanner = "=2.5.3"
 
