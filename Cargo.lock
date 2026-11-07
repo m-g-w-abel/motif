@@ -1136,6 +1136,7 @@ version = "0.1.0"
 dependencies = [
  "engine",
  "integrations",
+ "keyring",
  "library",
  "mdns-sd",
  "mimalloc",

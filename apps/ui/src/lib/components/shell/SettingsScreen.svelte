@@ -969,6 +969,7 @@
 
   .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-2);
   }
 
