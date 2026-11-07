@@ -16,7 +16,7 @@ reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-n
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde.workspace = true
 serde_json.workspace = true
-# Without a native store (Android) it falls back to a mock, which `settings` never uses there.
+# Without a native store (Android) it falls back to a mock, which `settings` never uses; the Android shell brings its own store.
 keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 md-5 = "=0.10.6"
 souvlaki = "0.8.3"
