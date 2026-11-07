@@ -14,10 +14,12 @@ import android.os.Environment
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -27,6 +29,8 @@ import java.util.concurrent.Executors
 class MainActivity : TauriActivity() {
   private var multicastLock: WifiManager.MulticastLock? = null
   private var webView: WebView? = null
+  /** The renderer died while in the background; see [onRendererGone]. */
+  private var rendererGone = false
   /** Set by the UI while a remote engine is current (`apps/ui/src/lib/volumeKeys.ts`). */
   @Volatile private var volumeKeys = false
   /** Remote engine updates, in order, off the UI's thread: artwork downloads. */
@@ -37,6 +41,27 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+  }
+
+  /**
+   * Android killed or crashed the WebView's renderer (`.cargo/config.toml` routes wry's client here).
+   * The dead WebView goes, and the activity is recreated, which wry treats as a configuration change:
+   * Tauri and the engine stay, the page loads again in a new WebView, and [PlaybackService] keeps
+   * the music going meanwhile. In the background that waits for [onStart], so a renderer Android
+   * killed to free memory isn't started again straight away.
+   */
+  fun onRendererGone(view: WebView): Boolean {
+    Log.w("Motif", "WebView renderer gone; recreating the activity")
+    (view.parent as? ViewGroup)?.removeView(view)
+    view.destroy()
+    webView = null
+    if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) recreate() else rendererGone = true
+    return true
+  }
+
+  override fun onStart() {
+    super.onStart()
+    if (rendererGone) recreate()
   }
 
   override fun onDestroy() {

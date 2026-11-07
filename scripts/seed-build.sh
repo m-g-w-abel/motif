@@ -48,3 +48,12 @@ for profile in "${src[0]}"/debug "${src[0]}"/*/debug; do
   rsync -a --ignore-existing "${excludes[@]}" "$profile/" "${dst[0]}/$rel/"
   echo "Seeded ${dst[0]}/$rel."
 done
+
+# tauri's build script writes `TauriActivity.kt` into the checkout, but the seeded record
+# names the source checkout's copy and the build doesn't rerun for this one, so copy it.
+generated=apps/desktop/gen/android/app/src/main/java/io/github/mgwabel/motif/generated
+if [ -d "$main/$generated" ]; then
+  mkdir -p "$here/$generated"
+  rsync -a --ignore-existing "$main/$generated/" "$here/$generated/"
+  echo "Copied $generated."
+fi

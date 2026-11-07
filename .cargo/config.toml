@@ -1,3 +1,7 @@
 [env]
 # ts-rs writes generated TypeScript bindings here when `cargo test -p protocol` runs.
 TS_RS_EXPORT_DIR = { value = "apps/ui/src/lib/protocol", relative = true }
+# wry pastes this into its generated `RustWebViewClient` (regenerated on every Android
+# build, so it can't be edited there): a dead WebView renderer recovers instead of
+# taking the app, the engine and the music with it (`MainActivity.onRendererGone`).
+WRY_RUSTWEBVIEWCLIENT_CLASS_EXTENSION = "override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean = (view.context as? MainActivity)?.onRendererGone(view) ?: false"
