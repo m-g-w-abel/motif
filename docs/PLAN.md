@@ -451,10 +451,26 @@ after installing a build that raises the DB version (versions 7–9 each set
 `mtime = -1` for every track). That costs about 20 ms a file on this phone,
 roughly 3 min for the real collection, which is likely what was seen.
 
-Not measured yet: memory while browsing and playing (`scripts/soak.mjs` now
-takes `ATTACH=host:port` and `ADB_PID` for a phone engine, but wasn't run),
-hashing time for the whole library (the generated files hash much faster
-than real ones), and a first scan with the new build.
+**Memory while browsing and playing** (master 7f32ffd debug build, the real
+app with the 8,181-track collection; `ATTACH=127.0.0.1:7799 ADB_PID=<pid>
+node scripts/soak.mjs mix 1800`, app-process RSS: Rust engine and Java,
+not the WebView's renderer): 275 MB at the start, then a sawtooth between
+about 145 MB and 1.9 GB for 30 minutes (50 rounds), ending at 170 MB. Nothing
+accumulates. The peaks probably come from the `art` step, which asks for every album's
+cover at once, at a new thumbnail size each round plus full size, so
+hundreds of 3000 px covers are read from their tracks and decoded together.
+Browsing asks only for the rows in view, so it doesn't do this, but a
+smaller phone could kill the app at such a peak. Not attributed by a separate
+`art` run.
+
+The soak also showed that the library listed every Opus track as damaged
+("unsupported feature: core (codec)"): its hash/waveform/loudness decoder
+was Symphonia alone. Fixed in d46a987 (libopus for Opus, DB version 11
+checks noted files again). Opus files with covers over 16 MB (#137) still
+can't play: Symphonia's Ogg reader refuses packets over 16 MiB.
+
+Not measured yet: hashing time for the whole library (the generated files
+hash much faster than real ones) and a first scan with the new build.
 
 ## Phase 1 plan: desktop player
 
