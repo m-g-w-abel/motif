@@ -31,6 +31,13 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- "Open in Motif" on a host's pairing page (#125): motif://<host:port>/pair?code=…&id=… -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="motif" />
+            </intent-filter>
         </activity>
 
         <service

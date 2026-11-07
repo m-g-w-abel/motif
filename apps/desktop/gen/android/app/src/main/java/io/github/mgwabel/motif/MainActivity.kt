@@ -37,10 +37,25 @@ class MainActivity : TauriActivity() {
   private val remoteMedia = Executors.newSingleThreadExecutor()
   /** The last remote artwork, by URL; only on [remoteMedia]. */
   private var cover: Pair<String, Bitmap?>? = null
+  /** A pairing link from the host's pairing page, until the UI takes it (`apps/ui/src/App.svelte`). */
+  @Volatile private var pairLink: String? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // Not when recreated: that intent was taken already.
+    if (savedInstanceState == null) keepPairLink(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    if (keepPairLink(intent)) webView?.evaluateJavascript("window.motifPairLinkArrived?.()", null)
+  }
+
+  private fun keepPairLink(intent: Intent?): Boolean {
+    val link = intent?.data?.takeIf { intent.action == Intent.ACTION_VIEW && it.scheme == "motif" } ?: return false
+    pairLink = link.toString()
+    return true
   }
 
   /**
@@ -118,6 +133,9 @@ class MainActivity : TauriActivity() {
         multicastLock = null
       }
     }
+
+    @JavascriptInterface
+    fun takePairLink(): String? = pairLink.also { pairLink = null }
 
     @JavascriptInterface
     fun setVolumeKeys(on: Boolean) {

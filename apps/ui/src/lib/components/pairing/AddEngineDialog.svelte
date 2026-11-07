@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getApp } from '../../context';
   import { guessName } from '../../deviceName';
-  import { discoverEngines, holdMulticast, pairEngine, parsePairLink, type FoundEngine } from '../../discover';
+  import { discoverEngines, holdMulticast, pairEngine, parsePairLink, type FoundEngine, type PairLink } from '../../discover';
   import { engines } from '../../engine.svelte';
   import { addEngine, switchTo } from '../../engines';
   import { isAndroid } from '../../platform';
@@ -98,6 +98,18 @@
       error = "That isn't a Motif pairing QR. On the other computer: Settings → Devices → Pair a device.";
       return;
     }
+    await pairLink(link);
+  }
+
+  // A pairing link the app was opened with, from the host's pairing page.
+  $effect(() => {
+    const link = settingsView.pairLink;
+    if (!link) return;
+    settingsView.pairLink = null;
+    pairLink(link);
+  });
+
+  async function pairLink(link: PairLink) {
     // Seen on the LAN too: its name, and its other addresses to fall back on.
     const known = found.find((e) => e.id === link.id);
     chosen = { id: link.id, name: known?.name ?? link.address, addresses: [link.address, ...(known?.addresses.filter((a) => a !== link.address) ?? [])] };
