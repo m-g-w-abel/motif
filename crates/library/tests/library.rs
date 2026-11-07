@@ -979,3 +979,53 @@ fn a_shared_cover_survives_losing_the_track_it_was_read_from() {
     assert!(library.art(&key, Some(40)).unwrap().is_file());
     let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
 }
+
+#[test]
+fn opus_tracks_are_hashed_and_old_codec_flags_cleared() {
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    let opus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../engine/tests/fixtures/sine.opus");
+    fs::copy(opus, music.join("sine.opus")).unwrap();
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 1 && !s.scanning && s.hashing == 0);
+    let db = rusqlite::Connection::open(data.join("library.db")).unwrap();
+    let problem = |library: &Library| {
+        let query = LibraryQuery::Tracks {
+            search: None,
+            sort: vec![],
+            offset: 0,
+            limit: 1,
+        };
+        let QueryResult::Tracks { tracks, .. } = library.query(query).unwrap() else {
+            panic!()
+        };
+        tracks[0].problem.clone()
+    };
+    let hash = || -> String {
+        db.query_row("SELECT audio_hash FROM tracks", [], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .unwrap()
+        .unwrap_or_default()
+    };
+    assert!(hash().starts_with("pcm-b3:"), "{}", hash());
+    assert_eq!(problem(&library), None);
+
+    // Engines from before flagged every Opus file: an upgrade checks them again.
+    drop(library);
+    db.execute(
+        "UPDATE tracks SET audio_hash = '', problem = 'unsupported feature: core (codec): unsupported audio codec'",
+        [],
+    )
+    .unwrap();
+    db.pragma_update(None, "user_version", 10).unwrap();
+    let library = Library::open(&data).unwrap();
+    wait_until(&library, |_| !hash().is_empty());
+    assert_eq!(problem(&library), None);
+    assert!(hash().starts_with("pcm-b3:"), "{}", hash());
+    let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
+}

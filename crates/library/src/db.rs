@@ -153,7 +153,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 10;
+const VERSION: i32 = 11;
 
 fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -255,6 +255,14 @@ fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
                 let _ = std::fs::remove_file(path);
             }
         }
+    }
+    if version < 11 {
+        // Version 11 decodes Opus (with libopus) to hash it: check the files
+        // noted as damaged again, since every Opus file was.
+        conn.execute(
+            "UPDATE tracks SET audio_hash = NULL, problem = NULL WHERE problem IS NOT NULL",
+            [],
+        )?;
     }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;

@@ -4,7 +4,11 @@
 use std::{fs::File, path::Path};
 
 use symphonia::core::{
-    codecs::CodecParameters, errors::Error as SymError, formats::TrackType, io::MediaSourceStream,
+    codecs::{CodecParameters, audio::well_known::CODEC_ID_OPUS},
+    errors::Error as SymError,
+    formats::TrackType,
+    io::MediaSourceStream,
+    packet::Packet,
 };
 
 use crate::tags;
@@ -45,6 +49,9 @@ impl PcmHash {
     }
 }
 
+/// Appends one packet's samples (interleaved).
+type PacketDecoder = dyn FnMut(&Packet, &mut Vec<f32>) -> Result<(), String>;
+
 /// Decodes the file's default audio track, handing each packet's samples
 /// (interleaved) to `f` with the sample rate and channel count.
 pub fn decode(path: &Path, mut f: impl FnMut(&[f32], u32, usize)) -> Result<(), String> {
@@ -69,9 +76,39 @@ pub fn decode(path: &Path, mut f: impl FnMut(&[f32], u32, usize)) -> Result<(), 
     let track_id = track.id;
     let rate = params.sample_rate.unwrap_or(0);
     let channels = params.channels.as_ref().map_or(0, |c| c.count());
-    let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(params, &Default::default())
-        .map_err(|e| e.to_string())?;
+    // Symphonia has no Opus decoder; libopus (as the engine plays it) does.
+    let mut decode_packet: Box<PacketDecoder> = if params.codec == CODEC_ID_OPUS {
+        let layout = match channels {
+            1 => opus::Channels::Mono,
+            2 => opus::Channels::Stereo,
+            n => return Err(format!("{n}-channel Opus is not supported")),
+        };
+        let mut decoder = opus::Decoder::new(48_000, layout).map_err(|e| e.to_string())?;
+        let mut skip = track.delay.unwrap_or(0) as usize;
+        let mut buffer = vec![0.0; 5760 * channels];
+        Box::new(move |packet, samples| {
+            let frames = decoder
+                .decode_float(&packet.data, &mut buffer, false)
+                .map_err(|e| e.to_string())?;
+            let end = frames.saturating_sub(packet.trim_end.get() as usize);
+            let start = skip.min(end);
+            skip -= start;
+            samples.extend_from_slice(&buffer[start * channels..end * channels]);
+            Ok(())
+        })
+    } else {
+        let mut decoder = symphonia::default::get_codecs()
+            .make_audio_decoder(params, &Default::default())
+            .map_err(|e| e.to_string())?;
+        Box::new(move |packet, samples| match decoder.decode(packet) {
+            Ok(buffer) => {
+                buffer.copy_to_vec_interleaved(samples);
+                Ok(())
+            }
+            Err(SymError::DecodeError(_)) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        })
+    };
     let mut samples = Vec::<f32>::new();
     loop {
         let packet = match reader.next_packet() {
@@ -83,12 +120,27 @@ pub fn decode(path: &Path, mut f: impl FnMut(&[f32], u32, usize)) -> Result<(), 
         if packet.track_id != track_id {
             continue;
         }
-        match decoder.decode(&packet) {
-            Ok(buffer) => buffer.copy_to_vec_interleaved(&mut samples),
-            Err(SymError::DecodeError(_)) => continue,
-            Err(e) => return Err(e.to_string()),
-        }
+        samples.clear();
+        decode_packet(&packet, &mut samples)?;
         f(&samples, rate, channels);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opus_decodes_through_libopus_with_pre_skip_trimmed() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../engine/tests/fixtures/sine.opus");
+        let (mut frames, mut format) = (0, (0, 0));
+        decode(&path, |samples, rate, channels| {
+            frames += samples.len() / channels;
+            format = (rate, channels);
+        })
+        .unwrap();
+        assert_eq!((frames, format), (48_000, (48_000, 2)));
+        assert!(audio_hash(&path).unwrap().starts_with("pcm-b3:"));
+    }
 }
