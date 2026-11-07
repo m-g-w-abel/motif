@@ -23,6 +23,7 @@
   import { routeVolumeKeys } from './lib/volumeKeys';
   import { remoteMedia, routeRemoteButtons, showRemoteMedia } from './lib/remoteMedia';
   import { routeBack } from './lib/back';
+  import { parsePairLink } from './lib/discover';
   import { contextMenu } from './lib/contextMenu.svelte';
   import { applyDecorations } from './lib/windowChrome';
   import { shortcutFor } from './lib/shortcuts';
@@ -267,6 +268,18 @@
     const cover = art ? library.artUrl(art, 512, true) : null;
     showRemoteMedia(remoteMedia(engine.status, engine.player, position.at(Date.now()), cover));
   });
+
+  // Opened from a host's pairing page ("Open in Motif", `MainActivity.kt`): pair as if its QR was scanned.
+  const android = (globalThis as { MotifAndroid?: { takePairLink(): string | null } }).MotifAndroid;
+  const takePairLink = () => {
+    const text = android?.takePairLink();
+    if (!text) return;
+    const link = parsePairLink(text);
+    if (link) settingsView.pairWith(link);
+    else toasts.show("That isn't a Motif pairing link.");
+  };
+  (globalThis as { motifPairLinkArrived?: () => void }).motifPairLinkArrived = takePairLink;
+  takePairLink();
 
   let editing = $state(false);
 

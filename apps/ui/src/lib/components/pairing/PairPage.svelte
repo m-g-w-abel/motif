@@ -1,5 +1,6 @@
 <script lang="ts">
   import { guessName } from '../../deviceName';
+  import { openInAppLink } from '../../discover';
   import { saveToken } from '../../engine.svelte';
   import type { Paired } from '../../protocol/Paired';
   import type { PairRequest } from '../../protocol/PairRequest';
@@ -15,6 +16,8 @@
   /** The engine the code came from; the answer must come from the same one. */
   const engineKey = params.get('id');
   let code = $state(params.get('code') ?? '');
+  /** Opened from the QR in a phone's browser: Motif, if installed, can pair itself instead. */
+  const inApp = $derived(!unpaired && params.get('code') && engineKey && /Android/.test(navigator.userAgent) ? openInAppLink(location.href) : null);
   let name = $state(guessName());
   let waiting = $state<AbortController | null>(null);
   let error = $state<string | null>(null);
@@ -56,6 +59,10 @@
     {:else}
       {#if unpaired}
         <p class="hint">This device isn't paired with this Motif, or was removed. On the computer running Motif, open Settings → Devices → Pair a device, then scan the QR code or enter the code here.</p>
+      {/if}
+      {#if inApp}
+        <a class="button primary open" href={inApp}>Open in Motif</a>
+        <p class="hint">Or pair this browser:</p>
       {/if}
       <form onsubmit={pair}>
         <label>
@@ -147,5 +154,11 @@
 
   .button {
     height: 36px;
+  }
+
+  .open {
+    display: grid;
+    place-items: center;
+    text-decoration: none;
   }
 </style>

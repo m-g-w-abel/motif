@@ -36,11 +36,12 @@ export interface PairLink {
   id: string;
 }
 
-/** Reads the link in a host's pairing QR (`pair_url` in the server); null for anything else. */
+/** Reads the link in a host's pairing QR (`pair_url` in the server), or the `motif://` one its page opens the app with; null for anything else. */
 export function parsePairLink(text: string): PairLink | null {
   let url: URL;
   try {
-    url = new URL(text.trim());
+    // As http: so the host and port parse the same everywhere (older WebViews don't for other schemes).
+    url = new URL(text.trim().replace(/^motif:\/\//, 'http://'));
   } catch {
     return null;
   }
@@ -49,4 +50,10 @@ export function parsePairLink(text: string): PairLink | null {
   if (url.protocol !== 'http:' || url.pathname !== '/pair' || url.username || !code || !id) return null;
   // URL drops the default port; saved addresses always carry one.
   return { address: url.port ? url.host : `${url.host}:80`, code, id };
+}
+
+/** A link on the pairing page that opens `page` (a pairing link) as `motif://…` in the Android app, or reloads the page without it. */
+export function openInAppLink(page: string): string {
+  const url = new URL(page);
+  return `intent://${url.host}${url.pathname}${url.search}#Intent;scheme=motif;package=io.github.mgwabel.motif;S.browser_fallback_url=${encodeURIComponent(page)};end`;
 }
