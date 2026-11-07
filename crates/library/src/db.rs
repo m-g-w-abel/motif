@@ -147,15 +147,15 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              VALUES (new.id, new.title, new.artist, new.album, new.album_artist);
          END;",
     )?;
-    upgrade(&conn)?;
+    upgrade(&conn, &path.with_file_name("art"))?;
     Ok(conn)
 }
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 9;
+const VERSION: i32 = 10;
 
-fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
+fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let has = |column: &str| {
         conn.prepare("SELECT 1 FROM pragma_table_info('tracks') WHERE name = ?1")
@@ -227,6 +227,34 @@ fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
             conn.execute("ALTER TABLE tracks ADD COLUMN original_year INTEGER", [])?;
         }
         conn.execute("UPDATE tracks SET mtime = -1", [])?;
+    }
+    if version < 10 {
+        // Version 10 reads embedded covers from their tracks instead of
+        // keeping full-size copies (`<key>.<ext>`, 951 MB on a phone, #133):
+        // point each at a present track and delete the copy. A copy whose
+        // tracks are all missing stays, being the only one left.
+        let copies = conn
+            .prepare(
+                "SELECT path, (SELECT t.path FROM tracks t WHERE t.art = art.key AND t.missing = 0 LIMIT 1)
+                 FROM art WHERE path GLOB '*' || key || '.*'",
+            )?
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (copy, track) in copies {
+            let Some(track) = track else { continue };
+            conn.execute("UPDATE art SET path = ?1 WHERE path = ?2", [&track, &copy])?;
+            let _ = std::fs::remove_file(copy);
+        }
+        // Copies of a track's other pictures (`Library::images`) were never
+        // in the table; thumbnails are `<key>-<size>.jpg`.
+        let mut referenced = conn.prepare("SELECT 1 FROM art WHERE path = ?1")?;
+        for entry in std::fs::read_dir(art_dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let copy = !entry.file_name().to_string_lossy().contains('-');
+            if copy && !referenced.exists([path.to_string_lossy()])? {
+                let _ = std::fs::remove_file(path);
+            }
+        }
     }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;

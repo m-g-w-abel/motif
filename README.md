@@ -80,6 +80,9 @@ Some of the measured results (details in [docs/PLAN.md](docs/PLAN.md)):
   and cut the cost of playback from 9–43% of a core to about 2%.
 - **Engine cost.** 0.1% of a core idle and 0.8% playing resampled FLAC, with no
   underruns while a full library scan reads the same USB drive.
+- **Phone library.** 20,000 tracks scan in under 7 minutes on a phone, and an
+  unchanged rescan takes 5 s. Embedded covers are read from the tracks
+  instead of copied, which took the artwork cache from 894 MB to 6 MB.
 - **Visualiser latency.** Spectrum frames land within about ±20 ms of the
   sound, and the tap costs nothing when no client subscribes.
 - **Shared types.** The Rust protocol types generate the TypeScript bindings,

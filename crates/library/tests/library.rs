@@ -849,3 +849,133 @@ fn synced_lyrics_win_then_sidecars_then_tags_then_lrclib() {
             .is_err()
     );
 }
+
+#[test]
+fn embedded_covers_are_read_from_the_track_not_copied() {
+    use lofty::{
+        config::WriteOptions,
+        picture::{MimeType, Picture, PictureType},
+        prelude::*,
+    };
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let cover = fs::read(fixtures.join("Artist B/Second Album/cover.png")).unwrap();
+    for name in ["01 Opening.flac", "02 Closing.flac"] {
+        let flac = music.join(name);
+        fs::copy(fixtures.join("Artist A/First Album").join(name), &flac).unwrap();
+        let mut tagged = lofty::read_from_path(&flac).unwrap();
+        let tag = tagged.primary_tag_mut().unwrap();
+        // A second cover for Closing, whose file goes missing below.
+        let bytes = [cover.clone(), vec![name.len() as u8]].concat();
+        tag.push_picture(
+            Picture::unchecked(if name.starts_with("01") {
+                cover.clone()
+            } else {
+                bytes
+            })
+            .pic_type(PictureType::CoverFront)
+            .mime_type(MimeType::Png)
+            .build(),
+        );
+        tag.save_to_path(&flac, WriteOptions::default()).unwrap();
+    }
+    let art_files = || {
+        let mut names: Vec<String> = fs::read_dir(data.join("art"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    };
+
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 2 && !s.scanning && s.hashing == 0);
+    let key = track(&library, "Opening").art.unwrap();
+    let closing = track(&library, "Closing").art.unwrap();
+    let bar = |key: &str| format!("{key}-{}.jpg", library::BAR_ART_SIZE);
+    let mut thumbs = vec![bar(&key), bar(&closing)];
+    thumbs.sort();
+    assert_eq!(art_files(), thumbs, "only thumbnails are cached");
+    assert_eq!(
+        library.art_image(&key, None).unwrap(),
+        (cover.clone(), "image/png")
+    );
+    let small = library.art(&key, Some(32)).unwrap();
+    assert!(small.starts_with(data.join("art")) && small.is_file());
+
+    // Engines from before kept full-size copies: an upgrade removes them
+    // (and copies of other pictures nobody refers to), except the only copy
+    // of a missing track's cover.
+    let thumbs = art_files();
+    drop(library);
+    let old = rusqlite::Connection::open(data.join("library.db")).unwrap();
+    for k in [&key, &closing] {
+        let copy = data.join(format!("art/{k}.png"));
+        fs::write(&copy, if *k == key { &cover[..] } else { b"old copy" }).unwrap();
+        old.execute(
+            "UPDATE art SET path = ?1 WHERE key = ?2",
+            [copy.to_str().unwrap(), k],
+        )
+        .unwrap();
+    }
+    fs::write(data.join("art/0123456789abcdef0123456789abcdef.jpg"), b"x").unwrap();
+    old.execute("UPDATE tracks SET missing = 1 WHERE art = ?1", [&closing])
+        .unwrap();
+    old.pragma_update(None, "user_version", 9).unwrap();
+    drop(old);
+    fs::remove_file(music.join("02 Closing.flac")).unwrap();
+    let library = Library::open(&data).unwrap();
+    let mut kept = [thumbs, vec![format!("{closing}.png")]].concat();
+    kept.sort();
+    assert_eq!(art_files(), kept);
+    assert_eq!(library.art_image(&key, None).unwrap().0, cover);
+    let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
+}
+
+#[test]
+fn a_shared_cover_survives_losing_the_track_it_was_read_from() {
+    use lofty::{
+        config::WriteOptions,
+        picture::{MimeType, Picture, PictureType},
+        prelude::*,
+    };
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let cover = fs::read(fixtures.join("Artist B/Second Album/cover.png")).unwrap();
+    for name in ["01 Opening.flac", "02 Closing.flac"] {
+        let flac = music.join(name);
+        fs::copy(fixtures.join("Artist A/First Album").join(name), &flac).unwrap();
+        let mut tagged = lofty::read_from_path(&flac).unwrap();
+        let tag = tagged.primary_tag_mut().unwrap();
+        tag.push_picture(
+            Picture::unchecked(cover.clone())
+                .pic_type(PictureType::CoverFront)
+                .mime_type(MimeType::Png)
+                .build(),
+        );
+        tag.save_to_path(&flac, WriteOptions::default()).unwrap();
+    }
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 2 && !s.scanning && s.hashing == 0);
+    let key = track(&library, "Opening").art.unwrap();
+    let db = rusqlite::Connection::open(data.join("library.db")).unwrap();
+    let source: String = db
+        .query_row("SELECT path FROM art WHERE key = ?1", [&key], |r| r.get(0))
+        .unwrap();
+
+    // Deleted (not yet noticed by a rescan): the other track has the cover.
+    fs::remove_file(&source).unwrap();
+    assert_eq!(library.art_image(&key, None).unwrap().0, cover);
+    assert!(library.art(&key, Some(40)).unwrap().is_file());
+    let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
+}

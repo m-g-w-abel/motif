@@ -69,7 +69,9 @@ pub fn run(
                 Ok(r) => Ok(r),
                 Err(mpsc::TryRecvError::Disconnected) => return,
                 Err(mpsc::TryRecvError::Empty)
-                    if !held && (thumb_next(&shared, &mut thumbs) || hash_next(&shared, &conn)) =>
+                    if !held
+                        && (thumb_next(&shared, &conn, &mut thumbs)
+                            || hash_next(&shared, &conn)) =>
                 {
                     continue;
                 }
@@ -207,15 +209,7 @@ fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
                 Some(k) if (k.size, k.mtime) == (size, mtime) => {
                     batch.execute("UPDATE tracks SET missing = 0 WHERE path = ?1", [&path_str])?;
                 }
-                _ => store(
-                    &batch,
-                    shared,
-                    path,
-                    &path_str,
-                    size,
-                    mtime,
-                    &mut folder_art,
-                )?,
+                _ => store(&batch, path, &path_str, size, mtime, &mut folder_art)?,
             }
             changes += 1;
             // Commit every file (cheap in WAL mode): the write lock mustn't stay
@@ -269,7 +263,6 @@ fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
 
 fn store(
     tx: &rusqlite::Transaction<'_>,
-    shared: &Shared,
     path: &Path,
     path_str: &str,
     size: i64,
@@ -279,8 +272,8 @@ fn store(
     let t = tags::read(path);
     let folder = folder_art.find(path);
     let art = match (&t.picture, folder) {
-        (Some((bytes, ext)), folder) if embedded_wins(bytes, folder.as_ref()) => {
-            save_embedded_art(shared, tx, bytes, ext)
+        (Some((bytes, _)), folder) if embedded_wins(bytes, folder.as_ref()) => {
+            save_embedded_art(tx, bytes, path_str)
         }
         (_, Some(image)) => image
             .path
@@ -352,37 +345,21 @@ pub fn art_key(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex()[..32].to_string()
 }
 
-/// Copies an embedded picture into the artwork cache once per distinct image.
-fn save_embedded_art(
-    shared: &Shared,
-    tx: &rusqlite::Transaction<'_>,
-    bytes: &[u8],
-    ext: &str,
-) -> Option<String> {
-    let (key, file) = cache_picture(shared, bytes, ext)?;
+/// Notes the track as the source of its embedded picture: it is read from
+/// there when asked for, never copied (#133).
+fn save_embedded_art(tx: &rusqlite::Transaction<'_>, bytes: &[u8], path: &str) -> Option<String> {
+    let key = art_key(bytes);
+    // The last file stored with a picture is its source; if it goes or gets
+    // another cover, `art_bytes` reads one of the other tracks showing it.
+    // shortcut: once every track with a cover is missing (an unplugged SD
+    // card), only its thumbnails already made show; keep a small copy then
+    // if that turns out to matter.
     tx.execute(
-        "INSERT OR IGNORE INTO art (key, path) VALUES (?1, ?2)",
-        params![key, file.to_str()?],
+        "INSERT OR REPLACE INTO art (key, path) VALUES (?1, ?2)",
+        params![key, path],
     )
     .ok()?;
     Some(key)
-}
-
-/// Writes an embedded picture to the artwork folder (once), returning its
-/// key and file.
-pub(crate) fn cache_picture(
-    shared: &Shared,
-    bytes: &[u8],
-    ext: &str,
-) -> Option<(String, std::path::PathBuf)> {
-    let key = art_key(bytes);
-    let file = shared.art_dir.join(format!("{key}.{ext}"));
-    if !file.exists() {
-        fs::write(&file, bytes)
-            .inspect_err(|err| tracing::warn!(%err, "can't cache artwork"))
-            .ok()?;
-    }
-    Some((key, file))
 }
 
 /// Artwork (key, path) without a player bar thumbnail yet.
@@ -400,11 +377,13 @@ fn missing_bar_thumbs(shared: &Shared, conn: &Connection) -> Vec<(String, String
 }
 
 /// Makes one bar thumbnail from `thumbs`. Returns false when there are none left.
-fn thumb_next(shared: &Shared, thumbs: &mut Vec<(String, String)>) -> bool {
+fn thumb_next(shared: &Shared, conn: &Connection, thumbs: &mut Vec<(String, String)>) -> bool {
     let Some((key, path)) = thumbs.pop() else {
         return false;
     };
-    if let Err(err) = crate::thumbnail(shared, &key, Path::new(&path), crate::BAR_ART_SIZE) {
+    if let Err(err) = crate::thumbnail(shared, &key, Path::new(&path), crate::BAR_ART_SIZE, &|| {
+        crate::tracks_with_art(conn, &key)
+    }) {
         tracing::debug!(key, %err, "can't make bar thumbnail");
     }
     true

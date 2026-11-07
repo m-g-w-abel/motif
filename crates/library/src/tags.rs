@@ -176,6 +176,17 @@ fn image_ext(bytes: &[u8]) -> &'static str {
     }
 }
 
+/// The picture embedded in a file whose artwork key is `key`.
+pub fn embedded(path: &Path, key: &str) -> Option<Vec<u8>> {
+    let is_key = |bytes: &Vec<u8>| crate::scan::art_key(bytes) == key;
+    pictures(path)
+        .into_iter()
+        .map(|(bytes, ..)| bytes)
+        .find(is_key)
+        // Files only Symphonia reads (see `read`).
+        .or_else(|| read(path).picture.map(|(bytes, _)| bytes).filter(is_key))
+}
+
 /// Every picture embedded in a file, in tag order, with a file extension
 /// and what its picture type says it shows.
 pub fn pictures(path: &Path) -> Vec<(Vec<u8>, &'static str, Option<ImageKind>)> {

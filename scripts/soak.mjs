@@ -8,6 +8,10 @@
 // Needs ffmpeg and Linux (/proc). BIN, PORT and SOAK_DIR override the binary
 // (default target/release/motif-headless), port (7711) and work folder;
 // the library in SOAK_DIR/lib is reused between runs.
+//
+// ATTACH=host:port drives a test engine that is already running (and mutes it),
+// with the library it has (nothing is generated or added); ADB_PID=<pid> reads
+// its RSS over adb, e.g. a phone test engine behind `adb forward tcp:7799 tcp:7700`.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,13 +19,14 @@ import path from "node:path";
 
 const [mode = "mix", secs = "1800"] = process.argv.slice(2);
 const bin = process.env.BIN ?? "target/release/motif-headless";
-const addr = `127.0.0.1:${process.env.PORT ?? 7711}`;
+const attach = process.env.ATTACH;
+const addr = attach ?? `127.0.0.1:${process.env.PORT ?? 7711}`;
 const dir = process.env.SOAK_DIR ?? path.join(os.tmpdir(), "motif-soak");
 const lib = path.join(dir, "lib");
 const ALBUMS = 100;
 
 // Large covers, like real scans: decoding them is what costs memory.
-if (!fs.existsSync(path.join(lib, `a${ALBUMS}`, "4.flac"))) {
+if (!attach && !fs.existsSync(path.join(lib, `a${ALBUMS}`, "4.flac"))) {
   console.log(`generating ${ALBUMS * 4} tracks in ${lib}`);
   for (let a = 1; a <= ALBUMS; a++) {
     const album = path.join(lib, `a${a}`);
@@ -40,13 +45,20 @@ if (!fs.existsSync(path.join(lib, `a${ALBUMS}`, "4.flac"))) {
 }
 
 const data = path.join(dir, "data");
-fs.rmSync(data, { recursive: true, force: true });
-const engine = spawn(bin, [], {
-  env: { ...process.env, MOTIF_ADDR: addr, MOTIF_DATA_DIR: data, MOTIF_UI_DIR: "/nonexistent", RUST_LOG: "warn" },
-  stdio: "inherit",
-});
-process.on("exit", () => engine.kill());
-const rss = () => Number(/VmRSS:\s+(\d+)/.exec(fs.readFileSync(`/proc/${engine.pid}/status`, "utf8"))[1]) / 1024;
+let status;
+if (attach) {
+  const pid = process.env.ADB_PID;
+  status = () => pid ? execFileSync("adb", ["shell", `cat /proc/${pid}/status`], { encoding: "utf8" }) : "VmRSS: 0";
+} else {
+  fs.rmSync(data, { recursive: true, force: true });
+  const engine = spawn(bin, [], {
+    env: { ...process.env, MOTIF_ADDR: addr, MOTIF_DATA_DIR: data, MOTIF_UI_DIR: "/nonexistent", RUST_LOG: "warn" },
+    stdio: "inherit",
+  });
+  process.on("exit", () => engine.kill());
+  status = () => fs.readFileSync(`/proc/${engine.pid}/status`, "utf8");
+}
+const rss = () => Number(/VmRSS:\s+(\d+)/.exec(status())[1]) / 1024;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function open() {
@@ -72,11 +84,13 @@ for (let i = 0; !main; i++) {
   main = await open().catch(() => { if (i > 20) throw new Error(`no engine at ${addr}`); });
 }
 await main.c({ type: "set_volume", volume: 0 });
-await new Promise((done) => {
-  main.status.push((s) => s.tracks >= ALBUMS * 4 && !s.scanning && done());
-  main.q({ type: "add_root", path: lib });
-});
-await sleep(5000);
+if (!attach) {
+  await new Promise((done) => {
+    main.status.push((s) => s.tracks >= ALBUMS * 4 && !s.scanning && done());
+    main.q({ type: "add_root", path: lib });
+  });
+  await sleep(5000);
+}
 const albums = (await main.q({ type: "albums", search: null, sort: [], offset: 0, limit: 10000 })).result.albums;
 
 const steps = {

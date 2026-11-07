@@ -415,6 +415,47 @@ run. Backgrounded 11 min on `dumpsys battery unplug` + `deviceidle
 force-idle` mid-hash (3069 files left), the thread used no CPU and Motif
 survived; opening it resumed hashing.
 
+### Big library on the phone (#133, 2026-11-07)
+
+Sony XQ-DC54, Android 15. A separate muted `motif-headless` (cross-built,
+run from `/data/local/tmp` with its own data dir) scanned the real
+collection in `/storage/emulated/0/Music` (8,181 tracks, through Android's
+FUSE) plus 12,000 generated two-second FLACs (one 500 px `cover.jpg` per
+album): 20,181 tracks. Desktop numbers are in phase 1, milestone 5.
+
+| | Before | After |
+|---|---|---|
+| First scan (tags, no hashing) | 398 s (~20 ms a file) | not re-run (scan code unchanged) |
+| Unchanged rescan, also at every start | 5.1 s, 0 files re-read | 5.3 s |
+| Database (with WAL) | 17.2 MB after the scan, 19.2 MB hashed | 19.2 MB |
+| Artwork cache | 894 MB (630 full-size copies, 710 bar thumbnails) | 6 MB (thumbnails only) |
+| Engine RSS | 114 MB just after the scan (peak 245 MB while scanning), 26 MB hashing after a restart | 49 MB just after start-up |
+| Waveforms | made on demand, ~1 KB a track in the DB | unchanged |
+
+The real app's cache on the phone was 951 MB for 8,181 tracks (631 copies,
+up to 36 MB each), with 3.1 GB free on the phone. **Fix:** embedded covers are
+no longer copied. The art row points at the track, and the full-size cover is
+read from its tags when asked for. Thumbnails are cached as before,
+including the 128 px bar size made for every cover at scan. DB version 10
+re-points old copies at a present track and deletes them. After the upgrade
+on the phone, 40 of 40 full-size album covers were served from the tracks.
+If the track a cover is read from is gone or has a new cover, it is read
+from another present track that shows it. Limit (a `shortcut:` in
+`scan.rs`): once every track with a cover is missing (an unplugged SD card),
+only its thumbnails already made show. A copy whose tracks are all missing
+at upgrade is kept.
+
+**Rescan after every restart: ruled out.** A start-up scan of the unchanged
+20k library re-reads nothing and takes 5 s. Full re-reads do happen once
+after installing a build that raises the DB version (versions 7–9 each set
+`mtime = -1` for every track). That costs about 20 ms a file on this phone,
+roughly 3 min for the real collection, which is likely what was seen.
+
+Not measured yet: memory while browsing and playing (`scripts/soak.mjs` now
+takes `ATTACH=host:port` and `ADB_PID` for a phone engine, but wasn't run),
+hashing time for the whole library (the generated files hash much faster
+than real ones), and a first scan with the new build.
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game
