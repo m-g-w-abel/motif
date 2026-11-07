@@ -731,24 +731,42 @@ impl Library {
     }
 
     /// The image file for artwork `key`, scaled to fit `size` pixels (made
-    /// once and cached) or full size.
+    /// once and cached) or full size. A picture embedded in a track has no
+    /// file of its own at full size: [`Self::art_image`] reads it.
     pub fn art(&self, key: &str, size: Option<u32>) -> Result<PathBuf> {
+        let source = self.art_source(key)?;
+        let embedded = tags::is_audio(&source);
+        // Never upscaled: an image no larger than asked for is sent as it is.
+        let fits = |(w, h): (u32, u32)| size.is_none_or(|size| w.max(h) <= size);
+        match size {
+            Some(size) if embedded || !image::image_dimensions(&source).is_ok_and(fits) => {
+                thumbnail(&self.shared, key, &source, size)
+            }
+            None if embedded => Err(Error::Other("embedded artwork has no file".into())),
+            _ => Ok(source),
+        }
+    }
+
+    /// Artwork `key` as [`Self::art`] gives it, read, with its media type.
+    pub fn art_image(&self, key: &str, size: Option<u32>) -> Result<(Vec<u8>, &'static str)> {
+        let bytes = match size {
+            Some(_) => fs::read(self.art(key, size)?)?,
+            None => art_bytes(key, &self.art_source(key)?)?,
+        };
+        let png = bytes.starts_with(b"\x89PNG");
+        Ok((bytes, if png { "image/png" } else { "image/jpeg" }))
+    }
+
+    /// Where artwork `key` comes from: an image file, or a track it is embedded in.
+    fn art_source(&self, key: &str) -> Result<PathBuf> {
         let stored: Option<String> = self
             .db()
             .query_row("SELECT path FROM art WHERE key = ?1", [key], |r| r.get(0))
             .optional()?;
-        let source = stored
+        stored
             .map(PathBuf::from)
             .or_else(|| self.shared.extras.lock().unwrap().get(key).cloned())
-            .ok_or_else(|| Error::Other("no such artwork".into()))?;
-        // Never upscaled: an image no larger than asked for is sent as it is.
-        let fits = |(w, h): (u32, u32)| size.is_none_or(|size| w.max(h) <= size);
-        match size {
-            Some(size) if !image::image_dimensions(&source).is_ok_and(fits) => {
-                thumbnail(&self.shared, key, &source, size)
-            }
-            _ => Ok(source),
-        }
+            .ok_or_else(|| Error::Other("no such artwork".into()))
     }
 
     /// Every image of the track at `path`, named when it says what it shows:
@@ -783,10 +801,7 @@ impl Library {
         // seconds, so new keys go in memory for `art` to find.
         let mut found: Vec<(String, PathBuf, Option<ImageKind>)> = pictures
             .iter()
-            .filter_map(|(bytes, ext, kind)| {
-                let (key, file) = scan::cache_picture(&self.shared, bytes, ext)?;
-                Some((key, file, *kind))
-            })
+            .map(|(bytes, _, kind)| (scan::art_key(bytes), file.to_path_buf(), *kind))
             .collect();
         for image in folder {
             let (Some(name), Ok(meta)) = (image.to_str(), fs::metadata(&image)) else {
@@ -851,10 +866,16 @@ fn thumbnail(shared: &Shared, key: &str, source: &Path, size: u32) -> Result<Pat
     let size = size.clamp(32, 1024);
     let thumb = thumb_path(shared, key, size);
     if !thumb.exists() {
-        let image = image::open(source).map_err(|e| Error::Other(e.to_string()))?;
+        let image = image::load_from_memory(&art_bytes(key, source)?)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        // Embedded pictures get here at any size: never upscaled either.
+        let image = if image.width().max(image.height()) > size {
+            image.thumbnail(size, size)
+        } else {
+            image
+        };
         let mut out = Vec::new();
         image
-            .thumbnail(size, size)
             .into_rgb8()
             .write_to(
                 &mut std::io::Cursor::new(&mut out),
@@ -869,6 +890,15 @@ fn thumbnail(shared: &Shared, key: &str, source: &Path, size: u32) -> Result<Pat
         fs::rename(&part, &thumb)?;
     }
     Ok(thumb)
+}
+
+/// The bytes of artwork `key` stored at `source`: an image file, or a
+/// picture embedded in an audio file.
+fn art_bytes(key: &str, source: &Path) -> Result<Vec<u8>> {
+    if !tags::is_audio(source) {
+        return Ok(fs::read(source)?);
+    }
+    tags::embedded(source, key).ok_or_else(|| Error::Other("artwork not in its file".into()))
 }
 
 const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track_no, disc_no, year, genre, \

@@ -286,21 +286,11 @@ async fn art(
         return StatusCode::NOT_FOUND.into_response();
     };
     let _slot = state.art_slots.acquire().await;
-    let file = tokio::task::spawn_blocking(move || {
-        let path = library.art(&key, params.size)?;
-        Ok::<_, library::Error>((std::fs::read(&path)?, path))
-    })
-    .await;
-    match file {
-        Ok(Ok((bytes, path))) => {
-            let png = path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+    let image = tokio::task::spawn_blocking(move || library.art_image(&key, params.size)).await;
+    match image {
+        Ok(Ok((bytes, media_type))) => {
             let headers = [
-                (
-                    header::CONTENT_TYPE,
-                    if png { "image/png" } else { "image/jpeg" },
-                ),
+                (header::CONTENT_TYPE, media_type),
                 (
                     header::CACHE_CONTROL,
                     "private, max-age=31536000, immutable",
