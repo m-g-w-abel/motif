@@ -460,8 +460,12 @@ accumulates. The peaks probably come from the `art` step, which asks for every a
 cover at once, at a new thumbnail size each round plus full size, so
 hundreds of 3000 px covers are read from their tracks and decoded together.
 Browsing asks only for the rows in view, so it doesn't do this, but a
-smaller phone could kill the app at such a peak. Not attributed by a separate
-`art` run.
+smaller phone could kill the app at such a peak. A separate `art` run (10
+min, 20 rounds, library re-hashing in the background) reached 1.3 GB, so
+the covers do cause it. Serving 6 covers at once instead of 50 (`ART_SLOTS`)
+made no difference (1.17 GB, 22 rounds), so it isn't the decodes at once.
+Still open: where it goes (heap profile, or the allocator keeping freed
+memory: RSS falls back only minutes after the requests stop).
 
 The soak also showed that the library listed every Opus track as damaged
 ("unsupported feature: core (codec)"): its hash/waveform/loudness decoder
