@@ -69,7 +69,9 @@ pub fn run(
                 Ok(r) => Ok(r),
                 Err(mpsc::TryRecvError::Disconnected) => return,
                 Err(mpsc::TryRecvError::Empty)
-                    if !held && (thumb_next(&shared, &mut thumbs) || hash_next(&shared, &conn)) =>
+                    if !held
+                        && (thumb_next(&shared, &conn, &mut thumbs)
+                            || hash_next(&shared, &conn)) =>
                 {
                     continue;
                 }
@@ -347,10 +349,11 @@ pub fn art_key(bytes: &[u8]) -> String {
 /// there when asked for, never copied (#133).
 fn save_embedded_art(tx: &rusqlite::Transaction<'_>, bytes: &[u8], path: &str) -> Option<String> {
     let key = art_key(bytes);
-    // shortcut: the last file stored with a picture is its source, so if that
-    // file changes cover (or goes missing), other tracks with the old cover
-    // show only the thumbnails already made. Fall back to any track whose
-    // `art` is the key if that comes up.
+    // The last file stored with a picture is its source; if it goes or gets
+    // another cover, `art_bytes` reads one of the other tracks showing it.
+    // shortcut: once every track with a cover is missing (an unplugged SD
+    // card), only its thumbnails already made show; keep a small copy then
+    // if that turns out to matter.
     tx.execute(
         "INSERT OR REPLACE INTO art (key, path) VALUES (?1, ?2)",
         params![key, path],
@@ -374,11 +377,13 @@ fn missing_bar_thumbs(shared: &Shared, conn: &Connection) -> Vec<(String, String
 }
 
 /// Makes one bar thumbnail from `thumbs`. Returns false when there are none left.
-fn thumb_next(shared: &Shared, thumbs: &mut Vec<(String, String)>) -> bool {
+fn thumb_next(shared: &Shared, conn: &Connection, thumbs: &mut Vec<(String, String)>) -> bool {
     let Some((key, path)) = thumbs.pop() else {
         return false;
     };
-    if let Err(err) = crate::thumbnail(shared, &key, Path::new(&path), crate::BAR_ART_SIZE) {
+    if let Err(err) = crate::thumbnail(shared, &key, Path::new(&path), crate::BAR_ART_SIZE, &|| {
+        crate::tracks_with_art(conn, &key)
+    }) {
         tracing::debug!(key, %err, "can't make bar thumbnail");
     }
     true

@@ -439,10 +439,11 @@ read from its tags when asked for. Thumbnails are cached as before,
 including the 128 px bar size made for every cover at scan. DB version 10
 re-points old copies at a present track and deletes them. After the upgrade
 on the phone, 40 of 40 full-size album covers were served from the tracks.
-Limit (a `shortcut:` in `scan.rs`): if the track a cover is read from goes
-missing (an unplugged SD card) or gets a new cover, other tracks with that
-cover show only the thumbnails already made. A copy whose tracks are all
-missing at upgrade is kept.
+If the track a cover is read from is gone or has a new cover, it is read
+from another present track that shows it. Limit (a `shortcut:` in
+`scan.rs`): once every track with a cover is missing (an unplugged SD card),
+only its thumbnails already made show. A copy whose tracks are all missing
+at upgrade is kept.
 
 **Rescan after every restart: ruled out.** A start-up scan of the unchanged
 20k library re-reads nothing and takes 5 s. Full re-reads do happen once

@@ -740,7 +740,9 @@ impl Library {
         let fits = |(w, h): (u32, u32)| size.is_none_or(|size| w.max(h) <= size);
         match size {
             Some(size) if embedded || !image::image_dimensions(&source).is_ok_and(fits) => {
-                thumbnail(&self.shared, key, &source, size)
+                thumbnail(&self.shared, key, &source, size, &|| {
+                    self.tracks_with_art(key)
+                })
             }
             None if embedded => Err(Error::Other("embedded artwork has no file".into())),
             _ => Ok(source),
@@ -751,10 +753,14 @@ impl Library {
     pub fn art_image(&self, key: &str, size: Option<u32>) -> Result<(Vec<u8>, &'static str)> {
         let bytes = match size {
             Some(_) => fs::read(self.art(key, size)?)?,
-            None => art_bytes(key, &self.art_source(key)?)?,
+            None => art_bytes(key, &self.art_source(key)?, &|| self.tracks_with_art(key))?,
         };
         let png = bytes.starts_with(b"\x89PNG");
         Ok((bytes, if png { "image/png" } else { "image/jpeg" }))
+    }
+
+    fn tracks_with_art(&self, key: &str) -> Vec<PathBuf> {
+        tracks_with_art(&self.db(), key)
     }
 
     /// Where artwork `key` comes from: an image file, or a track it is embedded in.
@@ -862,11 +868,17 @@ fn thumb_path(shared: &Shared, key: &str, size: u32) -> PathBuf {
 
 /// Artwork `key` (stored at `source`) scaled to fit `size`, made and cached
 /// on first use.
-fn thumbnail(shared: &Shared, key: &str, source: &Path, size: u32) -> Result<PathBuf> {
+fn thumbnail(
+    shared: &Shared,
+    key: &str,
+    source: &Path,
+    size: u32,
+    others: &dyn Fn() -> Vec<PathBuf>,
+) -> Result<PathBuf> {
     let size = size.clamp(32, 1024);
     let thumb = thumb_path(shared, key, size);
     if !thumb.exists() {
-        let image = image::load_from_memory(&art_bytes(key, source)?)
+        let image = image::load_from_memory(&art_bytes(key, source, others)?)
             .map_err(|e| Error::Other(e.to_string()))?;
         // Embedded pictures get here at any size: never upscaled either.
         let image = if image.width().max(image.height()) > size {
@@ -893,12 +905,28 @@ fn thumbnail(shared: &Shared, key: &str, source: &Path, size: u32) -> Result<Pat
 }
 
 /// The bytes of artwork `key` stored at `source`: an image file, or a
-/// picture embedded in an audio file.
-fn art_bytes(key: &str, source: &Path) -> Result<Vec<u8>> {
+/// picture embedded in an audio file. If that file is gone or has another
+/// cover now, the picture is read from one of the `others` that show it.
+fn art_bytes(key: &str, source: &Path, others: &dyn Fn() -> Vec<PathBuf>) -> Result<Vec<u8>> {
     if !tags::is_audio(source) {
         return Ok(fs::read(source)?);
     }
-    tags::embedded(source, key).ok_or_else(|| Error::Other("artwork not in its file".into()))
+    tags::embedded(source, key)
+        .or_else(|| others().iter().find_map(|track| tags::embedded(track, key)))
+        .ok_or_else(|| Error::Other("artwork not in its file".into()))
+}
+
+/// Present tracks showing artwork `key`.
+fn tracks_with_art(conn: &Connection, key: &str) -> Vec<PathBuf> {
+    conn.prepare("SELECT path FROM tracks WHERE art = ?1 AND missing = 0")
+        .and_then(|mut stmt| {
+            stmt.query_map([key], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
 }
 
 const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track_no, disc_no, year, genre, \

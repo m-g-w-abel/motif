@@ -936,3 +936,46 @@ fn embedded_covers_are_read_from_the_track_not_copied() {
     assert_eq!(library.art_image(&key, None).unwrap().0, cover);
     let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
 }
+
+#[test]
+fn a_shared_cover_survives_losing_the_track_it_was_read_from() {
+    use lofty::{
+        config::WriteOptions,
+        picture::{MimeType, Picture, PictureType},
+        prelude::*,
+    };
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let cover = fs::read(fixtures.join("Artist B/Second Album/cover.png")).unwrap();
+    for name in ["01 Opening.flac", "02 Closing.flac"] {
+        let flac = music.join(name);
+        fs::copy(fixtures.join("Artist A/First Album").join(name), &flac).unwrap();
+        let mut tagged = lofty::read_from_path(&flac).unwrap();
+        let tag = tagged.primary_tag_mut().unwrap();
+        tag.push_picture(
+            Picture::unchecked(cover.clone())
+                .pic_type(PictureType::CoverFront)
+                .mime_type(MimeType::Png)
+                .build(),
+        );
+        tag.save_to_path(&flac, WriteOptions::default()).unwrap();
+    }
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 2 && !s.scanning && s.hashing == 0);
+    let key = track(&library, "Opening").art.unwrap();
+    let db = rusqlite::Connection::open(data.join("library.db")).unwrap();
+    let source: String = db
+        .query_row("SELECT path FROM art WHERE key = ?1", [&key], |r| r.get(0))
+        .unwrap();
+
+    // Deleted (not yet noticed by a rescan): the other track has the cover.
+    fs::remove_file(&source).unwrap();
+    assert_eq!(library.art_image(&key, None).unwrap().0, cover);
+    assert!(library.art(&key, Some(40)).unwrap().is_file());
+    let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
+}
