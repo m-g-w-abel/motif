@@ -21,11 +21,14 @@
     cardSize,
     columns: layoutColumns,
     at,
+    onopen,
   }: {
     cardSize: number;
     columns?: number;
     /** Where the grid sits in its layout; its scroll position is remembered per layout. */
     at?: string;
+    /** Opens an album's page on a plain click or Enter, instead of selecting it (the Albums view). */
+    onopen?: (key: string, title: string) => void;
   } = $props();
 
   const { engine, library, settings } = getApp();
@@ -148,7 +151,10 @@
     queueTracks(engine, albumTracks(keys), next, keys.length > 1 ? `${keys.length} albums` : album.title || 'Unknown album');
   }
   function release(e: MouseEvent, i: number) {
-    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) select(i);
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    const album = card(i);
+    if (onopen && album) onopen(album.key, album.title);
+    else select(i);
   }
 
   /** The playing track's album, keyed the way the library keys albums. */
@@ -233,7 +239,8 @@
   async function onKey(e: KeyboardEvent, i: number, album: Card) {
     if (e.key === 'Enter') {
       e.preventDefault(); // the button's own Enter would only select
-      playAll(album);
+      if (onopen) onopen(album.key, album.title);
+      else playAll(album);
       return;
     }
     if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
