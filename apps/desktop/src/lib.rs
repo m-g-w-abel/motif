@@ -204,7 +204,12 @@ async fn start_engine(
     let integrations = match &data_dir {
         Some(dir) => {
             let settings = integrations::settings::keep(dir);
-            integrations::scrobble::start(engine.clone(), settings.clone(), dir);
+            integrations::scrobble::start(
+                engine.clone(),
+                library.as_ref().map(|(library, _)| library.clone()),
+                settings.clone(),
+                dir,
+            );
             settings
         }
         // No data directory: the settings last until the app quits, and no scrobbling.

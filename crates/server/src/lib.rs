@@ -379,6 +379,8 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | LibraryQuery::Tracks { .. }
             | LibraryQuery::Groups { .. }
             | LibraryQuery::Albums { .. }
+            | LibraryQuery::RecentlyPlayed { .. }
+            | LibraryQuery::RecentlyPlayedAlbums { .. }
             | LibraryQuery::AlbumPosition { .. }
             | LibraryQuery::Lookup { .. }
             | LibraryQuery::AlbumTracks { .. }

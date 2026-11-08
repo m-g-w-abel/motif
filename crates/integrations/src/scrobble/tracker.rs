@@ -1,7 +1,7 @@
 //! Decides from engine states when a track starts and when it has been
 //! listened to long enough to scrobble. Pure, so the rule is unit-tested.
 
-use protocol::{PlaybackStatus, PlayerState};
+use protocol::{PlaybackStatus, PlayerState, TrackRef};
 
 use super::Listen;
 
@@ -17,6 +17,12 @@ const RESTART_MS: u64 = 2_000;
 pub enum Action {
     NowPlaying(Listen),
     Scrobble(Listen),
+    /// The listen counted as played (same rule as a scrobble), for the
+    /// library's history. Also for tracks services can't take.
+    Played {
+        track: TrackRef,
+        started_at: u64,
+    },
 }
 
 /// Listened time a track of `duration_ms` needs before it scrobbles.
@@ -34,6 +40,10 @@ pub struct Tracker {
 /// One listen of the current entry.
 struct Play {
     item: u64,
+    track: TrackRef,
+    /// When the track would have started, had it played straight through
+    /// (Unix seconds); set once it plays.
+    started_at: u64,
     /// `None` when the track lacks the artist or title services need.
     listen: Option<Listen>,
     threshold: Option<u64>,
@@ -50,7 +60,7 @@ struct Play {
 impl Tracker {
     /// Follows a new engine state.
     pub fn update(&mut self, state: &PlayerState) -> Vec<Action> {
-        let mut actions: Vec<Action> = self.advance(state.sampled_at_ms).into_iter().collect();
+        let mut actions = self.advance(state.sampled_at_ms);
         let current = state.current.as_ref();
         let same = match (&self.play, current) {
             (Some(play), Some(item)) => {
@@ -63,6 +73,8 @@ impl Tracker {
         if !same {
             self.play = current.map(|item| Play {
                 item: item.id,
+                track: item.track.clone(),
+                started_at: 0,
                 listen: Listen::of(&item.track),
                 threshold: threshold(item.track.duration_ms),
                 listened_ms: 0,
@@ -81,9 +93,9 @@ impl Tracker {
         play.playing = state.status == PlaybackStatus::Playing;
         if play.playing && !play.announced {
             play.announced = true;
+            play.started_at = state.sampled_at_ms.saturating_sub(state.position_ms) / 1000;
             if let Some(listen) = &mut play.listen {
-                // When the track would have started, had it played straight through.
-                listen.listened_at = state.sampled_at_ms.saturating_sub(state.position_ms) / 1000;
+                listen.listened_at = play.started_at;
                 actions.push(Action::NowPlaying(listen.clone()));
             }
         }
@@ -91,9 +103,11 @@ impl Tracker {
     }
 
     /// Counts listening up to `now_ms` (the engine clock); returns the
-    /// scrobble once the current listen reaches its threshold.
-    pub fn advance(&mut self, now_ms: u64) -> Option<Action> {
-        let play = self.play.as_mut()?;
+    /// scrobble (and the play) once the current listen reaches its threshold.
+    pub fn advance(&mut self, now_ms: u64) -> Vec<Action> {
+        let Some(play) = self.play.as_mut() else {
+            return Vec::new();
+        };
         if play.playing {
             let elapsed = now_ms.saturating_sub(play.at_ms);
             play.listened_ms += elapsed;
@@ -101,16 +115,25 @@ impl Tracker {
         }
         play.at_ms = play.at_ms.max(now_ms);
         if play.scrobbled || play.threshold.is_none_or(|t| play.listened_ms < t) {
-            return None;
+            return Vec::new();
         }
         play.scrobbled = true;
-        play.listen.clone().map(Action::Scrobble)
+        let played = Action::Played {
+            track: play.track.clone(),
+            started_at: play.started_at,
+        };
+        play.listen
+            .clone()
+            .map(Action::Scrobble)
+            .into_iter()
+            .chain([played])
+            .collect()
     }
 
     /// How long until the current listen scrobbles, if it is playing.
     pub fn due_in_ms(&self) -> Option<u64> {
         let play = self.play.as_ref()?;
-        if !play.playing || play.scrobbled || play.listen.is_none() {
+        if !play.playing || play.scrobbled {
             return None;
         }
         Some(play.threshold?.saturating_sub(play.listened_ms))
@@ -234,7 +257,11 @@ mod tests {
         sim.set(PlaybackStatus::Playing);
         sim.wait(MIN);
         assert_eq!(sim.scrobbles(), 1);
-        assert_eq!(sim.actions.len(), 2, "resuming isn't a new now playing");
+        assert_eq!(
+            sim.actions.len(),
+            3,
+            "now playing, scrobble, played; resuming isn't a new now playing"
+        );
     }
 
     #[test]
@@ -277,11 +304,14 @@ mod tests {
         };
         assert_eq!(first.title, "Song 1");
         assert_eq!(first.listened_at, 1_700_000_000);
-        assert!(matches!(&sim.actions[2], Action::NowPlaying(l) if l.title == "Song 2"));
+        assert!(
+            matches!(&sim.actions[2], Action::Played { track, .. } if track.title.as_deref() == Some("Song 1"))
+        );
+        assert!(matches!(&sim.actions[3], Action::NowPlaying(l) if l.title == "Song 2"));
     }
 
     #[test]
-    fn untitled_tracks_are_skipped() {
+    fn untitled_tracks_are_played_but_not_scrobbled() {
         let mut sim = Sim::new();
         sim.play(1, 2 * MIN);
         sim.actions.clear();
@@ -289,6 +319,29 @@ mod tests {
         sim.state.current.as_mut().unwrap().id = 2;
         sim.send();
         sim.wait(2 * MIN);
-        assert!(sim.actions.is_empty());
+        let [Action::Played { track, started_at }] = &sim.actions[..] else {
+            panic!("{:?}", sim.actions)
+        };
+        assert_eq!(track.id, "");
+        assert_eq!(track.title, None);
+        assert_eq!(*started_at, 1_700_000_000);
+    }
+
+    #[test]
+    fn a_play_is_recorded_once_at_the_scrobble_threshold() {
+        let mut sim = Sim::new();
+        sim.play(1, 3 * MIN);
+        let plays = |sim: &Sim| {
+            sim.actions
+                .iter()
+                .filter(|a| matches!(a, Action::Played { .. }))
+                .count()
+        };
+        sim.wait(90_000 - 1);
+        assert_eq!(plays(&sim), 0);
+        sim.wait(1);
+        assert_eq!(plays(&sim), 1);
+        sim.wait(MIN);
+        assert_eq!(plays(&sim), 1);
     }
 }
