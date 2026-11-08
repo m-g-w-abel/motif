@@ -78,7 +78,7 @@
   }
 
   // A tap on the centre card shows the next image; a drag that ends on it (a swipe, the volume
-  // gesture) is not a tap.
+  // gesture) or a long press for the menu is not a tap.
   let down: { x: number; y: number } | null = null;
   const isTap = (e: PointerEvent) =>
     e.button === 0 && !!down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < SLOP && !!(e.target as Element).closest('.tap');
@@ -107,7 +107,8 @@
     swipeX = e.pointerType === 'mouse' ? e.clientX : null;
   }}
   onpointerup={onPointerUp}
-  onpointercancel={() => (swipeX = null)}
+  onpointercancel={() => (swipeX = down = null)}
+  oncontextmenu={() => (down = null)}
 >
   <!-- Perspective without preserve-3d: cards are seen from the centre, and z-index (not depth)
        keeps the neighbours behind. -->
