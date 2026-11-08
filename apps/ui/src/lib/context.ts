@@ -1,5 +1,4 @@
 import { getContext, setContext } from 'svelte';
-import type { Drawer } from './drawer.svelte';
 import type { EngineClient, PlaybackPosition } from './engine.svelte';
 import type { LibraryClient } from './library.svelte';
 import type { BrowseState, LayoutStore, Source } from './layout/store.svelte';
@@ -7,6 +6,7 @@ import type { SettingsStore } from './settings.svelte';
 import type { SettingsView } from './settingsView.svelte';
 import type { PlayerSheet } from './sheet.svelte';
 import type { UserThemes } from './userThemes.svelte';
+import type { Views } from './views.svelte';
 
 /** App-wide objects shared through Svelte context instead of prop drilling. */
 export interface AppContext {
@@ -17,8 +17,8 @@ export interface AppContext {
   settings: SettingsStore;
   themes: UserThemes;
   sheet: PlayerSheet;
-  drawer: Drawer;
   settingsView: SettingsView;
+  views: Views;
 }
 
 /** State shared by the widgets of one music area. */

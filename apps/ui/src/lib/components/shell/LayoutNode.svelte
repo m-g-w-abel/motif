@@ -403,31 +403,4 @@
    * Phones stack row splits. Fixed-size slots (side lists) shrink to their
    * content; flexible ones get most of a screen.
    */
-  @media (max-width: 700px) {
-    /* The music area scrolls the stacked widgets. */
-    .slot.root:has(> .split.row) {
-      height: auto;
-      min-height: 100%;
-    }
-
-    .split.row {
-      flex-direction: column;
-      height: auto;
-      min-height: 100%;
-    }
-
-    .split.row > :global(.slot) {
-      flex: none !important;
-      min-height: 70vh;
-    }
-
-    .split.row > :global(.slot.sized) {
-      min-height: 0;
-    }
-
-    /* Stacked slots take their height from their content, so there's nothing to drag. */
-    .split.row > .divider {
-      pointer-events: none;
-    }
-  }
 </style>

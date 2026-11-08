@@ -18,17 +18,14 @@
   import LayoutNode from './LayoutNode.svelte';
   import { kdlAccept, isAndroid } from '../../platform';
   import { canDecorate } from '../../windowChrome';
+  import NavButton from './NavButton.svelte';
   import WindowButtons from './WindowButtons.svelte';
 
   let { onEditLayout }: { onEditLayout: () => void } = $props();
 
-  const { engine, library, layout, drawer, settings } = getApp();
-
-  /** Phones open the drawer; desktops fold the left panel away or back. */
-  function toggleNav() {
-    if (window.innerWidth <= 700) drawer.toggle();
-    else settings.set('navCollapsed', !settings.current.navCollapsed);
-  }
+  const { engine, library, layout, settings, views } = getApp();
+  // Phones don't use layouts: All Songs is the default layout's one track list there.
+  const shown = $derived(views.phone ? layout.builtins[0].layout.root : layout.shown);
 
   // The parent re-creates this component when the source or layout changes,
   // so these never change here and each arrangement starts fresh.
@@ -102,25 +99,14 @@
   onpointerdown={onWindowPointer}
   onkeydown={(e) => {
     if (e.key === 'Escape') menuOpen = sortOpen = false;
-    if (e.key === 'b' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      toggleNav();
-    }
   }}
 />
 
-<section class="content" aria-label={data.title}>
+<section class="content" aria-label="All Songs">
   <header class="toolbar" {...drag}>
     <div class="title" {...drag}>
-      <button
-        class="icon-button menu-button"
-        aria-label="Toggle navigation"
-        title="Toggle navigation (Ctrl+B)"
-        onclick={toggleNav}
-      >
-        <Icon name="list" size={18} />
-      </button>
-      <h1 {...drag}>{data.title}</h1>
+      <NavButton />
+      <h1 {...drag}>All Songs</h1>
       <span class="count" {...drag}>
         {data.count} tracks · {formatTime(data.totalMs)}
         {#if library.status?.scanning}{' · '}scanning…{/if}
@@ -200,9 +186,10 @@
       {/if}
     </div>
 
-    {#if layout.arranging}
+    {#if layout.arranging && !views.phone}
       <button class="button primary" onclick={() => (layout.arranging = false)}>Done</button>
     {/if}
+    {#if !views.phone}
     <div class="layouts" role="radiogroup" aria-label="Layout">
       {#each layout.all as entry (entry.id)}
         <button
@@ -290,12 +277,13 @@
         {/if}
       </div>
     </div>
+    {/if}
 
     <WindowButtons />
   </header>
 
   <div class="area" bind:this={area}>
-    <LayoutNode node={layout.shown} path={rootPath(layout.shown)} />
+    <LayoutNode node={shown} path={rootPath(shown)} />
   </div>
   <Scrollbar target={area} />
 
@@ -399,11 +387,6 @@
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--text-muted);
-  }
-
-  .menu-button {
-    align-self: center;
-    margin-left: calc(-1 * var(--space-2));
   }
 
   .layouts {
@@ -555,17 +538,11 @@
   }
 
   @media (max-width: 700px) {
-    .area {
-      /* Holds the bars of the scroll areas inside it, so they scroll with it. */
-      position: relative;
-      overflow-y: auto;
-    }
-
     .count {
       display: none;
     }
 
-    /* The title gives way to the search and layout buttons, but never the drawer button (#118). */
+    /* The title gives way to the search box, but never the back button (#118). */
     .title {
       min-width: 36px;
     }

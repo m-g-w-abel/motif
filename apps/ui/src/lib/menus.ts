@@ -3,6 +3,7 @@ import { trackTitle } from './format';
 import type { ViewState } from './context';
 import type { MenuItem } from './contextMenu.svelte';
 import type { EngineClient } from './engine.svelte';
+import { addFolder } from './folders';
 import type { QueueItem } from './protocol/QueueItem';
 import type { TrackRef } from './protocol/TrackRef';
 import { inSelection, ordered } from './selection';
@@ -128,4 +129,13 @@ export function albumMenu(
   if (album.title) items.push({ label: 'Copy album title', run: () => copy(album.title) });
   if (album.title && album.artist) items.push({ label: 'Copy artist – album', run: () => copy(`${album.artist} – ${album.title}`) });
   return items;
+}
+
+/** The Library home's ⋮ menu (Add to launcher joins it with #177). */
+export function libraryMenu(engine: EngineClient): MenuItem[] {
+  const rescan = () => engine.query({ type: 'rescan' }).catch((e: Error) => (engine.error = e.message));
+  return [
+    { label: 'Add folder…', run: () => void addFolder(engine) },
+    { label: 'Rescan library', run: () => void rescan() },
+  ];
 }
