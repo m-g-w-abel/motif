@@ -25,8 +25,9 @@ directory (`MOTIF_DATA_DIR` overrides it, handy for tests).
 - **The engine is playback-only.** Never put UI concerns (layouts, themes, view
   state, settings) into `crates/engine`, `crates/protocol` or `crates/server`.
   If something non-playback seems to belong there, explain why and ask first.
-- **Layouts only arrange the music area.** The left panel and player bar are
-  fixed chrome; appearance lives in client-side settings. Widgets live in
+- **Layouts only arrange the desktop's All Songs view.** The left panel (the
+  Library home) and player bar are fixed chrome, other views (`lib/views.svelte.ts`)
+  show one widget each, and phones use no layouts; appearance lives in client-side settings. Widgets live in
   `apps/ui/src/lib/components/widgets/` and are reused everywhere (layouts and
   the now-playing sheet); layouts only place and configure them.
 - Pin new dependencies to exact versions that are at least two weeks old.
@@ -111,7 +112,7 @@ run it in the background and wait for its notification.
   `import -window <id>` to capture it, where available.
 - Dev builds read URL parameters to set up a state without clicking, e.g.
   `?dev-layout=builtin:details.kdl&dev-theme=paper&dev-play=5&dev-sheet=1`
-  (also `dev-art=accent|tint|full`, `dev-lyrics` (the sheet's lyrics view), `dev-drawer`, `dev-arrange`, `dev-settings=interface|library|playback|keyboard|gestures|integrations|devices|technical|about` (with `dev-pair`, the Pair a device dialog), `dev-player=floating`, `dev-engine=host:port&dev-token=…` (adds an engine to switch to)). See `App.svelte`.
+  (also `dev-art=accent|tint|full`, `dev-lyrics` (the sheet's lyrics view), `dev-view=albums|songs|playlists|played|added|search|album:<key>` (opens a view), `dev-arrange`, `dev-settings=interface|library|playback|keyboard|gestures|integrations|devices|technical|about` (with `dev-pair`, the Pair a device dialog), `dev-player=floating`, `dev-engine=host:port&dev-token=…` (adds an engine to switch to)). See `App.svelte`.
   `?dev-library` shows the generated demo library instead of the real one
   (`dev-play` plays it); `?dev-stress&dev-library=50000` runs the webview
   stress test (results in `docs/PLAN.md`); `dev-stress=scroll` measures plain
@@ -129,5 +130,6 @@ run it in the background and wait for its notification.
 - Vite injects component CSS from JS in dev (`emitCss` only for builds)
   because WebKit's module cache otherwise loses styles across dev-server
   restarts. Don't revert that.
-- Phone layout is anything at or below 700px wide: the left panel becomes a
-  drawer, row splits stack, the now-playing sheet goes full screen.
+- Phone layout is anything at or below 700px wide: the left panel goes, the
+  Library home and each view fill the music area (one widget each, no
+  layouts), the now-playing sheet goes full screen.

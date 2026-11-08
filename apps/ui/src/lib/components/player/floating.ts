@@ -13,7 +13,7 @@ export interface FloatBox {
   /** Area width and height. */
   W: number;
   H: number;
-  /** Smallest top offset (keeps clear of e.g. the phone drawer toggle). */
+  /** Smallest top offset (keeps clear of e.g. the phone back button). */
   minTop: number;
 }
 

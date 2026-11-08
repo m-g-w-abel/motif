@@ -2,7 +2,6 @@
   import { onDestroy, tick, untrack, type Component } from 'svelte';
   import { setApp } from './lib/context';
   import { demoLibrary } from './lib/demo';
-  import { Drawer } from './lib/drawer.svelte';
   import { SETTINGS_GROUPS, SettingsView, type SettingsGroup } from './lib/settingsView.svelte';
   import SettingsScreen from './lib/components/shell/SettingsScreen.svelte';
   import { EngineClient, engines, PlaybackPosition } from './lib/engine.svelte';
@@ -32,6 +31,8 @@
   import ShortcutHelp from './lib/components/shell/ShortcutHelp.svelte';
   import LayoutEditor from './lib/components/shell/LayoutEditor.svelte';
   import ContentArea from './lib/components/shell/ContentArea.svelte';
+  import ViewScreen from './lib/components/shell/ViewScreen.svelte';
+  import { devViews, Views } from './lib/views.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
   import ExpandedPlayer from './lib/components/player/ExpandedPlayer.svelte';
   import FloatingPlayer from './lib/components/player/FloatingPlayer.svelte';
@@ -46,15 +47,11 @@
   const themes = new UserThemes();
   const settings = new SettingsStore();
   const sheet = new PlayerSheet();
-  const drawer = new Drawer();
   const settingsView = new SettingsView();
-  setApp({ engine, library, position, layout, themes, settings, sheet, drawer, settingsView });
-
-  // On phones the left panel is a drawer: swipe in from the left edge to open
-  // it, swipe left to close it.
-  function onPointerDown(e: PointerEvent) {
-    if (window.innerWidth <= 700 && !sheet.open) drawer.swipe(e);
-  }
+  const views = new Views();
+  setApp({ engine, library, position, layout, themes, settings, sheet, settingsView, views });
+  // All Songs is the layout-arranged view; on desktop it also stands in for the Library home, which is the left panel.
+  const allSongs = $derived(views.top.kind === 'songs' || (views.top.kind === 'home' && !views.phone));
   onDestroy(() => engine.close());
 
   $effect(() => position.track());
@@ -174,6 +171,11 @@
   const focusable = (t: EventTarget | null) => !!(t as Element | null)?.closest?.('button, a, [tabindex]');
 
   async function onShortcut(e: KeyboardEvent) {
+    if (e.key === 'b' && (e.ctrlKey || e.metaKey) && !views.phone) {
+      e.preventDefault();
+      settings.set('navCollapsed', !settings.current.navCollapsed);
+      return;
+    }
     if (e.defaultPrevented || helpOpen || typing(e.target)) return;
     const id = shortcutFor(e);
     if (!id || ((e.key === ' ' || e.key.startsWith('Arrow')) && focusable(e.target))) return;
@@ -237,7 +239,8 @@
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     if (params.has('dev-sheet')) sheet.expand();
     if (params.has('dev-lyrics')) sheet.lyrics = true;
-    if (params.has('dev-drawer')) drawer.open = true;
+    const devView = devViews(params.get('dev-view') ?? '');
+    if (devView) views.stack = devView;
     if (params.has('dev-arrange')) layout.arranging = true;
     const devSettings = params.get('dev-settings') as SettingsGroup;
     if (SETTINGS_GROUPS.includes(devSettings)) settingsView.open(devSettings);
@@ -295,14 +298,14 @@
       { open: layout.arranging, close: () => (layout.arranging = false) },
       { open: !!settingsView.group, close: () => settingsView.close() },
       { open: sheet.open, close: () => sheet.collapse() },
-      { open: drawer.open, close: () => drawer.close() },
+      { open: !!views.parent, close: () => views.back() },
     ]),
   );
   const player = $derived(settings.current.player);
 </script>
 
 <svelte:document oncontextmenu={onContextMenu} />
-<svelte:window onkeydown={onShortcut} onpointerdown={onPointerDown} ondragenter={onDragEnter} ondragleave={onDragLeave} ondragover={onDragOver} ondrop={onDrop} />
+<svelte:window onkeydown={onShortcut} ondragenter={onDragEnter} ondragleave={onDragLeave} ondragover={onDragOver} ondrop={onDrop} />
 
 {#if engine.unpaired && !remote}
   <PairPage unpaired />
@@ -328,10 +331,12 @@
     <main>
       {#if settingsView.group}
         <SettingsScreen />
-      {:else}
+      {:else if allSongs}
         {#key `${layout.source}/${layout.activeId}`}
           <ContentArea onEditLayout={() => (editing = true)} />
         {/key}
+      {:else}
+        {#key views.top}<ViewScreen />{/key}
       {/if}
     </main>
 
