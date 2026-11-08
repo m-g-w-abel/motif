@@ -24,4 +24,8 @@ hashing: number,
 /**
  * Bumped whenever the contents change, so clients refetch what they show.
  */
-revision: number, error: string | null, };
+revision: number, 
+/**
+ * Bumped whenever a playlist changes.
+ */
+playlists: number, error: string | null, };

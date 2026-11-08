@@ -5,11 +5,12 @@
   import Icon, { type IconName } from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import { canDecorate } from '../../windowChrome';
-  import { contextMenu } from '../../contextMenu.svelte';
+  import { contextMenu, menu } from '../../contextMenu.svelte';
   import { engines } from '../../engine.svelte';
   import { switchTo } from '../../engines';
 
-  const { engine, library, layout, drawer, settings, settingsView } = getApp();
+  const { engine, library, layout, drawer, settings, settingsView, playlists } = getApp();
+  $effect(() => playlists.sync());
   let scroller = $state<HTMLElement>();
   const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
 
@@ -40,10 +41,11 @@
       {#each sources as source (source.id)}
         <li>
           <button
-            class:active={layout.source === source.id && !settingsView.group}
+            class:active={layout.source === source.id && !settingsView.group && !playlists.shown}
             aria-current={layout.source === source.id ? 'page' : undefined}
             onclick={() => {
               layout.browse(source.id);
+              playlists.show(null);
               settingsView.close();
               drawer.close();
             }}
@@ -56,8 +58,34 @@
       {/each}
     </ul>
 
-    <h2>Playlists</h2>
-    <p class="note">Saved playlists arrive in a later phase.</p>
+    <div class="heading">
+      <h2>Playlists</h2>
+      {#if engine.can('library')}
+        <button class="icon-button" aria-label="New playlist" title="New playlist" onclick={() => playlists.create()}>
+          <Icon name="plus" size={14} />
+        </button>
+      {/if}
+    </div>
+    <ul class="sources">
+      {#each playlists.list as playlist (playlist.id)}
+        <li>
+          <button
+            class:active={playlists.shown === playlist.id && !settingsView.group}
+            aria-current={playlists.shown === playlist.id ? 'page' : undefined}
+            use:menu={() => playlists.menu(playlist)}
+            onclick={() => {
+              playlists.show(playlist.id);
+              settingsView.close();
+              drawer.close();
+            }}
+          >
+            <Icon name="list" size={16} />
+            <span class="label">{playlist.name}</span>
+            <span class="count">{playlist.tracks}</span>
+          </button>
+        </li>
+      {/each}
+    </ul>
   </div>
   <Scrollbar target={scroller} />
 
@@ -150,6 +178,10 @@
 
   .label {
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .count {
@@ -159,8 +191,15 @@
     color: var(--text-muted);
   }
 
+  .heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: var(--space-3) var(--space-2) 0 var(--space-3);
+  }
+
   h2 {
-    margin: var(--space-3) var(--space-3) var(--space-1);
+    margin: 0;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -168,11 +207,6 @@
     color: var(--text-muted);
   }
 
-  .note {
-    margin: 0 var(--space-3);
-    font-size: 11px;
-    color: var(--text-muted);
-  }
 
   .footer {
     display: flex;

@@ -43,7 +43,8 @@
   <!-- Keyed by position so a second right-click re-places the menu. -->
   {#key `${contextMenu.x},${contextMenu.y}`}
     <div class="context-menu" role="menu" tabindex="-1" use:place onkeydown={onMenuKey}>
-      {#each contextMenu.items as item (item.label)}
+      <!-- By position: playlists in an Add to playlist menu may share a name. -->
+      {#each contextMenu.items as item, i (i)}
         <button
           role="menuitem"
           onclick={() => {

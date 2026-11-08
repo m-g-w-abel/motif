@@ -3,6 +3,7 @@ import type { Drawer } from './drawer.svelte';
 import type { EngineClient, PlaybackPosition } from './engine.svelte';
 import type { LibraryClient } from './library.svelte';
 import type { BrowseState, LayoutStore, Source } from './layout/store.svelte';
+import type { Playlists } from './playlists.svelte';
 import type { SettingsStore } from './settings.svelte';
 import type { SettingsView } from './settingsView.svelte';
 import type { PlayerSheet } from './sheet.svelte';
@@ -19,6 +20,7 @@ export interface AppContext {
   sheet: PlayerSheet;
   drawer: Drawer;
   settingsView: SettingsView;
+  playlists: Playlists;
 }
 
 /** State shared by the widgets of one music area. */

@@ -32,6 +32,9 @@
   import ShortcutHelp from './lib/components/shell/ShortcutHelp.svelte';
   import LayoutEditor from './lib/components/shell/LayoutEditor.svelte';
   import ContentArea from './lib/components/shell/ContentArea.svelte';
+  import PlaylistPage from './lib/components/playlists/PlaylistPage.svelte';
+  import PlaylistPrompt from './lib/components/playlists/PlaylistPrompt.svelte';
+  import { Playlists } from './lib/playlists.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
   import ExpandedPlayer from './lib/components/player/ExpandedPlayer.svelte';
   import FloatingPlayer from './lib/components/player/FloatingPlayer.svelte';
@@ -48,7 +51,8 @@
   const sheet = new PlayerSheet();
   const drawer = new Drawer();
   const settingsView = new SettingsView();
-  setApp({ engine, library, position, layout, themes, settings, sheet, drawer, settingsView });
+  const playlists = new Playlists(engine);
+  setApp({ engine, library, position, layout, themes, settings, sheet, drawer, settingsView, playlists });
 
   // On phones the left panel is a drawer: swipe in from the left edge to open
   // it, swipe left to close it.
@@ -290,10 +294,12 @@
     routeBack(() => [
       { open: settingsView.scanning, close: () => void import('@tauri-apps/plugin-barcode-scanner').then((s) => s.cancel()) },
       { open: contextMenu.items.length > 0, close: escape },
+      { open: !!playlists.asking, close: () => playlists.answer(null) },
       { open: helpOpen || settingsView.pairing || settingsView.addingEngine, close: escape },
       { open: editing, close: () => (editing = false) },
       { open: layout.arranging, close: () => (layout.arranging = false) },
       { open: !!settingsView.group, close: () => settingsView.close() },
+      { open: !!playlists.shown, close: () => playlists.show(null) },
       { open: sheet.open, close: () => sheet.collapse() },
       { open: drawer.open, close: () => drawer.close() },
     ]),
@@ -328,6 +334,8 @@
     <main>
       {#if settingsView.group}
         <SettingsScreen />
+      {:else if playlists.shown}
+        <PlaylistPage />
       {:else}
         {#key `${layout.source}/${layout.activeId}`}
           <ContentArea onEditLayout={() => (editing = true)} />
@@ -347,6 +355,7 @@
 {#if helpOpen}<ShortcutHelp onClose={() => (helpOpen = false)} />{/if}
 
 <ContextMenu />
+<PlaylistPrompt />
 <ResizeEdges />
 
 {#if StressTest}<StressTest />{/if}
