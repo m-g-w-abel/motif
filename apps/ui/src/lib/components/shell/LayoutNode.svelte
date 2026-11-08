@@ -398,9 +398,4 @@
   .slot.root {
     height: 100%;
   }
-
-  /*
-   * Phones stack row splits. Fixed-size slots (side lists) shrink to their
-   * content; flexible ones get most of a screen.
-   */
 </style>
