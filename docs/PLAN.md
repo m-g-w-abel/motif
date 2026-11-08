@@ -253,6 +253,39 @@ Tickets #117–#133 (milestone "Phase 5").
 - **Deferred:** signed release builds, F-Droid metadata and battery-killer
   testing on release builds.
 
+## UI rework decisions (2026-11-08)
+
+Phase 5 ends with a new navigation and look, designed from the user's phone
+screens (layout only, not colours, sizes, fonts or icons). Clickable mock-up:
+[docs/design/mockup/index.html](design/mockup/index.html). It is one design
+language for phone and desktop, not a separate mobile UI.
+- **Navigation:** Library home (All Songs, Albums, Playlists, Recently
+  Played, Recently Added) → a category → an album or playlist page; Search
+  and Settings are views too. On the phone a bottom bar (mini player,
+  progress, Library / Search / Menu) replaces the drawer; Menu holds the
+  connection and engine switcher, Settings, Changelog and Help. On desktop
+  the left panel is the Library home and the player bar stays; views open in
+  the music area with a back button.
+- **Desktop layouts stay as they are** and keep arranging the library (All
+  Songs) view. Phones show the new views instead, one widget per view (no
+  stacked splits, which closes #157).
+- **Collection views** (albums, playlists): cover grid, name list or list
+  with covers; grid columns and title/artist visibility configurable.
+  **Song views** (album, playlist, All Songs, recents): song list first,
+  also list with covers and grid. View options are per device, per kind of
+  view, and per playlist.
+- **New data:** play history (Recently Played) and saved playlists are
+  built now. Auto-radio suggestions after the queue wait for similarity
+  radio (phase 13).
+- **⋮ menus** hold view options, sort, Rescan and Add to launcher (an
+  Android home-screen shortcut to that view; not on desktop).
+- **Changelog** is a bundled CHANGELOG.md; **Help** opens the docs on GitHub.
+- **Later in the phase:** swipe right = back (not in now playing), swipe
+  left on a song = queue it (in the queue: remove it), tapping the cover in
+  now playing cycles the album's images, swipe down closes now playing;
+  screen changes animate with shared elements (cover, title) moving into
+  place.
+
 ## Phase 0 checklist
 
 - [x] Licence, workspace, repository layout

@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motif mock-up</title>
+<style>
+:root {
+  --bg: #121214; --surface: #19191c; --surface-2: #222226; --hover: rgb(255 255 255 / 0.05);
+  --border: #2b2b30; --text: #e7e7ea; --muted: #8b8b94; --accent: #8b7cf6;
+  --font: system-ui, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0a0b; color: var(--text); font-family: var(--font); display: flex; gap: 32px; justify-content: center; align-items: flex-start; padding: 24px 16px; flex-wrap: wrap; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+
+.side { max-width: 320px; font-size: 14px; line-height: 1.5; color: var(--muted); }
+.side h1 { color: var(--text); font-size: 18px; margin-bottom: 8px; }
+.side h2 { color: var(--text); font-size: 14px; margin: 16px 0 6px; }
+.jump { display: flex; flex-wrap: wrap; gap: 6px; }
+.jump button { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+.jump button.on { border-color: var(--accent); color: var(--text); }
+.side ul { padding-left: 18px; }
+
+/* phone */
+.phone { width: 390px; height: 844px; max-width: 100%; border-radius: 36px; border: 8px solid #2a2a2e; background: var(--bg); position: relative; overflow: hidden; flex-shrink: 0; }
+.status { height: 32px; display: flex; justify-content: space-between; align-items: center; padding: 0 22px; font-size: 12px; color: var(--muted); position: absolute; inset: 0 0 auto; z-index: 30; pointer-events: none; }
+.page { position: absolute; inset: 32px 0 0; overflow-y: auto; padding: 0 16px 190px; scrollbar-width: none; }
+.page[hidden] { display: none; }
+
+.art { border-radius: 6px; aspect-ratio: 1; background: var(--c); position: relative; overflow: hidden; }
+.art::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 30% 25%, rgb(255 255 255 / .35), transparent 55%), radial-gradient(circle at 80% 90%, rgb(0 0 0 / .35), transparent 60%); }
+
+.iconbtn { width: 44px; height: 40px; border: 1px solid var(--border); background: var(--surface-2); border-radius: 10px; display: grid; place-items: center; }
+.textbtn { height: 40px; padding: 0 14px; border: 1px solid var(--border); background: var(--surface-2); border-radius: 10px; font-weight: 600; }
+.toolbar { display: flex; gap: 8px; margin: 14px 0 18px; }
+.toolbar .more { margin-left: auto; }
+
+/* library */
+.lib-head { display: flex; justify-content: space-between; align-items: center; padding: 20px 4px 18px; }
+.lib-head h1 { font-size: 34px; }
+.cat { display: flex; align-items: center; gap: 18px; width: 100%; padding: 12px 4px; font-size: 20px; font-weight: 600; text-align: left; border-radius: 10px; }
+.cat:active { background: var(--hover); }
+.dot { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--c); color: #fff; flex-shrink: 0; }
+
+/* albums */
+.back { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px 0 8px; border: 1px solid var(--border); border-radius: 10px; margin-top: 12px; font-weight: 600; }
+.title-row { display: flex; align-items: center; gap: 16px; margin-top: 18px; }
+.title-row h1 { font-size: 32px; }
+.grid { display: grid; grid-template-columns: repeat(var(--cols, 3), 1fr); gap: 16px 12px; }
+.tile { text-align: left; min-width: 0; }
+.tile .t, .tile .a { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .t { font-weight: 600; font-size: 14px; margin-top: 6px; }
+.tile .a { font-size: 13px; color: var(--muted); }
+
+/* album */
+.page.flush { padding: 0 0 190px; }
+.hero { border-radius: 0; }
+.flush .toolbar { padding: 0 16px; }
+.album-meta { text-align: center; padding: 14px 16px 0; }
+.album-meta h1 { font-size: 21px; }
+.album-meta p { color: var(--muted); font-weight: 600; margin-top: 2px; }
+.track { display: flex; align-items: baseline; gap: 12px; width: 100%; padding: 12px 16px; text-align: left; }
+.track:active { background: var(--hover); }
+.track .n { width: 20px; color: var(--muted); font-size: 14px; text-align: right; flex-shrink: 0; }
+.page:not(.flush) .track { padding: 10px 4px; }
+.track .art { width: 44px; flex-shrink: 0; border-radius: 4px; align-self: center; }
+.track .tt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.track .s { font-size: 13px; color: var(--muted); }
+.track .name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track .info { font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.track.playing .name { color: var(--accent); }
+
+.row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 9px 4px; text-align: left; }
+.row .art { width: 52px; flex-shrink: 0; border-radius: 4px; }
+.row .tt { min-width: 0; }
+.row .t { font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .s { color: var(--muted); font-size: 13px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.seg button { padding: 0 12px; height: 38px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.seg button.on { background: var(--border); color: var(--text); }
+
+/* options sheet */
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 26; background: var(--surface-2); border-radius: 18px 18px 0 0; padding: 18px 16px 24px; transform: translateY(100%); transition: transform .2s; }
+.sheet.on { transform: none; }
+.sheet h3 { font-size: 18px; margin-bottom: 8px; }
+.opt { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; font-weight: 600; }
+.muted { color: var(--muted); }
+.step { display: flex; align-items: center; gap: 14px; }
+.step button { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); font-size: 18px; }
+.switch { width: 44px; height: 26px; border-radius: 13px; background: var(--border); position: relative; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--muted); transition: transform .15s; }
+.switch.on { background: var(--accent); }
+.switch.on::after { transform: translateX(18px); background: #fff; }
+.sheet .item { display: block; width: 100%; text-align: left; padding: 12px 0; font-weight: 600; }
+
+/* search */
+.searchbox { display: flex; align-items: center; gap: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 0 14px; height: 52px; margin-top: 12px; }
+.searchbox input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 18px; }
+.chiprow { display: flex; gap: 8px; overflow-x: auto; margin: 12px -16px 0; padding: 0 16px; scrollbar-width: none; }
+.chiprow button { border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; white-space: nowrap; font-weight: 600; background: var(--surface-2); }
+.chiprow button.on { background: var(--text); color: var(--bg); }
+.search-tb { margin-top: 10px; }
+.best { display: flex; align-items: baseline; gap: 18px; margin: 4px 0 10px; }
+.best h2 { font-size: 26px; }
+.arow { display: flex; align-items: center; gap: 16px; width: 100%; padding: 8px 0; text-align: left; }
+.arow .art { width: 84px; flex-shrink: 0; }
+.arow .t { font-size: 18px; font-weight: 700; }
+.arow .a { font-weight: 600; }
+.arow .m { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.sub { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 18px 0 4px; }
+.empty { color: var(--muted); padding: 24px 0; text-align: center; }
+
+/* settings */
+.set-head { display: flex; align-items: center; gap: 18px; height: 56px; margin: 0 -16px 8px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.set-head h1 { flex: 1; font-size: 21px; font-weight: 600; }
+.set-group { display: flex; gap: 20px; width: 100%; padding: 14px 4px; text-align: left; }
+.set-group .ic { width: 36px; height: 36px; display: grid; place-items: center; color: var(--c); flex-shrink: 0; margin-top: 2px; }
+.set-group .ic svg { width: 28px; height: 28px; }
+.set-group .t { font-size: 18px; font-weight: 600; }
+.set-group .s { color: var(--muted); font-size: 14px; margin-top: 2px; }
+
+/* bottom bar */
+.bar { position: absolute; left: 10px; right: 10px; bottom: 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 16px; z-index: 20; overflow: hidden; }
+.mini { display: flex; align-items: center; gap: 12px; padding: 10px 12px 8px; width: 100%; text-align: left; }
+.mini .art { width: 46px; flex-shrink: 0; border-radius: 4px; }
+.mini .txt { flex: 1; min-width: 0; }
+.mini .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini .s { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.progress { height: 4px; margin: 0 14px; background: var(--border); border-radius: 2px; }
+.progress i { display: block; height: 100%; width: 34%; background: var(--text); border-radius: 2px; }
+.nav { display: flex; justify-content: space-around; padding: 8px 0 10px; }
+.nav button { width: 56px; height: 40px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); }
+.nav button.on { color: var(--text); }
+.nav svg { width: 26px; height: 26px; }
+
+/* menu sheet: grows up out of the bar */
+.menu { padding: 18px 16px 4px; display: none; }
+.bar.open .menu { display: block; }
+.menu h2 { text-align: center; font-size: 30px; letter-spacing: .02em; }
+.conn { display: flex; justify-content: center; align-items: center; gap: 10px; margin: 8px 0 12px; font-weight: 600; }
+.conn { width: 100%; }
+.led { width: 10px; height: 10px; border-radius: 50%; background: #3fbf5f; flex-shrink: 0; }
+.led.off { background: var(--muted); }
+.eng small { margin-left: auto; color: var(--muted); font-size: 13px; }
+.conn .led { width: 10px; height: 10px; border-radius: 50%; background: #3fbf5f; }
+.chip { background: var(--border); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+.menu .item { display: flex; align-items: center; gap: 18px; padding: 12px 8px; width: 100%; font-size: 17px; font-weight: 600; border-radius: 10px; }
+.scrim { position: absolute; inset: 0; background: rgb(0 0 0 / .55); z-index: 15; display: none; }
+.scrim.on { display: block; }
+
+/* now playing sheet: three states */
+.np { position: absolute; inset: 0; z-index: 25; background: #2a1a17; overflow-y: auto; scrollbar-width: none; transform: translateY(100%); transition: transform .25s; }
+.np.on { transform: none; }
+.np .bgart { position: absolute; inset: 0 0 auto; height: 470px; display: none; }
+.np .bgart::before { content: ""; position: absolute; inset: 0; z-index: 1; background: linear-gradient(transparent 55%, #2a1a17); }
+.np-in { position: relative; z-index: 2; padding: 44px 20px 40px; }
+.np .bigart { border-radius: 12px; }
+.np .album-name { text-align: center; font-size: 26px; font-weight: 700; margin: 14px 0 8px; }
+.np-title { display: flex; align-items: center; gap: 12px; }
+.np-title .tt { flex: 1; min-width: 0; }
+.np-title h3 { font-size: 24px; display: flex; align-items: center; gap: 6px; }
+.np-title h3 .chev { display: none; }
+.np-title p { color: rgb(255 255 255 / .65); font-size: 18px; }
+.lyricsbtn { width: 46px; height: 46px; border-radius: 12px; background: #fff; color: #222; display: grid; place-items: center; flex-shrink: 0; }
+.badge { display: block; width: max-content; margin: 14px auto 0; background: #fff; color: #222; border-radius: 999px; padding: 3px 12px; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.seek { margin-top: 28px; height: 4px; border-radius: 2px; background: rgb(255 255 255 / .2); }
+.seek i { display: block; height: 100%; width: 34%; background: #fff; border-radius: 2px; }
+.times { display: flex; justify-content: space-between; color: rgb(255 255 255 / .6); font-size: 13px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.ctrls { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+.ctrls svg { width: 28px; height: 28px; }
+.ctrls .pp { width: 76px; height: 76px; border-radius: 50%; background: #fff; color: #222; display: grid; place-items: center; }
+.ctrls .pp svg { fill: currentColor; width: 32px; height: 32px; }
+.handle { display: block; margin: 22px auto 6px; width: 44px; height: 5px; border-radius: 3px; background: rgb(255 255 255 / .3); }
+.peek { text-align: center; font-weight: 600; font-size: 18px; width: 100%; padding-bottom: 10px; }
+
+.q { display: none; }
+.q h4 { font-size: 22px; margin: 6px 0 12px; }
+.qrow { display: flex; align-items: center; gap: 14px; padding: 8px 20px; margin: 0 -20px; }
+.qrow.cur { background: rgb(255 255 255 / .1); }
+.qrow .art { width: 52px; flex-shrink: 0; border-radius: 4px; }
+.qrow .tt { flex: 1; min-width: 0; }
+.qrow .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qrow .s { color: rgb(255 255 255 / .6); font-size: 14px; }
+.qrow .grip { color: rgb(255 255 255 / .7); touch-action: none; cursor: grab; }
+.chips { display: flex; gap: 8px; overflow-x: auto; margin: 16px -20px 10px; padding: 0 20px; scrollbar-width: none; }
+.chips button { background: rgb(255 255 255 / .1); border-radius: 10px; padding: 8px 14px; white-space: nowrap; font-weight: 600; }
+.qmini { display: none; align-items: center; gap: 12px; padding: 38px 20px 10px; position: sticky; top: 0; z-index: 3; background: #1d1210; }
+.qmini .art { width: 46px; border-radius: 4px; }
+.qmini .tt { flex: 1; }
+
+/* half: art behind, title over it, queue below controls */
+.np.half .bgart { display: block; }
+.np.half .bigart, .np.half .album-name, .np.half .badge, .np.half .peek, .np.half .np-in > .handle { display: none; }
+.np.half .np-in { padding-top: 330px; }
+.np.half .np-title h3 .chev { display: inline; }
+.np.half .seek { margin-top: 22px; }
+.np.half .q { display: block; }
+/* full: only a mini header and the queue */
+.np.full .qmini { display: flex; }
+.np.full .np-in > :not(.q) { display: none; }
+.np.full .np-in { padding-top: 0; }
+.np.full .q { display: block; margin-top: 4px; background: #2a1a17; }
+.np.full .q .handle { margin-top: 10px; }
+.cast { color: rgb(255 255 255 / .8); margin-right: 10px; display: none; }
+.lyr { display: none; }
+.np.lyrics .qmini { display: flex; }
+.np.lyrics .cast { display: block; }
+.np.lyrics .np-in > :not(.lyr) { display: none; }
+.np.lyrics .np-in { padding-top: 0; }
+.np.lyrics .lyr { display: block; }
+.lyr .handle { margin-top: 10px; }
+#lyrics { text-align: center; font-size: 21px; font-weight: 700; line-height: 1.35; padding: 12px 0 60px; }
+#lyrics p { margin-bottom: 4px; color: rgb(255 255 255 / .45); }
+#lyrics p.cur { color: #fff; transform: scale(1.04); }
+#lyrics .gap { height: 22px; }
+</style>
+</head>
+<body>
+
+<div class="phone" id="phone">
+  <div class="status"><span>22:24</span><span>61%</span></div>
+
+  <section class="page" id="view"></section>
+
+  <div class="scrim" id="scrim"></div>
+  <div class="sheet" id="sheet"></div>
+
+  <div class="bar" id="bar">
+    <div class="menu">
+      <h2>motif</h2>
+      <button class="conn"><span class="led"></span>connected<span class="chip">this device</span></button>
+      <div id="engines" hidden>
+        <button class="item eng"><span class="led"></span>This device<small>playing</small></button>
+        <button class="item eng"><span class="led"></span>Living room PC<small>LAN</small></button>
+        <button class="item eng"><span class="led off"></span>Laptop<small>offline</small></button>
+        <button class="item">＋ Pair a device</button>
+      </div>
+      <div id="menu-items">
+      <button class="item" data-push="settings"><svg><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1A2 2 0 1 1 7 5.2l.1.1A1.7 1.7 0 0 0 10 4V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 10h.1a2 2 0 1 1 0 4z"/></svg>Settings</button>
+      <button class="item"><svg><path d="M2 14l3-4 3 5 3-8 3 9 3-6 3 4 2-2"/></svg>Changelog</button>
+      <button class="item"><svg><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6M12 17h.01"/></svg>Help</button>
+      </div>
+    </div>
+    <button class="mini" data-np="np">
+      <div class="art" style="--c:#d9d9d9"></div>
+      <div class="txt"><div class="t">Pulsewidth</div><div class="s">Aphex Twin – Selected Ambient Works 85–92</div></div>
+      <svg><path d="M7 4v16l13-8z"/></svg>
+    </button>
+    <div class="progress"><i></i></div>
+    <div class="nav">
+      <button class="on" data-go="library" aria-label="Library"><svg><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+      <button data-go="search" aria-label="Search"><svg><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
+      <button id="burger" aria-label="Menu"><svg><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    </div>
+  </div>
+
+  <div class="np" id="np">
+    <div class="bgart art" style="--c:#c8642c;border-radius:0"></div>
+    <div class="qmini"><div class="art" style="--c:#c8642c"></div><div class="tt"><b>Bible Silver Corner</b><div style="opacity:.6">Rodan</div></div><svg style="fill:currentColor"><path d="M7 4v16l13-8z"/></svg></div>
+    <div class="np-in">
+      <div class="bigart art" style="--c:#c8642c"></div>
+      <div class="album-name">Rusty</div>
+      <div class="np-title">
+        <div class="tt"><h3>Bible Silver Corner</h3><p>Rodan</p></div>
+        <button class="lyricsbtn" data-np="lyrics" aria-label="Lyrics"><svg><path d="M6 8h12M8 12h8M10 16h4"/></svg></button>
+      </div>
+      <span class="badge">48 KHZ · 152 KBPS · OPUS</span>
+      <div class="seek"><i></i></div>
+      <div class="times"><span>2:20</span><span>6:52</span></div>
+      <div class="ctrls">
+        <button aria-label="Shuffle"><svg><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg></button>
+        <button aria-label="Previous"><svg><path d="M6 5v14M19 5 9 12l10 7z"/></svg></button>
+        <button class="pp" aria-label="Play"><svg><path d="M8 5v14l11-7z"/></svg></button>
+        <button aria-label="Next"><svg><path d="M18 5v14M5 5l10 7-10 7z"/></svg></button>
+        <button aria-label="Repeat"><svg><path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/></svg></button>
+      </div>
+      <button class="handle" data-np="half" aria-label="Show queue"></button>
+      <button class="peek" data-np="half">Rusty</button>
+      <div class="q">
+        <button class="handle" data-np="full" aria-label="Expand queue"></button>
+        <h4>Rusty</h4>
+        <div id="queue"></div>
+        <div class="chips"><button>Discover</button><button>Downbeat</button><button>Alternative</button><button>Noise rock</button></div>
+        <div id="after"></div>
+      </div>
+      <div class="lyr"><button class="handle" data-np="np" aria-label="Back to now playing"></button><div id="lyrics"></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="side">
+  <h1>Motif mobile mock-up</h1>
+  <p>Layout only, in the app's Graphite theme. Tap around; ⋮ opens view options; swipe right (or drag with the mouse) goes back a level; swipe down on now playing steps it back.</p>
+  <h2>Jump to</h2>
+  <div class="jump" id="jump"></div>
+  <h2>Not in this mock-up yet</h2>
+  <ul>
+    <li>Settings group pages (only the group list).</li>
+    <li>Swipe left to queue/unqueue, cover cycling, shared-element transitions.</li>
+  </ul>
+</div>
+<script src="views.js"></script>
+</body>
+</html>
