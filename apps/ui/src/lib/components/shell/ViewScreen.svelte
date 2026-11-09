@@ -104,7 +104,7 @@
   }
 
   // An album's or playlist's songs are all fetched; the page's search filters them here.
-  let rows = $state.raw<{ track: TrackRef; details?: LibraryTrack }[]>([]);
+  let rows = $state.raw<{ track: TrackRef; details?: LibraryTrack; item?: string }[]>([]);
   $effect(() => {
     if (view.kind === 'album') {
       if (isDemo) {
@@ -119,7 +119,7 @@
     } else if (view.kind === 'playlist' && playlists.revision) {
       playlists
         .entries(view.id)
-        .then((entries) => (rows = entries.map((e) => ({ track: e.track.track, details: e.track }))))
+        .then((entries) => (rows = entries.map((e) => ({ track: e.track.track, details: e.track, item: e.item }))))
         .catch(() => {});
     }
   });
@@ -145,6 +145,15 @@
     return trackListData(engine, library, 'library', area.browse.search || null, rules, shownList);
   });
   const openAlbum = (key: string, title: string) => views.open({ kind: 'album', key, title });
+  // Select mode's Delete on a playlist's page: gone here at once, then from the playlist (a repeat removes nothing more).
+  const removeEntries = $derived(
+    view.kind === 'playlist' && engine.can('library')
+      ? (items: string[]) => {
+          rows = rows.filter((r) => !r.item || !items.includes(r.item));
+          playlists.remove(view.id, items);
+        }
+      : undefined,
+  );
   const first = $derived(rows[0]);
 </script>
 
@@ -167,21 +176,6 @@
       {#if songView}
         <button class="tool text" class:active={selecting} aria-pressed={selecting} onclick={() => (selecting = !selecting)}>Select</button>
       {/if}
-    {/if}
-    {#if recents}
-      <div class="segmented" role="radiogroup" aria-label="Show">
-        {#each [['songs', 'Songs'], ['albums', 'Albums']] as const as [value, label] (value)}
-          <button
-            role="radio"
-            aria-checked={show === value}
-            class:active={show === value}
-            onclick={() => {
-              show = value;
-              selecting = false;
-            }}>{label}</button
-          >
-        {/each}
-      </div>
     {/if}
     <span class="grow"></span>
     {#if collection && optionsKey && sort && sortDefaults}
@@ -267,6 +261,21 @@
         <span class="dot" style:--c={category.colour}><Icon name={category.icon} size={22} /></span>
         <h1>{category.label}</h1>
       </div>
+    {#if recents}
+      <div class="segmented switch" role="radiogroup" aria-label="Show">
+        {#each [['songs', 'Songs'], ['albums', 'Albums']] as const as [value, label] (value)}
+          <button
+            role="radio"
+            aria-checked={show === value}
+            class:active={show === value}
+            onclick={() => {
+              show = value;
+              selecting = false;
+            }}>{label}</button
+          >
+        {/each}
+      </div>
+    {/if}
       {@render toolbar()}
     </div>
   {/if}
@@ -313,6 +322,7 @@
         inAlbum={view.kind === 'album'}
         header={page ? hero : undefined}
         openAlbum={view.kind === 'album' ? undefined : openAlbum}
+        onremove={removeEntries}
       />
     {:else}
       <p class="placeholder">{viewTitle(view)} shows here soon.</p>
@@ -446,6 +456,16 @@
     color: var(--text);
   }
 
+  @media (max-width: 700px) {
+    .tool {
+      width: 40px;
+    }
+
+    .actions {
+      gap: var(--space-1);
+    }
+  }
+
   .tool.text {
     width: auto;
     padding: 0 var(--space-3);
@@ -475,6 +495,12 @@
 
   .segmented button:last-child {
     border-right: 0;
+  }
+
+  /* The recents' Songs / Albums switch, on its own row under the title. */
+  .switch {
+    width: fit-content;
+    margin-top: var(--space-3);
   }
 
   .segmented button.active {

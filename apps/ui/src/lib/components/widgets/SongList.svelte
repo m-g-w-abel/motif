@@ -31,6 +31,7 @@
     shownColumns = $bindable(),
     header,
     openAlbum,
+    onremove,
   }: {
     data: SongListData;
     mode?: ViewMode;
@@ -48,6 +49,8 @@
     /** Scrolls with the songs, above them (an album page's cover and toolbar). */
     header?: Snippet;
     openAlbum?: (key: string, title: string) => void;
+    /** Select mode's Delete: takes the picked rows' keys out of the list (a playlist's entries). */
+    onremove?: (keys: string[]) => void;
   } = $props();
 
   const { engine, settings, playlists } = getApp();
@@ -167,6 +170,11 @@
     row()?.focus({ preventScroll: true });
   }
 
+  function remove() {
+    onremove?.([...picked.keys()]);
+    view.browse.picked = new Map();
+  }
+
   function addToPlaylist(e: MouseEvent) {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     playlists.pick(chosen(), box.left, box.top - 8, e.currentTarget as HTMLElement);
@@ -215,13 +223,19 @@
               onclick={() => activate(i)}
               use:menu={() => trackMenu(engine, playlists, data, view, i, openAlbum)}
             >
-              {#if mode !== 'list'}
-                <Artwork {track} art={details ? details.art : undefined} title={track.album ?? ''} size={grid ? undefined : 40} />
-              {:else if selecting}
-                <span class="check" aria-hidden="true">{#if picked.has(key)}<Icon name="check" size={14} />{/if}</span>
-              {:else}
-                <span class="number">{songNumber(i, details, inAlbum)}</span>
-              {/if}
+              <span class="lead">
+                {#if mode !== 'list'}
+                  <Artwork {track} art={details ? details.art : undefined} title={track.album ?? ''} size={grid ? undefined : 40} />
+                {:else}
+                  <span class="number" class:hidden={selecting}>{songNumber(i, details, inAlbum)}</span>
+                {/if}
+                <!-- Over the number or cover, so the row's text stays put when Select mode starts. -->
+                {#if selecting}
+                  <span class="check" class:on={picked.has(key)} aria-hidden="true">
+                    {#if picked.has(key)}<Icon name="check" size={14} />{/if}
+                  </span>
+                {/if}
+              </span>
               {#if grid}
                 {#if titles}<span class="title">{trackTitle(track)}</span>{/if}
                 {#if artists}<span class="artist">{track.artist || 'Unknown artist'}</span>{/if}
@@ -258,17 +272,23 @@
       <button onclick={() => (picked.size === count ? (view.browse.picked = new Map()) : selectAll())}>
         {picked.size === count && count ? 'None' : 'All'}
       </button>
-      {#if engine.can('playback')}
-        <button disabled={!picked.size} onclick={() => playTracks(engine, chosen())}>Play</button>
-      {/if}
-      {#if engine.can('queue')}
-        <button disabled={!picked.size} onclick={() => queueTracks(engine, chosen())}>Add to queue</button>
-      {/if}
-      {#if playlists.canAdd(chosen())}
-        <button aria-haspopup="menu" onclick={addToPlaylist}>Add to playlist…</button>
-      {/if}
       <span class="grow"></span>
       <button class="done" onclick={() => (selecting = false)}>Done</button>
+      <div class="picked-actions">
+        {#if engine.can('playback')}
+          <button disabled={!picked.size} onclick={() => playTracks(engine, chosen())}>Play</button>
+        {/if}
+        {#if engine.can('queue')}
+          <button disabled={!picked.size} onclick={() => queueTracks(engine, chosen(), true)}>Queue next</button>
+          <button disabled={!picked.size} onclick={() => queueTracks(engine, chosen())}>Add to queue</button>
+        {/if}
+        {#if playlists.canAdd(chosen())}
+          <button aria-haspopup="menu" onclick={addToPlaylist}>Add to playlist…</button>
+        {/if}
+        {#if onremove}
+          <button class="danger" disabled={!picked.size} title="Delete from this playlist" onclick={remove}>Delete</button>
+        {/if}
+      </div>
     </div>
   {/if}
 </section>
@@ -367,23 +387,58 @@
     color: var(--text-muted);
   }
 
-  .number,
-  .check {
+  .song {
+    position: relative;
+  }
+
+  .lead {
+    position: relative;
+    display: grid;
+    place-items: center end;
     flex: none;
     min-width: 2ch;
+  }
+
+  ul:not(.rows) .lead {
+    display: block;
+  }
+
+  .number {
     text-align: right;
     font-variant-numeric: tabular-nums;
     color: var(--text-muted);
   }
 
+  .number.hidden {
+    visibility: hidden;
+  }
+
   .check {
+    position: absolute;
+    top: 50%;
+    right: 0;
     display: grid;
     place-items: center;
     width: 20px;
     height: 20px;
-    border: 1px solid var(--border);
+    margin-top: -10px;
+    border: 1px solid var(--text-muted);
     border-radius: 50%;
-    color: var(--accent);
+    background: var(--bg);
+    color: var(--accent-contrast);
+  }
+
+  .check.on {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  /* On a cover, the check sits in its corner. */
+  .covers .check,
+  ul:not(.rows) .check {
+    top: 4px;
+    right: 4px;
+    margin-top: 0;
   }
 
   .text {
@@ -476,6 +531,14 @@
     cursor: default;
   }
 
+  .picked-actions {
+    display: contents;
+  }
+
+  .select-bar .danger {
+    color: var(--danger);
+  }
+
   .select-bar .done {
     border-color: var(--accent);
     background: var(--accent);
@@ -490,5 +553,38 @@
 
   .grow {
     flex: 1;
+  }
+
+  /* Desktop: one row, Done at its end. */
+  @media (min-width: 701px) {
+    .select-bar .grow,
+    .select-bar .done {
+      order: 1;
+    }
+  }
+
+  /* Phones: the bar covers the bottom bar (player and view buttons) while songs are picked, its actions in a row of their own. */
+  @media (max-width: 700px) {
+    .select-bar {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 31;
+      min-height: calc(148px + env(safe-area-inset-bottom));
+      align-content: flex-start;
+      padding: var(--space-3) var(--space-3) calc(var(--space-3) + env(safe-area-inset-bottom));
+    }
+
+    .picked-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: var(--space-2);
+      width: 100%;
+    }
+
+    .picked-actions button {
+      height: 44px;
+    }
   }
 </style>

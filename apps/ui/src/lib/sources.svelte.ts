@@ -60,11 +60,14 @@ const localKey = (engine: EngineClient) => {
   return track?.source === 'local' ? track.id : null;
 };
 
-/** Songs all here at once (an album's, a playlist's); `play(start)` plays them from row `start`. */
+/**
+ * Songs all here at once (an album's, a playlist's); `play(start)` plays them from row `start`.
+ * A playlist's rows are keyed by `item`, its entry id: the same song can be in it twice.
+ */
 export function fixedData(
   engine: EngineClient,
   title: string,
-  rows: { track: TrackRef; details?: LibraryTrack }[],
+  rows: { track: TrackRef; details?: LibraryTrack; item?: string }[],
   play: (start: number) => void,
   empty: string,
 ): SongListData {
@@ -73,7 +76,7 @@ export function fixedData(
     count: rows.length,
     track: (i) => rows[i]?.track,
     details: (i) => rows[i]?.details,
-    key: (i) => rows[i]?.track.id ?? `#${i}`,
+    key: (i) => rows[i]?.item ?? rows[i]?.track.id ?? `#${i}`,
     get currentKey() {
       return engine.current?.track.id ?? null;
     },
