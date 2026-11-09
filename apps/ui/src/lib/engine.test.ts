@@ -8,6 +8,7 @@ describe('PlaybackPosition', () => {
       status,
       volume: 1,
       repeat: 'off',
+      shuffle: false,
       position_ms: 10_000,
       sampled_at_ms: Date.now() + clockOffset - sampledAgoMs,
       current: null,

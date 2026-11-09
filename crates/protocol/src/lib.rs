@@ -93,6 +93,13 @@ pub enum Command {
     SetRepeat {
         mode: RepeatMode,
     },
+    /// Plays the context in a random order: what hasn't played yet is
+    /// shuffled, the current track stays. Off goes back to the list's order
+    /// from the current track. A new context while on is shuffled too, its
+    /// `start` entry first.
+    SetShuffle {
+        on: bool,
+    },
     /// Adds tracks to the end of the queue.
     Enqueue {
         tracks: Vec<TrackRef>,
@@ -384,6 +391,7 @@ pub struct PlayerState {
     pub status: PlaybackStatus,
     pub volume: f32,
     pub repeat: RepeatMode,
+    pub shuffle: bool,
     /// Position at the moment this snapshot was taken.
     #[ts(type = "number")]
     pub position_ms: u64,
@@ -415,6 +423,7 @@ impl Default for PlayerState {
             status: PlaybackStatus::Stopped,
             volume: 1.0,
             repeat: RepeatMode::Off,
+            shuffle: false,
             position_ms: 0,
             sampled_at_ms: 0,
             current: None,

@@ -48,6 +48,8 @@ pub struct Playback {
     current: Option<Current>,
     history: Vec<QueueItem>,
     position_ms: u64,
+    #[serde(default)]
+    unshuffled: Option<Vec<u64>>,
 }
 
 impl Playback {
@@ -81,6 +83,11 @@ pub struct Player {
     current: Option<Current>,
     /// What played before the current entry, oldest first.
     history: Vec<QueueItem>,
+    /// While shuffle is on: the context's entry ids in the list's own order,
+    /// to go back to. The context itself holds the shuffled play order.
+    unshuffled: Option<Vec<u64>>,
+    /// State of the random generator that shuffles.
+    rng: u64,
     next_id: u64,
     status: PlaybackStatus,
     volume: f32,
@@ -109,6 +116,11 @@ impl Default for Player {
             queue: Vec::new(),
             current: None,
             history: Vec::new(),
+            unshuffled: None,
+            // Any non-zero seed; the clock makes each run's order different.
+            rng: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64 | 1),
             next_id: 1,
             status: PlaybackStatus::Stopped,
             volume: 1.0,
@@ -145,6 +157,7 @@ impl Player {
                 self.volume = volume;
             }
             Command::SetRepeat { mode } => self.repeat = mode,
+            Command::SetShuffle { on } => self.set_shuffle(on),
             Command::Enqueue { tracks } => {
                 let items = self.entries(tracks);
                 self.queue.extend(items);
@@ -171,6 +184,19 @@ impl Player {
                 self.context_meta = Some((kind, label));
                 self.context_next = 0;
                 self.queue.clear();
+                let mut start = start;
+                if self.unshuffled.is_some() {
+                    self.unshuffled = Some(self.context.iter().map(|i| i.id).collect());
+                    // The chosen entry plays first, then the rest in a random order.
+                    if let Some(s) = start.replace(0) {
+                        let first = self.context.remove(s as usize);
+                        self.context.insert(0, first);
+                        self.shuffle_from(1);
+                    } else {
+                        start = None;
+                        self.shuffle_from(0);
+                    }
+                }
                 match start {
                     Some(start) => {
                         self.go(Step::Context(start as usize), now);
@@ -232,6 +258,7 @@ impl Player {
             status: self.status,
             volume: self.volume,
             repeat: self.repeat,
+            shuffle: self.unshuffled.is_some(),
             position_ms: self.position(now).as_millis() as u64,
             sampled_at_ms: wall_ms,
             current: self.current_item().cloned(),
@@ -267,6 +294,7 @@ impl Player {
             current: self.current.clone(),
             history: self.history.clone(),
             position_ms: self.position(now).as_millis() as u64,
+            unshuffled: self.unshuffled.clone(),
         }
     }
 
@@ -282,6 +310,7 @@ impl Player {
             mut current,
             mut history,
             position_ms,
+            unshuffled,
         } = saved;
         queue.retain(|item| resolver.resolve(&item.track).is_ok());
         if let Some(Current::Context(i)) = current
@@ -309,6 +338,7 @@ impl Player {
         self.context_meta = context_meta;
         self.queue = queue;
         self.history = history;
+        self.unshuffled = unshuffled;
         self.status = match current {
             Some(_) => PlaybackStatus::Paused,
             None => PlaybackStatus::Stopped,
@@ -606,6 +636,49 @@ impl Player {
             self.remember(old);
         }
         self.restart(now);
+    }
+
+    /// Shuffle on: what hasn't played yet takes a random order. Off: the
+    /// list's order comes back around the current entry. Safe to repeat.
+    // shortcut: repeat-all replays the same shuffled order; reshuffle on each wrap if wanted.
+    fn set_shuffle(&mut self, on: bool) {
+        match (on, self.unshuffled.take()) {
+            (true, None) => {
+                self.unshuffled = Some(self.context.iter().map(|i| i.id).collect());
+                self.shuffle_from(self.context_next);
+            }
+            (false, Some(order)) => {
+                let current = match self.current {
+                    Some(Current::Context(i)) => Some(self.context[i].id),
+                    _ => None,
+                };
+                let next = self.context.get(self.context_next).map(|i| i.id);
+                let mut entries: std::collections::HashMap<u64, QueueItem> =
+                    self.context.drain(..).map(|i| (i.id, i)).collect();
+                // Removed entries are missing from `entries` and drop out.
+                self.context = order.iter().filter_map(|id| entries.remove(id)).collect();
+                let at = |id| self.context.iter().position(|i| i.id == id);
+                if let Some(i) = current.and_then(at) {
+                    self.current = Some(Current::Context(i));
+                    self.context_next = i + 1;
+                } else {
+                    self.context_next = next.and_then(at).unwrap_or(self.context.len());
+                }
+            }
+            (_, kept) => self.unshuffled = kept,
+        }
+    }
+
+    /// Puts the context's entries from `from` on in a random order (Fisher–Yates).
+    fn shuffle_from(&mut self, from: usize) {
+        for i in (from + 1..self.context.len()).rev() {
+            // xorshift64: plenty for picking an order.
+            self.rng ^= self.rng << 13;
+            self.rng ^= self.rng >> 7;
+            self.rng ^= self.rng << 17;
+            let j = from + (self.rng % (i - from + 1) as u64) as usize;
+            self.context.swap(i, j);
+        }
     }
 
     fn remember(&mut self, entry: Current) {
@@ -1192,6 +1265,99 @@ mod tests {
         let state = p.snapshot(t0, 0);
         assert_eq!(name(state.current.as_ref()), Some("x"));
         assert_eq!(state.context.unwrap().index, None, "x isn't in the context");
+    }
+
+    fn shuffle(p: &mut Player, on: bool) {
+        p.apply(Command::SetShuffle { on }, Instant::now()).unwrap();
+    }
+
+    /// Twenty one-second tracks named 0 to 19.
+    fn twenty() -> Vec<String> {
+        (0..20).map(|i| i.to_string()).collect()
+    }
+
+    fn sorted(mut names: Vec<String>) -> Vec<String> {
+        names.sort_by_key(|n| n.parse::<u32>().unwrap());
+        names
+    }
+
+    #[test]
+    fn shuffle_keeps_the_current_track_and_shuffles_the_rest() {
+        let t0 = Instant::now();
+        let names = twenty();
+        let mut p = playing(&names.iter().map(String::as_str).collect::<Vec<_>>(), t0);
+        p.apply(Command::Next, t0).unwrap();
+        shuffle(&mut p, true);
+        assert!(p.snapshot(t0, 0).shuffle);
+        assert_eq!(now_playing(&p), Some("1"));
+        let rest = nexts(&mut p, 18, t0);
+        assert_eq!(sorted(rest.clone()), names[2..], "each of the rest once");
+        assert_ne!(rest, names[2..], "in another order");
+        p.apply(Command::Next, t0).unwrap();
+        assert_eq!(p.status, PlaybackStatus::Stopped, "then the context ends");
+        let history: Vec<_> = p.history.iter().map(|i| name(Some(i)).unwrap()).collect();
+        assert_eq!(history[..2], ["0", "1"], "what played stays played");
+    }
+
+    #[test]
+    fn a_context_played_shuffled_starts_with_the_chosen_track() {
+        let t0 = Instant::now();
+        let names = twenty();
+        let tracks: Vec<_> = names.iter().map(|n| (n.as_str(), 1000)).collect();
+        let mut p = Player::default();
+        shuffle(&mut p, true);
+        set_context(&mut p, &tracks, Some(7), t0);
+        assert_eq!(now_playing(&p), Some("7"));
+        let rest = nexts(&mut p, 19, t0);
+        let mut others = names.clone();
+        others.remove(7);
+        assert_eq!(sorted(rest.clone()), others);
+        assert_ne!(rest, others);
+    }
+
+    #[test]
+    fn shuffle_off_goes_back_to_list_order_from_the_current_track() {
+        let t0 = Instant::now();
+        let names = twenty();
+        let tracks: Vec<_> = names.iter().map(|n| (n.as_str(), 1000)).collect();
+        let mut p = Player::default();
+        shuffle(&mut p, true);
+        set_context(&mut p, &tracks, Some(0), t0);
+        let order: Vec<_> = p.context.iter().map(|i| name(Some(i)).unwrap()).collect();
+        assert_ne!(order, names, "shuffled while on");
+        p.apply(Command::Next, t0).unwrap();
+        let current: u32 = now_playing(&p).unwrap().parse().unwrap();
+        shuffle(&mut p, false);
+        assert!(!p.snapshot(t0, 0).shuffle);
+        assert_eq!(now_playing(&p), Some(current.to_string().as_str()));
+        let expected: Vec<_> = (current + 1..20).map(|i| i.to_string()).collect();
+        assert_eq!(nexts(&mut p, expected.len(), t0), expected);
+        shuffle(&mut p, false);
+        assert_eq!(p.context.len(), 20, "turning it off twice changes nothing");
+    }
+
+    #[test]
+    fn shuffle_survives_a_restart_and_can_still_be_undone() {
+        let t0 = Instant::now();
+        let names = twenty();
+        let mut p = playing(&names.iter().map(String::as_str).collect::<Vec<_>>(), t0);
+        shuffle(&mut p, true);
+        p.apply(
+            Command::RemoveItem {
+                item_id: id(&p, "5"),
+            },
+            t0,
+        )
+        .unwrap();
+        let mut r = reload(&p, t0, &FakeResolver);
+        assert!(r.snapshot(t0, 0).shuffle);
+        shuffle(&mut r, false);
+        let expected: Vec<_> = (1..20).filter(|&i| i != 5).map(|i| i.to_string()).collect();
+        assert_eq!(
+            nexts(&mut r, expected.len(), t0),
+            expected,
+            "list order, without the removed entry"
+        );
     }
 
     /// Saves `p` and restores it into a new player through JSON, as the server does.

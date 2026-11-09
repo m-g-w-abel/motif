@@ -165,24 +165,22 @@
       .catch((e: Error) => (engine.error = e.message));
   }
 
-  /** Plays every item, in order or shuffled. */
+  /** Plays every item, in order or shuffled: the engine's shuffle, its first track a random one. */
   export async function playEverything(shuffle = false) {
     try {
-      if (!shuffle && items === 'albums' && !isDemo) {
-        await engine.query({ type: 'play', search: view.browse.search || null, sort, start: 0 });
+      await engine.send({ type: 'set_shuffle', on: shuffle });
+      const from = (total: number) => (shuffle ? Math.floor(Math.random() * total) : 0);
+      if (items === 'albums' && !isDemo) {
+        const search = view.browse.search || null;
+        const found = await engine.query({ type: 'tracks', search, sort, offset: 0, limit: 0 });
+        if (found.type === 'tracks' && found.total) await engine.query({ type: 'play', search, sort, start: from(found.total) });
         return;
       }
+      // shortcut: playlists and recent albums play as a snapshot of their tracks until contexts follow their source.
       await albums?.load(0, count - 1);
       const keys = Array.from({ length: count }, (_, i) => card(i)?.key).filter((k) => k !== undefined);
-      // shortcut: the client shuffles (sending every track) until the engine has a shuffle of its own.
       const tracks = await albumTracks(keys);
-      if (shuffle) {
-        for (let i = tracks.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
-        }
-      }
-      playTracks(engine, tracks);
+      if (tracks.length) engine.run({ type: 'set_context', tracks, start: from(tracks.length), kind: 'list', label: null });
     } catch (e) {
       engine.error = (e as Error).message;
     }

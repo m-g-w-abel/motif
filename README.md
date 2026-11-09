@@ -30,6 +30,9 @@ control isn't an add-on: it's the normal code path.
   The playhead comes from samples actually played, not a timer.
 - ReplayGain, with loudness measured on demand for untagged files.
 - A restarted engine comes back paused to the same queue, track and position.
+- Shuffle is engine state, like repeat: it shuffles what hasn't played yet and
+  turning it off returns to the list's order from the current track (also
+  MPD's `random`).
 
 **Library**
 - Incremental scanning into SQLite with FTS5 search, folder watching, artwork

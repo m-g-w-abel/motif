@@ -4,7 +4,7 @@ import type { RepeatMode } from "./RepeatMode";
 import type { ReplayGainSettings } from "./ReplayGainSettings";
 import type { TrackRef } from "./TrackRef";
 
-export type Command = { "type": "play" } | { "type": "pause" } | { "type": "toggle_playback" } | { "type": "stop" } | { "type": "next" } | { "type": "previous" } | { "type": "seek", position_ms: number, } | { "type": "set_volume", volume: number, } | { "type": "set_repeat", mode: RepeatMode, } | { "type": "enqueue", tracks: Array<TrackRef>, } | { "type": "enqueue_next", tracks: Array<TrackRef>, } | { "type": "set_context", tracks: Array<TrackRef>, start: number | null, kind: ContextKind, 
+export type Command = { "type": "play" } | { "type": "pause" } | { "type": "toggle_playback" } | { "type": "stop" } | { "type": "next" } | { "type": "previous" } | { "type": "seek", position_ms: number, } | { "type": "set_volume", volume: number, } | { "type": "set_repeat", mode: RepeatMode, } | { "type": "set_shuffle", on: boolean, } | { "type": "enqueue", tracks: Array<TrackRef>, } | { "type": "enqueue_next", tracks: Array<TrackRef>, } | { "type": "set_context", tracks: Array<TrackRef>, start: number | null, kind: ContextKind, 
 /**
  * E.g. the album or list name.
  */
