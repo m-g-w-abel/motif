@@ -317,7 +317,9 @@ async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, Str
     let library = state.library.clone().ok_or("this engine has no library")?;
     if matches!(
         query,
-        LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. }
+        LibraryQuery::Play { .. }
+            | LibraryQuery::PlayAlbum { .. }
+            | LibraryQuery::PlayPlaylist { .. }
     ) {
         let command = tokio::task::spawn_blocking(move || library.selection(&query))
             .await
@@ -383,13 +385,23 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | LibraryQuery::Lookup { .. }
             | LibraryQuery::AlbumTracks { .. }
             | LibraryQuery::Waveform { .. }
-            | LibraryQuery::Lyrics { .. } => None,
-            LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. } => Some(Scope::Playback),
+            | LibraryQuery::Lyrics { .. }
+            | LibraryQuery::Playlists
+            | LibraryQuery::PlaylistTracks { .. } => None,
+            LibraryQuery::Play { .. }
+            | LibraryQuery::PlayAlbum { .. }
+            | LibraryQuery::PlayPlaylist { .. } => Some(Scope::Playback),
             LibraryQuery::AddRoot { .. }
             | LibraryQuery::RemoveRoot { .. }
             | LibraryQuery::Rescan
             | LibraryQuery::SetWatching { .. }
-            | LibraryQuery::SaveLyrics { .. } => Some(Scope::Library),
+            | LibraryQuery::SaveLyrics { .. }
+            | LibraryQuery::CreatePlaylist { .. }
+            | LibraryQuery::RenamePlaylist { .. }
+            | LibraryQuery::DeletePlaylist { .. }
+            | LibraryQuery::AddToPlaylist { .. }
+            | LibraryQuery::RemoveFromPlaylist { .. }
+            | LibraryQuery::MovePlaylistItem { .. } => Some(Scope::Library),
         },
         ClientMessage::Subscribe { .. } => None,
         ClientMessage::SetIntegrations { .. } => Some(Scope::Settings),
@@ -633,6 +645,24 @@ mod tests {
                 return serde_json::from_str(&text).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn viewing_playlists_is_a_read_and_editing_needs_the_library_scope() {
+        let query = |query| required_scope(&ClientMessage::Query { id: 1, query });
+        assert_eq!(query(LibraryQuery::Playlists), None);
+        assert_eq!(query(LibraryQuery::PlaylistTracks { id: "p".into() }), None);
+        assert_eq!(
+            query(LibraryQuery::PlayPlaylist {
+                id: "p".into(),
+                start: 0
+            }),
+            Some(Scope::Playback)
+        );
+        assert_eq!(
+            query(LibraryQuery::DeletePlaylist { id: "p".into() }),
+            Some(Scope::Library)
+        );
     }
 
     #[tokio::test]

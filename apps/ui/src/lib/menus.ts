@@ -8,6 +8,7 @@ import type { QueueItem } from './protocol/QueueItem';
 import type { TrackRef } from './protocol/TrackRef';
 import { inSelection, ordered } from './selection';
 import { isAndroid } from './platform';
+import type { Playlists } from './playlists.svelte';
 import type { TrackListData } from './sources.svelte';
 import { toasts } from './toast.svelte';
 
@@ -80,14 +81,14 @@ function queueItems(engine: EngineClient, tracks: TrackRef[]): MenuItem[] {
 }
 
 /** The menu of row `i` in a track list; of the whole selection when the row is part of one. */
-export function trackMenu(engine: EngineClient, data: TrackListData, view: ViewState, i: number): MenuItem[] {
+export function trackMenu(engine: EngineClient, playlists: Playlists, data: TrackListData, view: ViewState, i: number): MenuItem[] {
   const track = data.track(i);
   if (!track) return [];
   if (inSelection(view.browse.picked, data.key(i))) {
     const tracks = ordered(view.browse.picked);
-    return [...playItem(engine, () => playTracks(engine, tracks)), ...queueItems(engine, tracks)];
+    return [...playItem(engine, () => playTracks(engine, tracks)), ...queueItems(engine, tracks), ...playlists.addItems(tracks)];
   }
-  const items: MenuItem[] = [...playItem(engine, () => data.play(i)), ...queueItems(engine, [track])];
+  const items: MenuItem[] = [...playItem(engine, () => data.play(i)), ...queueItems(engine, [track]), ...playlists.addItems([track])];
   if (track.album) {
     const artist = data.details?.(i)?.album_artist ?? track.artist ?? '';
     items.push({ label: 'Go to album', run: () => (view.browse.focusAlbum = albumKey({ ...track, artist })) });

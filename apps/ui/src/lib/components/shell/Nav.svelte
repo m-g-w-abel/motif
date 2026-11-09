@@ -66,8 +66,6 @@
       {/each}
     </ul>
 
-    <h2>Playlists</h2>
-    <p class="note">Saved playlists arrive in a later phase.</p>
   </div>
   <Scrollbar target={scroller} />
 
@@ -194,12 +192,6 @@
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--text-muted);
-  }
-
-  .note {
-    margin: 0 var(--space-3);
-    font-size: 11px;
     color: var(--text-muted);
   }
 

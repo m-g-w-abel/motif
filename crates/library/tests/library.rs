@@ -1029,3 +1029,170 @@ fn opus_tracks_are_hashed_and_old_codec_flags_cleared() {
     assert!(hash().starts_with("pcm-b3:"), "{}", hash());
     let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
 }
+
+fn playlists(library: &Library) -> Vec<protocol::Playlist> {
+    let QueryResult::Playlists { playlists } = library.query(LibraryQuery::Playlists).unwrap()
+    else {
+        panic!()
+    };
+    playlists
+}
+
+/// A playlist's tracks by title, with their item ids.
+fn entries(library: &Library, id: &str) -> Vec<(String, String)> {
+    let QueryResult::PlaylistTracks { entries } = library
+        .query(LibraryQuery::PlaylistTracks { id: id.into() })
+        .unwrap()
+    else {
+        panic!()
+    };
+    entries
+        .into_iter()
+        .map(|e| (e.item, e.track.track.title.unwrap()))
+        .collect()
+}
+
+fn titles_of(entries: &[(String, String)]) -> Vec<&str> {
+    entries.iter().map(|(_, t)| t.as_str()).collect()
+}
+
+#[test]
+fn playlists_are_made_edited_played_and_survive_moves_and_repeats() {
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &music,
+    );
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 4 && !s.scanning && s.hashing == 0);
+    let path = |title: &str| track(&library, title).track.id;
+    let revision = library.status().playlists;
+
+    // Every command is sent twice, as a retrying remote client would.
+    let twice = |query: LibraryQuery| {
+        library.query(query.clone()).unwrap();
+        library.query(query).unwrap();
+    };
+    twice(LibraryQuery::CreatePlaylist {
+        id: "p1".into(),
+        name: "  Road trip ".into(),
+        paths: vec![path("Opening"), path("Closing")],
+    });
+    twice(LibraryQuery::AddToPlaylist {
+        id: "p1".into(),
+        op: "a1".into(),
+        paths: vec![path("Ending")],
+    });
+    assert_eq!(
+        titles_of(&entries(&library, "p1")),
+        ["Opening", "Closing", "Ending"]
+    );
+    assert!(library.status().playlists > revision, "clients hear of it");
+
+    let items = entries(&library, "p1");
+    twice(LibraryQuery::MovePlaylistItem {
+        id: "p1".into(),
+        item: items[2].0.clone(),
+        before: Some(items[0].0.clone()),
+    });
+    assert_eq!(
+        titles_of(&entries(&library, "p1")),
+        ["Ending", "Opening", "Closing"]
+    );
+    twice(LibraryQuery::MovePlaylistItem {
+        id: "p1".into(),
+        item: items[2].0.clone(),
+        before: None,
+    });
+    assert_eq!(
+        titles_of(&entries(&library, "p1")),
+        ["Opening", "Closing", "Ending"]
+    );
+
+    twice(LibraryQuery::RemoveFromPlaylist {
+        id: "p1".into(),
+        items: vec![items[1].0.clone()],
+    });
+    twice(LibraryQuery::RenamePlaylist {
+        id: "p1".into(),
+        name: "Drive".into(),
+    });
+    let list = playlists(&library);
+    assert_eq!(list.len(), 1);
+    assert_eq!(
+        (list[0].id.as_str(), list[0].name.as_str(), list[0].tracks),
+        ("p1", "Drive", 2)
+    );
+    assert!(
+        library
+            .query(LibraryQuery::RenamePlaylist {
+                id: "p1".into(),
+                name: " ".into(),
+            })
+            .is_err()
+    );
+    assert!(
+        library
+            .query(LibraryQuery::AddToPlaylist {
+                id: "nope".into(),
+                op: "a2".into(),
+                paths: vec![path("Ending")],
+            })
+            .is_err()
+    );
+
+    let Command::SetContext {
+        tracks,
+        start,
+        kind,
+        label,
+    } = library
+        .selection(&LibraryQuery::PlayPlaylist {
+            id: "p1".into(),
+            start: 1,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        tracks
+            .iter()
+            .map(|t| t.title.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        ["Opening", "Ending"]
+    );
+    assert_eq!(
+        (start, kind, label.as_deref()),
+        (Some(1), ContextKind::List, Some("Drive"))
+    );
+
+    // A moved file is found again by its audio hash.
+    let opening = PathBuf::from(path("Opening"));
+    let moved = opening.with_file_name("01 Opening (moved).flac");
+    fs::rename(&opening, &moved).unwrap();
+    library.query(LibraryQuery::Rescan).unwrap();
+    wait_until(&library, |s| {
+        s.tracks == 5 && s.missing == 1 && !s.scanning && s.hashing == 0
+    });
+    let QueryResult::PlaylistTracks {
+        entries: moved_entries,
+    } = library
+        .query(LibraryQuery::PlaylistTracks { id: "p1".into() })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(moved_entries[0].track.track.id, moved.to_str().unwrap());
+    assert!(!moved_entries[0].track.missing);
+
+    twice(LibraryQuery::DeletePlaylist { id: "p1".into() });
+    assert!(playlists(&library).is_empty());
+    let _ = fs::remove_dir_all(data);
+    let _ = fs::remove_dir_all(music);
+}

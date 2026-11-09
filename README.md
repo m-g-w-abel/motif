@@ -36,6 +36,9 @@ control isn't an add-on: it's the normal code path.
   extraction and audio hashes, so a track keeps its identity when it moves.
 - Sorting, grouping and search run in SQL. The UI fetches only the rows in
   view, so a 50,000-track library never crosses the wire at once.
+- Saved playlists live in the engine's library, so every paired device sees
+  the same ones. Entries find moved files by audio hash, and every edit is
+  safe for a remote to retry.
 
 **Interface** (Svelte 5)
 - The music area is arranged by **[layout files](docs/LAYOUT.md)** (KDL):

@@ -41,7 +41,7 @@
     at?: string;
   } = $props();
 
-  const { engine, library, settings } = getApp();
+  const { engine, library, settings, playlists } = getApp();
   const view = getViewState();
   const memoryKey = $derived(at === undefined ? undefined : `${view.source}/${view.layoutId}/${at}`);
 
@@ -602,7 +602,7 @@
                 onauxclick={(e) => e.button === 1 && queueRow(i)}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}
-                use:menu={() => trackMenu(engine, data, view, i)}
+                use:menu={() => trackMenu(engine, playlists, data, view, i)}
               >
                 {#each shown as column (column)}
                   <td class={column}>
