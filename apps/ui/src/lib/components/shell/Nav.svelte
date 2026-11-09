@@ -9,6 +9,7 @@
   import { contextMenu } from '../../contextMenu.svelte';
   import { engines } from '../../engine.svelte';
   import { switchTo } from '../../engines';
+  import { HELP_URL, openUrl } from '../../openUrl';
 
   const { engine, library, settings, settingsView, views } = getApp();
   let scroller = $state<HTMLElement>();
@@ -85,15 +86,23 @@
         <span class="dot"></span>{statusLabel[engine.status]}
       </span>
     {/if}
-    <button
-      class="icon-button"
-      class:active={settingsView.group !== null}
-      aria-label="Settings"
-      title="Settings"
-      onclick={() => settingsView.open()}
-    >
-      <Icon name="settings" size={16} />
-    </button>
+    <span class="actions">
+      <button class="icon-button" aria-label="Changelog" title="Changelog" onclick={() => (views.changelog = true)}>
+        <Icon name="list" size={16} />
+      </button>
+      <button class="icon-button" aria-label="Help (opens the docs online)" title="Help" onclick={() => openUrl(HELP_URL)}>
+        <Icon name="info" size={16} />
+      </button>
+      <button
+        class="icon-button"
+        class:active={settingsView.group !== null}
+        aria-label="Settings"
+        title="Settings"
+        onclick={() => settingsView.open()}
+      >
+        <Icon name="settings" size={16} />
+      </button>
+    </span>
   </div>
 </nav>
 
@@ -203,6 +212,11 @@
     height: 40px;
     padding: 0 var(--space-2) 0 var(--space-3);
     border-top: 1px solid var(--border);
+    flex: none;
+  }
+
+  .actions {
+    display: flex;
     flex: none;
   }
 

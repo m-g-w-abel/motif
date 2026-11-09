@@ -29,6 +29,7 @@
   import ResizeEdges from './lib/components/shell/ResizeEdges.svelte';
   import ContextMenu from './lib/components/ContextMenu.svelte';
   import ShortcutHelp from './lib/components/shell/ShortcutHelp.svelte';
+  import Changelog from './lib/components/shell/Changelog.svelte';
   import LayoutEditor from './lib/components/shell/LayoutEditor.svelte';
   import ContentArea from './lib/components/shell/ContentArea.svelte';
   import ViewScreen from './lib/components/shell/ViewScreen.svelte';
@@ -232,7 +233,7 @@
 
   // Development only (stripped from builds): URL parameters that set up a
   // state for visual checks in other webviews, e.g.
-  // ?dev-layout=builtin:details.kdl&dev-theme=light&dev-play=5&dev-sheet=1
+  // ?dev-layout=builtin:details.kdl&dev-theme=light&dev-play=5&dev-sheet=1 (also dev-changelog)
   let StressTest = $state<Component | null>(null);
   if (import.meta.env.DEV) {
     const params = new URLSearchParams(location.search);
@@ -245,6 +246,7 @@
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     if (params.has('dev-sheet')) sheet.expand();
     if (params.has('dev-lyrics')) sheet.lyrics = true;
+    if (params.has('dev-changelog')) views.changelog = true;
     const devView = devViews(params.get('dev-view') ?? '');
     if (devView) views.stack = devView;
     if (params.has('dev-arrange')) layout.arranging = true;
@@ -308,7 +310,7 @@
       { open: views.options, close: () => (views.options = false) },
       { open: views.sorting, close: () => (views.sorting = false) },
       { open: !!playlists.asking, close: () => playlists.answer(null) },
-      { open: helpOpen || settingsView.pairing || settingsView.addingEngine, close: escape },
+      { open: helpOpen || views.changelog || settingsView.pairing || settingsView.addingEngine, close: escape },
       { open: editing, close: () => (editing = false) },
       { open: layout.arranging, close: () => (layout.arranging = false) },
       { open: !!settingsView.group, close: () => settingsView.back() },
@@ -367,6 +369,7 @@
 </div>
 
 {#if helpOpen}<ShortcutHelp onClose={() => (helpOpen = false)} />{/if}
+{#if views.changelog}<Changelog onClose={() => (views.changelog = false)} />{/if}
 
 <ContextMenu />
 <PlaylistPrompt />

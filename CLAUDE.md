@@ -22,6 +22,10 @@ directory (`MOTIF_DATA_DIR` overrides it, handy for tests).
   adds or finishes a user-visible feature or a phase, or moves a number it
   quotes, update the README in the same PR. Mention planned streaming sources
   only by their general kind, not by service name.
+- **Keep `CHANGELOG.md` current.** A user-visible change adds a line to its
+  newest section in the same PR. The app bundles and shows it (Changelog in the
+  phone menu and the left panel), so write for users, and name streaming sources
+  only by their general kind.
 - **The engine is playback-only.** Never put UI concerns (layouts, themes, view
   state, settings) into `crates/engine`, `crates/protocol` or `crates/server`.
   If something non-playback seems to belong there, explain why and ask first.

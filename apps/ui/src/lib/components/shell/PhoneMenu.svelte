@@ -3,16 +3,27 @@
   import { canDiscover } from '../../discover';
   import { engines } from '../../engine.svelte';
   import { switchTo } from '../../engines';
+  import { HELP_URL, openUrl } from '../../openUrl';
   import Icon from '../Icon.svelte';
 
   // The phone bar's menu, grown up out of the bar (`NowPlayingBar`): the
-  // connection, which opens the engine switcher in its place, then Settings.
+  // connection, which opens the engine switcher in its place, then Settings, Changelog and Help.
   const { engine, settingsView, views } = getApp();
   const statusLabel = { connecting: 'connecting…', open: 'connected', closed: 'disconnected' };
 
   function settings() {
     views.menu = null;
     settingsView.open();
+  }
+
+  function changelog() {
+    views.menu = null;
+    views.changelog = true;
+  }
+
+  function help() {
+    views.menu = null;
+    void openUrl(HELP_URL);
   }
 
   // Pairing this phone with another computer: scan its QR (Add an engine), else Settings → Devices.
@@ -52,7 +63,8 @@
     <button class="item" onclick={pair}><Icon name="plus" size={20} />Pair a device</button>
   {:else}
     <button class="item" onclick={settings}><Icon name="settings" size={20} />Settings</button>
-    <!-- Changelog and Help join here with the changelog ticket. -->
+    <button class="item" onclick={changelog}><Icon name="list" size={20} />Changelog</button>
+    <button class="item" onclick={help}><Icon name="info" size={20} />Help</button>
   {/if}
 </div>
 
