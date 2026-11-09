@@ -228,6 +228,19 @@
     display: block;
   }
 
+  /* Phones: large centred lines filling the sheet. */
+  @media (max-width: 700px) {
+    li button {
+      padding-inline: var(--space-4);
+      font-size: 1.35em;
+      text-align: center;
+    }
+
+    li button:hover .stamp {
+      display: none;
+    }
+  }
+
   .plain {
     overflow-y: auto;
     padding: var(--space-3) var(--space-4);

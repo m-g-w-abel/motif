@@ -1,11 +1,12 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { formatTime, trackFormat, trackTitle } from '../../format';
   import type { InfoStyle } from '../../layout/model';
   import Scrollbar from '../Scrollbar.svelte';
 
   /** `playing` shows the playing track (now-playing screen); otherwise the track selected in a list. */
-  let { style, playing = false }: { style: InfoStyle; playing?: boolean } = $props();
+  let { style, playing = false, aside }: { style: InfoStyle; playing?: boolean; /** Hero: beside the title and artist. */ aside?: Snippet } = $props();
 
   const { engine, library } = getApp();
   const view = getViewState();
@@ -24,6 +25,13 @@
   }
 
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
+  /** Before the format on phones: "48 kHz · 152 kbps · ". */
+  const rates = $derived(
+    [details?.sample_rate && `${details.sample_rate / 1000} kHz`, details?.bitrate && `${details.bitrate} kbps`]
+      .filter(Boolean)
+      .map((v) => `${v} · `)
+      .join(''),
+  );
 
   const rows = $derived<[string, string][]>(
     track
@@ -50,12 +58,17 @@
 
 <section class="info selectable {style}" bind:this={scroller}>
   {#if style === 'hero'}
-    <h1>{track ? trackTitle(track) : none}</h1>
+    <div class="hero-title">
+      <div class="names">
+        <h1>{track ? trackTitle(track) : none}</h1>
+        {#if track}<p class="hero-artist">{track.artist ?? 'Unknown artist'}</p>{/if}
+      </div>
+      {@render aside?.()}
+    </div>
     {#if track}
-      <p class="hero-artist">{track.artist ?? 'Unknown artist'}</p>
       <p class="hero-album">
-        {track.album ?? ''}
-        {#if format}<span class="format">{format}</span>{/if}
+        <span class="album-name">{track.album ?? ''}</span>
+        {#if format}<span class="format"><span class="rates">{rates}</span>{format}</span>{/if}
       </p>
     {:else}
       <p class="hero-album">Double-click a track in the library to start.</p>
@@ -99,6 +112,22 @@
     overflow: visible;
     padding: 0;
     background: none;
+  }
+
+  .hero-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .names {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* The sample rate and bitrate are in the format badge on phones only. */
+  .rates {
+    display: none;
   }
 
   h1 {
