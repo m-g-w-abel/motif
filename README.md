@@ -83,7 +83,8 @@ behaves like a good Android audio app: calls and alarms
 pause it until they end, another player pauses it for good, unplugging
 headphones pauses it, and navigation prompts duck it without touching the
 user's volume. System back closes the topmost menu, dialog, screen or sheet,
-then goes back through the views, before it leaves the app.
+then goes back through the views, before it leaves the app. Any view (an album, a playlist, a
+category) can be pinned to the home screen as a shortcut that opens it.
 
 ## Engineering notes
 
