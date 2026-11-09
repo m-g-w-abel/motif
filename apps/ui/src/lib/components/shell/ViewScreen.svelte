@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { getApp, setViewState, type ViewState } from '../../context';
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
+  import { launcherItems } from '../../launcher';
   import { libraryMenu } from '../../menus';
   import { DEFAULT_RULES } from '../../sort.svelte';
   import { viewOptions, type OptionsKey } from '../../viewOptions';
@@ -18,7 +19,7 @@
 
   // Every view but All Songs, which the layouts arrange (ContentArea). The
   // parent re-creates this component for each view.
-  const { engine, layout, settings, views, playlists } = getApp();
+  const { engine, layout, library, settings, views, playlists } = getApp();
   const view = untrack(() => views.top);
 
   // The Albums view's grid keeps its own search and selection, apart from All Songs'.
@@ -73,6 +74,9 @@
     if (!searching) search('');
   }
 
+  /** A launcher shortcut's icon: the artwork `art`, at launcher size. */
+  const cover = (art: string | null | undefined) => (art ? library.artUrl(art, 256, true) : null);
+
   const playAlbum = (key: string) =>
     engine.query({ type: 'play_album', album: key, sort: [] }).catch((e: Error) => (engine.error = e.message));
 </script>
@@ -91,8 +95,13 @@
         aria-label="{playlist.name} menu"
         title="More"
         aria-haspopup="menu"
-        onclick={(e) => openBelow(e, playlists.menu(playlist, () => views.back()))}
+        onclick={(e) => openBelow(e, [...playlists.menu(playlist, () => views.back()), ...launcherItems({ kind: 'playlist', id: playlist.id, name: playlist.name }, cover(playlist.art))])}
       >
+        <Icon name="more" size={16} />
+      </button>
+    {/if}
+    {#if view.kind === 'album' && launcherItems(view).length}
+      <button class="icon-button" aria-label="More" title="More" aria-haspopup="menu" onclick={(e) => openBelow(e, launcherItems(view, cover(view.art)))}>
         <Icon name="more" size={16} />
       </button>
     {/if}
@@ -151,6 +160,7 @@
           {#if views.options}
             <ViewOptionsSheet
               title={category.label}
+              {view}
               key={optionsKey}
               {shownColumns}
               artistsLabel={view.kind === 'playlists' ? 'Show song counts' : 'Show artists'}
@@ -198,8 +208,8 @@
         titles={options.titles}
         artists={options.artists}
         oncolumns={(columns) => settings.setView(optionsKey, { columns })}
-        onopen={(key, title) =>
-          views.open(view.kind === 'playlists' ? { kind: 'playlist', id: key, name: title } : { kind: 'album', key, title })}
+        onopen={(key, title, art) =>
+          views.open(view.kind === 'playlists' ? { kind: 'playlist', id: key, name: title } : { kind: 'album', key, title, art })}
       />
     {:else if view.kind === 'played'}
       <RecentlyPlayed />

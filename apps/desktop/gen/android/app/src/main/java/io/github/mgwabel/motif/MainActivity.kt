@@ -4,8 +4,11 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -37,24 +40,27 @@ class MainActivity : TauriActivity() {
   private val remoteMedia = Executors.newSingleThreadExecutor()
   /** The last remote artwork, by URL; only on [remoteMedia]. */
   private var cover: Pair<String, Bitmap?>? = null
-  /** A pairing link from the host's pairing page, until the UI takes it (`apps/ui/src/App.svelte`). */
-  @Volatile private var pairLink: String? = null
+  /**
+   * A motif:// link, until the UI takes it (`apps/ui/src/App.svelte`): a launcher shortcut's view
+   * ([Storage.pinShortcut]) or a host's pairing page.
+   */
+  @Volatile private var link: String? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     // Not when recreated: that intent was taken already.
-    if (savedInstanceState == null) keepPairLink(intent)
+    if (savedInstanceState == null) keepLink(intent)
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
-    if (keepPairLink(intent)) webView?.evaluateJavascript("window.motifPairLinkArrived?.()", null)
+    if (keepLink(intent)) webView?.evaluateJavascript("window.motifLinkArrived?.()", null)
   }
 
-  private fun keepPairLink(intent: Intent?): Boolean {
-    val link = intent?.data?.takeIf { intent.action == Intent.ACTION_VIEW && it.scheme == "motif" } ?: return false
-    pairLink = link.toString()
+  private fun keepLink(intent: Intent?): Boolean {
+    val data = intent?.data?.takeIf { intent.action == Intent.ACTION_VIEW && it.scheme == "motif" } ?: return false
+    link = data.toString()
     return true
   }
 
@@ -135,7 +141,27 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun takePairLink(): String? = pairLink.also { pairLink = null }
+    fun takeLink(): String? = link.also { link = null }
+
+    /**
+     * Asks the launcher to pin a shortcut that opens `link` (`apps/ui/src/lib/launcher.ts`), with
+     * the artwork at `cover` as its icon, else the app's. False if the launcher can't pin any.
+     */
+    @JavascriptInterface
+    fun pinShortcut(link: String, label: String, cover: String?): Boolean {
+      val shortcuts = getSystemService(ShortcutManager::class.java)
+      if (!shortcuts.isRequestPinShortcutSupported) return false
+      // Off the UI's thread for the artwork download, as remote artwork.
+      remoteMedia.execute {
+        val art = cover?.let(::download)
+        val icon = art?.let(Icon::createWithBitmap) ?: Icon.createWithResource(this@MainActivity, R.mipmap.ic_launcher)
+        val open = Intent(Intent.ACTION_VIEW, Uri.parse(link), this@MainActivity, MainActivity::class.java)
+        // The link is the id: pinning a view again updates its shortcut.
+        val shortcut = ShortcutInfo.Builder(this@MainActivity, link).setShortLabel(label).setIcon(icon).setIntent(open).build()
+        runOnUiThread { if (!isDestroyed) shortcuts.requestPinShortcut(shortcut, null) }
+      }
+      return true
+    }
 
     @JavascriptInterface
     fun setVolumeKeys(on: Boolean) {

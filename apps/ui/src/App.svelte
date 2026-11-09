@@ -32,7 +32,7 @@
   import LayoutEditor from './lib/components/shell/LayoutEditor.svelte';
   import ContentArea from './lib/components/shell/ContentArea.svelte';
   import ViewScreen from './lib/components/shell/ViewScreen.svelte';
-  import { devViews, Views } from './lib/views.svelte';
+  import { devViews, parseViewLink, Views } from './lib/views.svelte';
   import PlaylistPrompt from './lib/components/playlists/PlaylistPrompt.svelte';
   import { Playlists } from './lib/playlists.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
@@ -277,17 +277,23 @@
     showRemoteMedia(remoteMedia(engine.status, engine.player, position.at(Date.now()), cover));
   });
 
-  // Opened from a host's pairing page ("Open in Motif", `MainActivity.kt`): pair as if its QR was scanned.
-  const android = (globalThis as { MotifAndroid?: { takePairLink(): string | null } }).MotifAndroid;
-  const takePairLink = () => {
-    const text = android?.takePairLink();
+  // Opened by a motif:// link (`MainActivity.kt`): a launcher shortcut shows its view; a host's
+  // pairing page ("Open in Motif") pairs as if its QR was scanned.
+  const android = (globalThis as { MotifAndroid?: { takeLink(): string | null } }).MotifAndroid;
+  const takeLink = () => {
+    const text = android?.takeLink();
     if (!text) return;
+    const view = parseViewLink(text);
     const link = parsePairLink(text);
-    if (link) settingsView.pairWith(link);
-    else toasts.show("That isn't a Motif pairing link.");
+    if (view) {
+      settingsView.close();
+      sheet.collapse();
+      views.show(view);
+    } else if (link) settingsView.pairWith(link);
+    else toasts.show("That isn't a Motif link.");
   };
-  (globalThis as { motifPairLinkArrived?: () => void }).motifPairLinkArrived = takePairLink;
-  takePairLink();
+  (globalThis as { motifLinkArrived?: () => void }).motifLinkArrived = takeLink;
+  takeLink();
 
   let editing = $state(false);
 
