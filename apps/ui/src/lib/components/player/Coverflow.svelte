@@ -78,8 +78,9 @@
     go(at + by);
   }
 
-  // A tap on the centre card shows the next image; a drag that ends on it (a swipe, the volume
-  // gesture) or a long press for the menu is not a tap.
+  // A tap on the centre card shows the next image (on phones, where the neighbours hide behind it,
+  // its left half the previous one); a drag that ends on it (a swipe, the volume gesture) or a long
+  // press for the menu is not a tap.
   let down: { x: number; y: number } | null = null;
   const isTap = (e: PointerEvent) =>
     e.button === 0 && !!down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < SLOP && !!(e.target as Element).closest('.tap');
@@ -87,7 +88,10 @@
   // Mouse only: a touch swipe on the artwork skips the track (`gestures.ts`).
   let swipeX: number | null = null;
   function onPointerUp(e: PointerEvent) {
-    if (isTap(e)) go(at + 1);
+    if (isTap(e)) {
+      const card = (e.target as Element).closest('.tap')!.getBoundingClientRect();
+      go(at + (narrow.current && e.clientX < card.left + card.width / 2 ? -1 : 1));
+    }
     down = null;
     const dx = swipeX === null ? 0 : e.clientX - swipeX;
     swipeX = null;

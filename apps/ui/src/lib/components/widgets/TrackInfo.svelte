@@ -2,13 +2,14 @@
   import type { Snippet } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { formatTime, trackFormat, trackTitle } from '../../format';
+  import { marquee } from '../../marquee';
   import type { InfoStyle } from '../../layout/model';
   import Scrollbar from '../Scrollbar.svelte';
 
   /** `playing` shows the playing track (now-playing screen); otherwise the track selected in a list. */
   let { style, playing = false, aside }: { style: InfoStyle; playing?: boolean; /** Hero: beside the title and artist. */ aside?: Snippet } = $props();
 
-  const { engine, library } = getApp();
+  const { engine, library, sheet } = getApp();
   const view = getViewState();
   let scroller = $state<HTMLElement>();
   const track = $derived(playing ? engine.current?.track : (view.browse.selectedTrack ?? undefined));
@@ -24,6 +25,8 @@
     return d.year && d.year !== d.original_year ? `${d.original_year} (${d.year} release)` : String(d.original_year);
   }
 
+  /** Hero names that don't fit one line (phones) scroll once per track while the sheet is open. */
+  const scrolling = $derived(style === 'hero' && playing && sheet.progress === 1 && track ? track.id : null);
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(
@@ -60,8 +63,8 @@
   {#if style === 'hero'}
     <div class="hero-title">
       <div class="names">
-        <h1>{track ? trackTitle(track) : none}</h1>
-        {#if track}<p class="hero-artist">{track.artist ?? 'Unknown artist'}</p>{/if}
+        <h1 use:marquee={scrolling}><span class="marquee">{track ? trackTitle(track) : none}</span></h1>
+        {#if track}<p class="hero-artist" use:marquee={scrolling}><span class="marquee">{track.artist ?? 'Unknown artist'}</span></p>{/if}
       </div>
       {@render aside?.()}
     </div>

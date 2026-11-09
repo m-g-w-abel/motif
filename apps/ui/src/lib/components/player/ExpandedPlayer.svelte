@@ -10,6 +10,7 @@
   import Queue from '../widgets/Queue.svelte';
   import TrackInfo from '../widgets/TrackInfo.svelte';
   import { trackTitle } from '../../format';
+  import { marquee } from '../../marquee';
 
   const { engine, layout, sheet, views } = getApp();
   let body = $state<HTMLElement>();
@@ -344,7 +345,7 @@
         {#if sheet.lyrics}<Lyrics />{:else}<ArtworkWidget expands={false} playing />{/if}
       </div>
       <div class="details">
-        <p class="album-title">{album}</p>
+        <p class="album-title" use:marquee={sheet.progress === 1 ? (engine.current?.track.id ?? null) : null}><span class="marquee">{album}</span></p>
         <TrackInfo style="hero" playing>
           {#snippet aside()}
             <button class="lyrics-button" aria-label="Lyrics" aria-pressed={sheet.lyrics} title="Show lyrics" onclick={() => sheet.toggleLyrics()}>
@@ -590,13 +591,40 @@
       background: var(--border);
     }
 
+    /* One line each, so the controls never move between tracks; what doesn't fit scrolls (`marquee.ts`). */
     .album-title {
-      display: block;
+      display: flex;
+      height: 1.3em;
       margin: 0;
-      text-align: center;
       font-size: 1.5em;
       font-weight: 700;
-      overflow-wrap: anywhere;
+      line-height: 1.3;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    /* Centred while it fits; auto margins drop to 0 when it overflows, so it starts at the left. */
+    .album-title .marquee {
+      flex: none;
+      margin-inline: auto;
+    }
+
+    .details :global(.hero :is(h1, .hero-artist)) {
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .details :global(.marquee) {
+      display: inline-block;
+    }
+
+    .details :global(.hero-album) {
+      min-height: 1.6em;
+    }
+
+    /* The controls sit low, just above the handle; the space goes between them and the names. */
+    .details > :global(.controls) {
+      margin-top: auto;
     }
 
     .lyrics-button {
@@ -637,7 +665,6 @@
 
     .more {
       display: block;
-      margin-top: auto;
       padding: var(--space-3) 0;
       touch-action: none;
     }
