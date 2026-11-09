@@ -120,9 +120,11 @@
     gap: var(--space-3);
   }
 
+  /* Long names wrap here, even mid-word, rather than running under what sits beside them. */
   .names {
     flex: 1;
     min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   /* The sample rate and bitrate are in the format badge on phones only. */

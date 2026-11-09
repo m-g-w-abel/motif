@@ -276,6 +276,7 @@
   /** The keyboard's press on a handle; pointers go through `sheet.handle`. */
   const keyed = (e: MouseEvent, then: () => void) => e.detail === 0 && then();
   const album = $derived(engine.current?.track.album ?? '');
+  let coverWidth = $state(0);
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -333,6 +334,12 @@
   <div class="body" bind:this={body}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="now" onpointerdown={dragNow}>
+      <!-- Phones, half queue: the cover, full width, behind the title. -->
+      {#if views.phone && sheet.step === 'half'}
+        <div class="cover-bg" aria-hidden="true" bind:clientWidth={coverWidth}>
+          {#if coverWidth}<Artwork track={engine.current?.track} size={coverWidth} />{/if}
+        </div>
+      {/if}
       <div class="art" class:lyrics={sheet.lyrics}>
         {#if sheet.lyrics}<Lyrics />{:else}<ArtworkWidget expands={false} playing />{/if}
       </div>
@@ -537,11 +544,12 @@
       padding: 0 var(--space-4) var(--space-2);
     }
 
-    /* About the size of an album page's cover. */
+    /* The screen's width (the carousel keeps a small margin), plus room for its dots below. */
     .art {
-      flex: 0 1 min(100vw, 62vh);
+      flex: 0 1 min(calc(100vw + 28px), 66vh);
       min-height: 40vw;
       height: auto;
+      margin-inline: calc(-1 * var(--space-4));
     }
 
     .details {
@@ -554,7 +562,7 @@
     }
 
     .now {
-      padding-top: var(--space-6);
+      padding-top: var(--space-2);
     }
 
     [data-step='now'] .now {
@@ -662,19 +670,28 @@
       padding-top: calc(min(100vw, 62vh) - 7em);
     }
 
+    /* Kept laid out (not display: none) so the carousel needn't rebuild on the way back. */
     [data-step='half'] .art {
       position: absolute;
       inset: 0 0 auto;
-      z-index: -1;
       height: min(100vw, 62vh);
+      visibility: hidden;
     }
 
-    /* Only a background now: the carousel's arrows and dots stay out of it. */
-    [data-step='half'] .art :global(:is(.turns, .below)) {
-      display: none;
+    /* Square and full width, its bottom where the 62vh band ends: a taller cover runs off the top. */
+    .cover-bg {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(min(100vw, 62vh) - 100vw);
+      z-index: -1;
     }
 
-    [data-step='half'] .art::after {
+    .cover-bg :global(.art) {
+      border-radius: 0;
+    }
+
+    .cover-bg::after {
       content: '';
       position: absolute;
       inset: 0;

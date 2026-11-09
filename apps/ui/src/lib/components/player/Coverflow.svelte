@@ -45,7 +45,7 @@
   const PEEK = $derived(narrow.current ? 0 : 0.2);
   /** The centre card's caption and the dots under the cards, with the gaps between them. */
   const BELOW = $derived(narrow.current ? 28 : 80);
-  const PADDING = 12;
+  const PADDING = $derived(narrow.current ? 8 : 12);
   const side = $derived(
     Math.max(0, Math.min(height - 2 * PADDING - BELOW, (width - 2 * PADDING) / (1 + 2 * PEEK * near))),
   );
@@ -147,6 +147,8 @@
     {/each}
     <!-- The sheet's morph fades `.turns` and `.below` (inline opacity); what shows inside them
          fades by class, also when the list arrives late. -->
+    <!-- Phones page by swiping or tapping the cover instead. -->
+    {#if !narrow.current}
     <div class="turns">
       <button class="icon-button turn previous" class:hidden={!settled || alone} aria-label="Previous image" onclick={() => go(at - 1)}>
         <Icon name="chevron-left" />
@@ -155,6 +157,7 @@
         <Icon name="chevron-right" />
       </button>
     </div>
+    {/if}
   </div>
   <div class="below">
     <!-- Always two lines high, so nothing below moves as it pages. -->
