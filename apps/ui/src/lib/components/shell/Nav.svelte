@@ -1,16 +1,16 @@
 <script lang="ts">
   import { getApp } from '../../context';
   import { demoLibrary, isDemo } from '../../demo';
-  import type { Source } from '../../layout/store.svelte';
-  import Icon, { type IconName } from '../Icon.svelte';
+  import { libraryMenu } from '../../menus';
+  import { CATEGORIES } from '../../views.svelte';
+  import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import { canDecorate } from '../../windowChrome';
-  import { contextMenu, menu } from '../../contextMenu.svelte';
+  import { contextMenu } from '../../contextMenu.svelte';
   import { engines } from '../../engine.svelte';
   import { switchTo } from '../../engines';
 
-  const { engine, library, layout, drawer, settings, settingsView, playlists } = getApp();
-  $effect(() => playlists.sync());
+  const { engine, library, settings, settingsView, views } = getApp();
   let scroller = $state<HTMLElement>();
   const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
 
@@ -23,69 +23,49 @@
     contextMenu.show(items, box.left, box.top - 4, button);
   }
 
-  const sources: { id: Source; label: string; icon: IconName; count: () => number }[] = [
-    { id: 'library', label: 'Library', icon: 'library', count: () => (isDemo ? demoLibrary.length : (library.status?.tracks ?? 0)) },
-  ];
+  function openMenu(e: MouseEvent) {
+    const button = e.currentTarget as HTMLElement;
+    const box = button.getBoundingClientRect();
+    contextMenu.show(libraryMenu(engine), box.left, box.bottom + 4, button);
+  }
+
+  const trackCount = () => (isDemo ? demoLibrary.length : (library.status?.tracks ?? 0));
+  // The music area shows All Songs when only the Library home is open.
+  const current = $derived(views.stack[1]?.kind ?? 'songs');
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-{#if drawer.open}<div class="scrim" onclick={() => drawer.close()}></div>{/if}
-
-<nav class="nav" class:open={drawer.open} class:collapsed={settings.current.navCollapsed} aria-label="Browse">
+<!-- On desktop this is the Library home; on phones the home is a view (ViewScreen). -->
+<nav class="nav" class:collapsed={settings.current.navCollapsed} aria-label="Library">
   {#if settings.current.ownDecorations && canDecorate}
     <!-- Also clears macOS's overlaid traffic lights. -->
     <div class="drag" data-tauri-drag-region></div>
   {/if}
   <div class="scroll" bind:this={scroller}>
+    <div class="head">
+      <h2>Library</h2>
+      <button class="icon-button" aria-label="Library options" title="Library options" aria-haspopup="menu" onclick={openMenu}>
+        <Icon name="more" size={14} />
+      </button>
+    </div>
     <ul class="sources">
-      {#each sources as source (source.id)}
+      {#each CATEGORIES as category (category.kind)}
         <li>
           <button
-            class:active={layout.source === source.id && !settingsView.group && !playlists.shown}
-            aria-current={layout.source === source.id ? 'page' : undefined}
+            class:active={current === category.kind && !settingsView.group}
+            aria-current={current === category.kind ? 'page' : undefined}
             onclick={() => {
-              layout.browse(source.id);
-              playlists.show(null);
+              views.show({ kind: category.kind });
               settingsView.close();
-              drawer.close();
             }}
           >
-            <Icon name={source.icon} size={16} />
-            <span class="label">{source.label}</span>
-            <span class="count">{source.count()}</span>
+            <span class="round" style:--c={category.colour}><Icon name={category.icon} size={12} /></span>
+            <span class="label">{category.label}</span>
+            {#if category.kind === 'songs'}<span class="count">{trackCount()}</span>{/if}
           </button>
         </li>
       {/each}
     </ul>
 
-    <div class="heading">
-      <h2>Playlists</h2>
-      {#if engine.can('library')}
-        <button class="icon-button" aria-label="New playlist" title="New playlist" onclick={() => playlists.create()}>
-          <Icon name="plus" size={14} />
-        </button>
-      {/if}
-    </div>
-    <ul class="sources">
-      {#each playlists.list as playlist (playlist.id)}
-        <li>
-          <button
-            class:active={playlists.shown === playlist.id && !settingsView.group}
-            aria-current={playlists.shown === playlist.id ? 'page' : undefined}
-            use:menu={() => playlists.menu(playlist)}
-            onclick={() => {
-              playlists.show(playlist.id);
-              settingsView.close();
-              drawer.close();
-            }}
-          >
-            <Icon name="list" size={16} />
-            <span class="label">{playlist.name}</span>
-            <span class="count">{playlist.tracks}</span>
-          </button>
-        </li>
-      {/each}
-    </ul>
   </div>
   <Scrollbar target={scroller} />
 
@@ -110,10 +90,7 @@
       class:active={settingsView.group !== null}
       aria-label="Settings"
       title="Settings"
-      onclick={() => {
-        settingsView.open();
-        drawer.close();
-      }}
+      onclick={() => settingsView.open()}
     >
       <Icon name="settings" size={16} />
     </button>
@@ -178,10 +155,28 @@
 
   .label {
     flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+
+  .round {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--c);
+    color: #fff;
+    flex: none;
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-right: var(--space-1);
+  }
+
+  .head h2 {
+    margin-bottom: var(--space-2);
   }
 
   .count {
@@ -191,22 +186,14 @@
     color: var(--text-muted);
   }
 
-  .heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin: var(--space-3) var(--space-2) 0 var(--space-3);
-  }
-
   h2 {
-    margin: 0;
+    margin: var(--space-3) var(--space-3) var(--space-1);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-muted);
   }
-
 
   .footer {
     display: flex;
@@ -270,38 +257,11 @@
     display: none;
   }
 
-  .scrim {
-    display: none;
-  }
-
-  /* Phones: an off-screen drawer instead of a column. */
+  /* Phones show the Library home as a view instead. */
   @media (max-width: 700px) {
     .nav,
     .nav.collapsed {
-      display: flex;
-      position: fixed;
-      top: 0;
-      bottom: 0;
-      left: 0;
-      z-index: 46;
-      width: min(280px, 85vw);
-      padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
-      box-shadow: var(--shadow);
-      transform: translateX(-100%);
-      transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
-      touch-action: pan-y;
-    }
-
-    .nav.open {
-      transform: none;
-    }
-
-    .scrim {
-      display: block;
-      position: fixed;
-      inset: 0;
-      z-index: 46;
-      background: rgb(0 0 0 / 0.45);
+      display: none;
     }
   }
 </style>

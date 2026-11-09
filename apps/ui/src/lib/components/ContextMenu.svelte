@@ -62,7 +62,7 @@
 <style>
   .context-menu {
     position: fixed;
-    z-index: 47; /* Over the phone drawer (46), which has menus of its own. */
+    z-index: 47;
     min-width: 180px;
     padding: var(--space-1) 0;
     border: 1px solid var(--border);

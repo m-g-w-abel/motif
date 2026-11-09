@@ -12,7 +12,7 @@
   const { engine, sheet } = getApp();
   const KEY_STEP = 16;
   const POSITION_KEY = 'floating-player.position';
-  /** Phone width: keep clear of the drawer toggle at the top left. */
+  /** Phone width: keep clear of the back button at the top left. */
   const PHONE_TOP = 56;
   const DEFAULT_POS: FloatPos = { h: 'right', v: 'bottom', x: MARGIN, y: MARGIN };
 

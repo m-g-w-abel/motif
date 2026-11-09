@@ -1,16 +1,20 @@
 # Layouts
 
-A layout arranges the **music area**: the part of the window that shows what
-you're browsing (the library now, saved playlists later). The app has one set
+A layout arranges the **music area** of the desktop's All Songs view: the
+part of the window that shows the library. The app has one set
 of widgets (track list, album gallery, artwork, track info, controls, queue,
 visualiser, lyrics), and a layout only chooses which of them appear there, where, and
 how each is configured. The now-playing screen is built from the same widgets.
 
-Layouts never change the rest of the app. The left panel and the player bar
-stay put, and appearance (theme, accent colour, density, bar or floating
-player) lives in **Settings**, the gear at the bottom of the left panel. On
-phones the left panel is a drawer: tap the menu button or swipe in from the
-left edge.
+Layouts never change the rest of the app. The left panel (the Library home:
+All Songs, Albums, Playlists, Recently Played, Recently Added) and the player
+bar stay put, the other views (an album's page, Search) open in the music
+area with a back button and show one widget each, and appearance (theme,
+accent colour, density, bar or floating player) lives in **Settings**, the
+gear at the bottom of the left panel.
+
+Phones (700 px wide or less) don't use layouts: the Library home and each view
+fill the screen in turn, and All Songs is one track list.
 
 Selection and album focus are shared by all layouts, so switching layouts
 keeps your place.
@@ -49,7 +53,7 @@ drag it onto another widget in the same split to move it there, or focus it and
 use the arrow keys; **Done** ends it. Mouse and touch both work.
 
 These edits never change the layout file, built-ins included. Each device
-keeps them per layout, and separately for the phone variant (below), keyed by
+keeps them per layout, keyed by
 where each widget sits in the file, e.g. `split-row/1.split-column/0.artwork`.
 When the file changes so that a path no longer matches, that edit is dropped.
 **⋯ → Reset layout** discards them, and **⋯ → Save as…** writes the layout
@@ -96,9 +100,9 @@ remaining space equally.
 
 ### Phone variant
 
-`when phone { ... }` holds a separate arrangement for screens 700 px wide or
-less; the widgets outside it are used everywhere else. Without one, phones use
-the main arrangement with row splits stacked.
+`when phone { ... }` held a separate arrangement for screens 700 px wide or
+less. Phones no longer use layouts, so it is still read (older files stay
+valid) but not shown.
 
 ```kdl
 layout version=1 name="Art + list"
@@ -117,7 +121,7 @@ when phone {
 ### `split`
 
 `split row { ... }` places its children side by side; `split column { ... }`
-stacks them. Splits nest. On phones, `row` splits stack vertically.
+stacks them. Splits nest.
 
 ### `tracklist`
 

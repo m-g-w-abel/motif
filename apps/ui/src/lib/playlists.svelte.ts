@@ -17,13 +17,9 @@ export function moveCommand(items: readonly string[], from: number, to: number):
   return { item: items[from], before: next[to + 1] ?? null };
 }
 
-/** Saved playlists, kept by the engine's library, and the one whose page shows in the music area. */
+/** Saved playlists, kept by the engine's library. */
 export class Playlists {
   list = $state<Playlist[]>([]);
-  /** The playlist page showing instead of the layout, if any. */
-  shown = $state<string | null>(null);
-  /** The shown playlist's entries. */
-  entries = $state<PlaylistEntry[]>([]);
   /** What `PlaylistPrompt.svelte` is asking: a name (`value`), or to confirm `action` when `value` is null. */
   asking = $state<{ title: string; value: string | null; action: string; done: (answer: string | null) => void } | null>(null);
   #synced = '';
@@ -33,32 +29,27 @@ export class Playlists {
     this.engine = engine;
   }
 
-  get current(): Playlist | undefined {
-    return this.list.find((p) => p.id === this.shown);
+  /** Changes whenever a playlist or the library does, for pages to refetch on. */
+  get revision(): string {
+    const status = this.engine.library;
+    return status && this.engine.status === 'open' ? `${status.playlists}/${status.revision}` : '';
   }
 
-  /** Refetches when a playlist or the library changes; call from an `$effect`. */
+  /** Refetches the list when a playlist or the library changes; call from an `$effect`. */
   sync() {
-    const status = this.engine.library;
-    if (!status || this.engine.status !== 'open') return;
-    const key = `${status.playlists}/${status.revision}/${this.shown}`;
-    if (key === this.#synced) return;
+    const key = this.revision;
+    if (!key || key === this.#synced) return;
     this.#synced = key;
-    const shown = this.shown;
     this.engine
       .query({ type: 'playlists' })
       .then((r) => r.type === 'playlists' && (this.list = r.playlists))
       .catch(() => {});
-    if (!shown) return;
-    this.engine
-      .query({ type: 'playlist_tracks', id: shown })
-      .then((r) => r.type === 'playlist_tracks' && this.shown === shown && (this.entries = r.entries))
-      .catch(() => {});
   }
 
-  show(id: string | null) {
-    if (id !== this.shown) this.entries = [];
-    this.shown = id;
+  /** A playlist's entries in order. */
+  async entries(id: string): Promise<PlaylistEntry[]> {
+    const r = await this.engine.query({ type: 'playlist_tracks', id });
+    return r.type === 'playlist_tracks' ? r.entries : [];
   }
 
   #ask(title: string, value: string | null, action: string): Promise<string | null> {
@@ -108,9 +99,10 @@ export class Playlists {
     if (name) void this.#run({ type: 'rename_playlist', id: playlist.id, name });
   }
 
-  async delete(playlist: Playlist) {
+  /** Deletes after asking; `onDelete` runs once it is decided (e.g. leaves the playlist's page). */
+  async delete(playlist: Playlist, onDelete?: () => void) {
     if ((await this.#ask(`Delete ${playlist.name}?`, null, 'Delete')) === null) return;
-    if (this.shown === playlist.id) this.show(null);
+    onDelete?.();
     void this.#run({ type: 'delete_playlist', id: playlist.id });
   }
 
@@ -119,19 +111,12 @@ export class Playlists {
   }
 
   remove(id: string, items: string[]) {
-    this.entries = this.entries.filter((e) => !items.includes(e.item));
     void this.#run({ type: 'remove_from_playlist', id, items });
   }
 
-  /** Moves entry `from` to `to` on the shown page at once, then tells the engine. */
-  move(id: string, from: number, to: number) {
-    const { item, before } = moveCommand(
-      this.entries.map((e) => e.item),
-      from,
-      to,
-    );
-    this.entries = moveItem(this.entries, from, to);
-    void this.#run({ type: 'move_playlist_item', id, item, before });
+  /** Moves entry `from` of `items` (the playlist's entries, in order) to `to`. */
+  move(id: string, items: string[], from: number, to: number) {
+    void this.#run({ type: 'move_playlist_item', id, ...moveCommand(items, from, to) });
   }
 
   /** "Add to playlist…", opening a menu of playlists; nothing if this device may not edit them or no track is a library file. */
@@ -147,12 +132,12 @@ export class Playlists {
     return [{ label: 'Add to playlist…', run: choose }];
   }
 
-  /** The ⋮ menu of a playlist. */
-  menu(playlist: Playlist): MenuItem[] {
+  /** The ⋮ menu of a playlist; `onDelete` as for `delete`. */
+  menu(playlist: Playlist, onDelete?: () => void): MenuItem[] {
     const items: MenuItem[] = [];
     if (this.engine.can('playback') && playlist.tracks) items.push({ label: 'Play', run: () => this.play(playlist.id) });
     if (this.engine.can('library')) {
-      items.push({ label: 'Rename…', run: () => this.rename(playlist) }, { label: 'Delete', run: () => this.delete(playlist) });
+      items.push({ label: 'Rename…', run: () => this.rename(playlist) }, { label: 'Delete', run: () => this.delete(playlist, onDelete) });
     }
     return items;
   }

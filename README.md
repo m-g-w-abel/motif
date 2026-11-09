@@ -48,7 +48,11 @@ control isn't an add-on: it's the normal code path.
 - **[Theme files](docs/THEMES.md)**, colour palettes taken from the album art,
   a waveform seek bar, and a spectrum visualiser fed by an FFT in the engine.
 - Synced, karaoke-style lyrics from embedded tags, `.lrc` sidecars or LRCLIB.
-- A phone layout with a drawer, a full-screen now-playing sheet and touch gestures, each remappable in Settings.
+- A navigation of views: a Library home (All Songs, Albums, Playlists, Recently
+  Played, Recently Added) that is the left panel on desktop and the first
+  screen on phones, with album pages opening above it and back to return.
+  Phones show one widget per view, a full-screen now-playing sheet and touch
+  gestures, each remappable in Settings.
 
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable
@@ -70,8 +74,8 @@ pairs in the app. It
 behaves like a good Android audio app: calls and alarms
 pause it until they end, another player pauses it for good, unplugging
 headphones pauses it, and navigation prompts duck it without touching the
-user's volume. System back closes the topmost menu, dialog, screen, sheet or
-drawer before it leaves the app.
+user's volume. System back closes the topmost menu, dialog, screen or sheet,
+then goes back through the views, before it leaves the app.
 
 ## Engineering notes
 
