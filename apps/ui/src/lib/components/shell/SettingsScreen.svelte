@@ -27,24 +27,29 @@
   import { canDiscover } from '../../discover';
   import { canShowRemoteMedia } from '../../remoteMedia';
   import { engines } from '../../engine.svelte';
+  import { GROUP_INFO, phoneGroups, searchSettings } from '../../settingsSearch';
+  import { SETTINGS_GROUPS } from '../../settingsView.svelte';
   import { LOCAL_ID, removeEngine, switchTo } from '../../engines';
   import WindowButtons from './WindowButtons.svelte';
 
   const { settings, themes, engine, library, settingsView } = getApp();
   let panel = $state<HTMLElement>();
 
-  const groups: { id: SettingsGroup; label: string }[] = [
-    { id: 'interface', label: 'Interface' },
-    { id: 'library', label: 'Library' },
-    { id: 'playback', label: 'Playback' },
-    { id: 'keyboard', label: 'Keyboard' },
-    { id: 'gestures', label: 'Gestures' },
-    { id: 'integrations', label: 'Integrations' },
-    { id: 'devices', label: 'Devices' },
-    { id: 'technical', label: 'Technical' },
-    { id: 'about', label: 'About' },
-  ];
+  const groups = SETTINGS_GROUPS.map((id) => ({ id, label: GROUP_INFO[id].label }));
+
+  // The phone's search icon swaps the title for a box that filters settings by name.
+  let searching = $state(false);
+  let find = $state('');
+  const results = $derived(searchSettings(find, true));
+  const showList = $derived(settingsView.phone && settingsView.list);
+  function pick(g: SettingsGroup) {
+    searching = false;
+    find = '';
+    settingsView.open(g);
+  }
+  const focusOnMount = (node: HTMLElement) => node.focus();
   const group = $derived(settingsView.group);
+  const title = $derived(showList || !group ? 'Settings' : GROUP_INFO[group].label);
   /** What a group's controls need; other devices see that they can't change it. */
   const needs: Partial<Record<SettingsGroup, Scope>> = { library: 'library', playback: 'settings', integrations: 'settings', devices: 'pairing' };
   const allowed = $derived(!group || !needs[group] || engine.can(needs[group]));
@@ -206,22 +211,63 @@
   its control in the right group's `{#if}` below.
 -->
 <section class="screen" aria-label="Settings">
-  <header {...settings.current.ownDecorations && canDecorate ? { 'data-tauri-drag-region': '' } : {}}>
-    <button class="button" onclick={() => settingsView.close()}>← Back</button>
-    <h1 data-tauri-drag-region={settings.current.ownDecorations && canDecorate ? '' : undefined}>Settings</h1>
-    <WindowButtons />
-  </header>
+  {#if settingsView.phone}
+    <header class="phone-head">
+      {#if searching}
+        <button class="icon-button" aria-label="Close search" onclick={() => ((searching = false), (find = ''))}><Icon name="chevron-left" size={22} /></button>
+        <input type="search" placeholder="Search settings" aria-label="Search settings" bind:value={find} use:focusOnMount />
+      {:else}
+        <button class="icon-button" aria-label="Back" onclick={() => settingsView.back()}><Icon name="chevron-left" size={22} /></button>
+        <h1>{title}</h1>
+        <button class="icon-button" aria-label="Search settings" onclick={() => (searching = true)}><Icon name="search" size={20} /></button>
+      {/if}
+    </header>
+  {:else}
+    <header {...settings.current.ownDecorations && canDecorate ? { 'data-tauri-drag-region': '' } : {}}>
+      <button class="button" onclick={() => settingsView.close()}>← Back</button>
+      <h1 data-tauri-drag-region={settings.current.ownDecorations && canDecorate ? '' : undefined}>Settings</h1>
+      <WindowButtons />
+    </header>
+  {/if}
 
   <div class="layout">
-    <nav class="groups" aria-label="Settings groups">
-      {#each groups as g (g.id)}
-        <button class:active={group === g.id} aria-current={group === g.id ? 'page' : undefined} onclick={() => settingsView.open(g.id)}>
-          {g.label}
-        </button>
-      {/each}
-    </nav>
+    {#if !settingsView.phone}
+      <nav class="groups" aria-label="Settings groups">
+        {#each groups as g (g.id)}
+          <button class:active={group === g.id} aria-current={group === g.id ? 'page' : undefined} onclick={() => settingsView.open(g.id)}>
+            {g.label}
+          </button>
+        {/each}
+      </nav>
+    {/if}
 
-    <div class="panel" bind:this={panel}>
+    {#if settingsView.phone && searching}
+      <ul class="phone-list">
+        {#each results as r (`${r.group}:${r.label}`)}
+          <li>
+            <button onclick={() => pick(r.group)}>
+              <span class="text"><span class="name">{r.label}</span>{#if r.label !== GROUP_INFO[r.group].label}<span class="summary">{GROUP_INFO[r.group].label}</span>{/if}</span>
+            </button>
+          </li>
+        {:else}
+          <li class="none">{find.trim() ? 'No settings match.' : 'Type a setting’s name.'}</li>
+        {/each}
+      </ul>
+    {:else if showList}
+      <ul class="phone-list">
+        {#each phoneGroups() as g (g)}
+          {@const info = GROUP_INFO[g]}
+          <li>
+            <button onclick={() => pick(g)}>
+              <span class="icon" style:color={info.colour}><Icon name={info.icon} size={26} /></span>
+              <span class="text"><span class="name">{info.label}</span><span class="summary">{info.summary}</span></span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    <div class="panel" bind:this={panel} hidden={settingsView.phone && (showList || searching)}>
       {#if group === 'devices' && engines.list.engines.length > 1}
         <div class="row">
           <span class="label">Engine in control</span>
@@ -1194,16 +1240,79 @@
       flex-direction: column;
     }
 
-    .groups {
-      flex-direction: row;
-      width: auto;
-      overflow-x: auto;
-      border-right: 0;
-      border-bottom: 1px solid var(--divider);
+    .panel[hidden] {
+      display: none;
     }
 
-    .groups button {
+    .phone-head {
+      gap: var(--space-2);
+      padding: var(--space-2);
+    }
+
+    .phone-head h1 {
+      flex: 1;
+      font-size: 20px;
+    }
+
+    .phone-head input {
+      flex: 1;
+      min-width: 0;
+      height: 40px;
+      padding: 0 var(--space-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface-2);
+      color: var(--text);
+      font: inherit;
+    }
+
+    .phone-list {
+      flex: 1;
+      margin: 0;
+      padding: var(--space-2) 0;
+      list-style: none;
+      overflow-y: auto;
+    }
+
+    .phone-list button {
+      display: flex;
+      align-items: center;
+      gap: var(--space-4);
+      width: 100%;
+      padding: var(--space-3) var(--space-4);
+      border: 0;
+      background: none;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .phone-list .icon {
+      display: grid;
+      place-items: center;
+      width: 36px;
       flex: none;
+    }
+
+    .phone-list .text {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .phone-list .name {
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    .phone-list .summary,
+    .phone-list .none {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .phone-list .none {
+      padding: var(--space-4);
     }
   }
 </style>

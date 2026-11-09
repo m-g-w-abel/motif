@@ -302,7 +302,7 @@
       { open: helpOpen || settingsView.pairing || settingsView.addingEngine, close: escape },
       { open: editing, close: () => (editing = false) },
       { open: layout.arranging, close: () => (layout.arranging = false) },
-      { open: !!settingsView.group, close: () => settingsView.close() },
+      { open: !!settingsView.group, close: () => settingsView.back() },
       { open: sheet.open, close: () => sheet.collapse() },
       { open: !!views.parent, close: () => views.back() },
     ]),
