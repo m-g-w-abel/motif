@@ -15,8 +15,23 @@ export interface ViewOptions {
   sort: SortRule[] | null;
 }
 
-/** What remembers its options: each kind of collection view, and each playlist (`playlist:<id>`). */
-export type OptionsKey = 'albums' | 'playlists' | 'played' | 'added' | `playlist:${string}`;
+/**
+ * What remembers its options: each kind of collection view, each kind of song
+ * view (All Songs, album pages, the recents' songs), and each playlist (`playlist:<id>`).
+ */
+export type OptionsKey =
+  | 'albums'
+  | 'playlists'
+  | 'played'
+  | 'added'
+  | 'songs'
+  | 'album'
+  | 'played:songs'
+  | 'added:songs'
+  | `playlist:${string}`;
+
+/** Song views start as a song list; collections as a cover grid. */
+const SONG_VIEWS = /^(songs|album|playlist:.*|.*:songs)$/;
 
 /** Saved options, only those that differ from the defaults. A client setting, per device. */
 export type SavedOptions = Record<string, Partial<ViewOptions>>;
@@ -34,7 +49,7 @@ const SORTS: Partial<Record<OptionsKey, SortRule[]>> = {
 
 function defaults(key: OptionsKey): ViewOptions {
   const sort = SORTS[key] ?? null;
-  return { mode: key.startsWith('playlist:') ? 'list' : 'grid', columns: null, titles: true, artists: true, sort };
+  return { mode: SONG_VIEWS.test(key) ? 'list' : 'grid', columns: null, titles: true, artists: true, sort };
 }
 
 /** The saved values that make sense; anything else falls back to the default. */

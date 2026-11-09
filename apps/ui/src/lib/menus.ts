@@ -9,7 +9,7 @@ import type { TrackRef } from './protocol/TrackRef';
 import { inSelection, ordered } from './selection';
 import { isAndroid } from './platform';
 import type { Playlists } from './playlists.svelte';
-import type { TrackListData } from './sources.svelte';
+import type { SongListData } from './sources.svelte';
 import { toasts } from './toast.svelte';
 
 async function copy(text: string) {
@@ -80,8 +80,18 @@ function queueItems(engine: EngineClient, tracks: TrackRef[]): MenuItem[] {
   ];
 }
 
-/** The menu of row `i` in a track list; of the whole selection when the row is part of one. */
-export function trackMenu(engine: EngineClient, playlists: Playlists, data: TrackListData, view: ViewState, i: number): MenuItem[] {
+/**
+ * The menu of row `i` in a track list; of the whole selection when the row is part of one.
+ * `openAlbum` goes to the album's page; without it Go to album shows the album in the layout.
+ */
+export function trackMenu(
+  engine: EngineClient,
+  playlists: Playlists,
+  data: SongListData,
+  view: ViewState,
+  i: number,
+  openAlbum?: (key: string, title: string) => void,
+): MenuItem[] {
   const track = data.track(i);
   if (!track) return [];
   if (inSelection(view.browse.picked, data.key(i))) {
@@ -91,7 +101,8 @@ export function trackMenu(engine: EngineClient, playlists: Playlists, data: Trac
   const items: MenuItem[] = [...playItem(engine, () => data.play(i)), ...queueItems(engine, [track]), ...playlists.addItems([track])];
   if (track.album) {
     const artist = data.details?.(i)?.album_artist ?? track.artist ?? '';
-    items.push({ label: 'Go to album', run: () => (view.browse.focusAlbum = albumKey({ ...track, artist })) });
+    const key = albumKey({ ...track, artist });
+    items.push({ label: 'Go to album', run: () => (openAlbum ? openAlbum(key, track.album!) : (view.browse.focusAlbum = key)) });
   }
   if (track.source === 'local' && inDesktop()) items.push({ label: 'Show in folder', run: () => showInFolder(track.id) });
   return [...items, ...copyItems(track)];
