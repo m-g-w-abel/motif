@@ -785,6 +785,9 @@ pub struct LibraryStatus {
     /// Bumped whenever a playlist changes.
     #[ts(type = "number")]
     pub playlists: u64,
+    /// Bumped whenever a track counts as played (Recently Played changes).
+    #[ts(type = "number")]
+    pub plays: u64,
     pub error: Option<String>,
 }
 

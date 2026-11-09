@@ -28,4 +28,8 @@ revision: number,
 /**
  * Bumped whenever a playlist changes.
  */
-playlists: number, error: string | null, };
+playlists: number, 
+/**
+ * Bumped whenever a track counts as played (Recently Played changes).
+ */
+plays: number, error: string | null, };
