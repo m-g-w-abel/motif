@@ -239,9 +239,22 @@
     li button:hover .stamp {
       display: none;
     }
+
+    .plain {
+      padding: var(--space-6) var(--space-4);
+      text-align: center;
+    }
+
+    .plain p {
+      font-size: 1.35em;
+      font-weight: 600;
+      line-height: 1.45;
+    }
   }
 
+  /* Positioned like the synced view: WebKitGTK otherwise paints only its first line in the phone sheet. */
   .plain {
+    position: relative;
     overflow-y: auto;
     padding: var(--space-3) var(--space-4);
   }

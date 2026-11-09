@@ -361,9 +361,8 @@
     display: none;
   }
 
-  /* The phone sheet: roomy rows with covers, handles on the right, the page scrolls. */
+  /* The phone sheet: roomy rows with covers, handles on the right, long names wrapping. */
   .now-playing .list {
-    overflow: visible;
     padding: 0 0 var(--space-6);
   }
 
@@ -394,8 +393,9 @@
   .now-playing .play {
     align-items: center;
     gap: var(--space-3);
-    height: 64px;
-    padding: 0 var(--space-4);
+    min-height: 64px;
+    height: auto;
+    padding: var(--space-2) var(--space-4);
     border-radius: 0;
     line-height: 1.3;
   }
@@ -415,7 +415,9 @@
     font-weight: 600;
   }
 
-  .now-playing .artist {
+  .now-playing :is(.name, .artist) {
     flex: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 </style>

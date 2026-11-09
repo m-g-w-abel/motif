@@ -346,11 +346,10 @@
           {/snippet}
         </TrackInfo>
         <Controls />
-        <!-- Phones: the handle and the album's name peeking below; a tap or drag up shows the queue. -->
+        <!-- Phones: the handle at the bottom; a tap or drag up shows the queue. -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="more" onpointerdown={(e) => sheet.handle(e, () => sheet.up())}>
           <button class="step" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
-          <span class="peek">{album}</span>
         </div>
       </div>
     </div>
@@ -521,27 +520,32 @@
       padding-bottom: env(safe-area-inset-bottom);
     }
 
+    /* Doesn't scroll: the queue and lyrics scroll inside it. */
     .body {
-      /* Holds the bars of the scroll areas inside it, so they scroll with it. */
       position: relative;
-      overflow-y: auto;
+      overflow: hidden;
     }
 
+    /* Fills the screen, so the handle sits at the bottom; long titles shrink the cover instead of pushing it off. */
     .now {
-      flex: none;
-      grid-template-columns: minmax(0, 1fr);
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
       gap: var(--space-4);
-      padding: 0 var(--space-4) var(--space-4);
+      padding: 0 var(--space-4) var(--space-2);
     }
 
+    /* About the size of an album page's cover. */
     .art {
-      height: min(55vh, calc(100vw - 2 * var(--space-4)));
+      flex: 0 1 min(100vw, 62vh);
+      min-height: 40vw;
+      height: auto;
     }
 
-    /* Lyrics are the main view: most of the screen, the controls below. */
-    .art.lyrics {
-      height: calc(100dvh - 320px);
-      min-height: 240px;
+    .details {
+      flex: 1 0 auto;
     }
 
     /* The handles step the sheet; Android's back and swipes close it. */
@@ -584,9 +588,7 @@
       text-align: center;
       font-size: 1.5em;
       font-weight: 700;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
     }
 
     .lyrics-button {
@@ -627,14 +629,9 @@
 
     .more {
       display: block;
+      margin-top: auto;
+      padding: var(--space-3) 0;
       touch-action: none;
-    }
-
-    .peek {
-      display: block;
-      text-align: center;
-      font-weight: 600;
-      color: var(--text-muted);
     }
 
     .queue-slot {
@@ -642,14 +639,21 @@
       border-top: 0;
     }
 
-    /* The page scrolls, not the queue. */
-    .queue-slot:has(:global(.queue.open)) {
+    /* Half and full: the queue fills what is left and scrolls on its own; the rest stays put. */
+
+    [data-step='half'] .now {
       flex: none;
-      min-height: 0;
     }
 
-    .queue-slot :global(.queue.open) {
-      height: auto;
+    .queue-slot:has(:global(.queue.open)) {
+      flex: 1 1 0;
+      min-height: 0;
+      flex-direction: column;
+    }
+
+    .queue-slot :global(.queue) {
+      flex: 1;
+      min-height: 0;
     }
 
     /* Half: the cover fills the top behind the title, the queue below the controls. */
@@ -684,7 +688,7 @@
 
     [data-step='half'] .queue-slot,
     [data-step='full'] .queue-slot {
-      display: block;
+      display: flex;
     }
 
     [data-step='half'] .queue-slot > .step {
@@ -715,9 +719,7 @@
     }
 
     .mini-names > * {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
     }
 
     .mini-names span {
@@ -726,10 +728,6 @@
 
     [data-step='full'] .now {
       display: none;
-    }
-
-    [data-step='lyrics'] .body {
-      overflow: hidden;
     }
 
     [data-step='lyrics'] .now {
@@ -742,8 +740,18 @@
       display: none;
     }
 
+    /* A flex box, as WebKit leaves a percentage height unresolved in a flex item. */
     [data-step='lyrics'] .art.lyrics {
-      height: 100%;
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    [data-step='lyrics'] .art.lyrics :global(.lyrics) {
+      flex: 1;
+      min-height: 0;
+      height: auto;
     }
   }
 </style>

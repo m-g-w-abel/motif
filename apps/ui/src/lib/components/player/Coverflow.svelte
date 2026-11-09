@@ -37,13 +37,14 @@
     settled: boolean;
   } = $props();
 
-  // Neighbours each side: fewer on phones, where the cover takes the width.
+  // Neighbours each side: fewer on phones, where the cover takes the width and the neighbours
+  // stay behind it, and the sheet names the album instead of a caption.
   const narrow = new MediaQuery('(max-width: 700px)');
   const near = $derived(narrow.current ? 1 : 2);
   /** How much of each neighbour shows beside the centre card, as a share of its side. */
-  const PEEK = 0.2;
+  const PEEK = $derived(narrow.current ? 0 : 0.2);
   /** The centre card's caption and the dots under the cards, with the gaps between them. */
-  const BELOW = 80;
+  const BELOW = $derived(narrow.current ? 28 : 80);
   const PADDING = 12;
   const side = $derived(
     Math.max(0, Math.min(height - 2 * PADDING - BELOW, (width - 2 * PADDING) / (1 + 2 * PEEK * near))),
@@ -157,10 +158,12 @@
   </div>
   <div class="below">
     <!-- Always two lines high, so nothing below moves as it pages. -->
-    <div class="caption" class:hidden={!settled || !cards[at]?.title} style:width="{side}px" aria-live="polite">
-      <span class="kicker">{cards[at]?.kicker ?? ''}</span>
-      <span class="title">{cards[at]?.title ?? ''}</span>
-    </div>
+    {#if !narrow.current}
+      <div class="caption" class:hidden={!settled || !cards[at]?.title} style:width="{side}px" aria-live="polite">
+        <span class="kicker">{cards[at]?.kicker ?? ''}</span>
+        <span class="title">{cards[at]?.title ?? ''}</span>
+      </div>
+    {/if}
     <div class="dots" class:hidden={!settled || alone}>
     {#each cards as card, i (card.key)}
       <button
