@@ -12,7 +12,7 @@ export type View =
   | { kind: 'playlists' }
   | { kind: 'played' }
   | { kind: 'added' }
-  | { kind: 'album'; key: string; title: string }
+  | { kind: 'album'; key: string; title: string; art?: string | null }
   | { kind: 'playlist'; id: string; name: string }
   | { kind: 'search' };
 
@@ -70,10 +70,10 @@ export class Views {
     this.options = this.sorting = false;
   }
 
-  /** Starts again from the Library home with `view` above it. */
+  /** Starts again from the Library home with `view` above it (and an album's or playlist's category between). */
   show(view: View) {
     this.menu = null;
-    this.stack = view.kind === 'home' ? [HOME] : [HOME, view];
+    this.stack = stackOf(view);
     this.options = this.sorting = false;
   }
 
@@ -86,12 +86,42 @@ export class Views {
   }
 }
 
+/** The stack a view opens afresh with: the Library home, then the view's category. */
+function stackOf(view: View): View[] {
+  if (view.kind === 'home') return [HOME];
+  if (view.kind === 'album') return [HOME, { kind: 'albums' }, view];
+  if (view.kind === 'playlist') return [HOME, { kind: 'playlists' }, view];
+  return [HOME, view];
+}
+
 /** The stack `?dev-view=` opens: a category (`albums`), `search`, or `album:<key>`. */
 export function devViews(param: string): View[] | null {
   if (param.startsWith('album:')) {
     const key = param.slice('album:'.length);
-    return key ? [HOME, { kind: 'albums' }, { kind: 'album', key, title: key }] : null;
+    return key ? stackOf({ kind: 'album', key, title: key }) : null;
   }
   const kind = param === 'search' ? 'search' : CATEGORIES.find((c) => c.kind === param)?.kind;
-  return kind ? [HOME, { kind }] : null;
+  return kind ? stackOf({ kind }) : null;
+}
+
+/** The link a launcher shortcut opens `view` with (`MainActivity.kt`), e.g. `motif://view/album?key=…&title=…`. */
+export function viewLink(view: View): string {
+  const params: Record<string, string> =
+    view.kind === 'album' ? { key: view.key, title: view.title } : view.kind === 'playlist' ? { id: view.id, name: view.name } : {};
+  const query = new URLSearchParams(params).toString();
+  return `motif://view/${view.kind}${query ? `?${query}` : ''}`;
+}
+
+/** The view a `viewLink` opens, or null if `text` is another link. */
+export function parseViewLink(text: string): View | null {
+  if (!text.startsWith('motif://view/')) return null;
+  const url = new URL(text);
+  const kind = url.pathname.slice(1);
+  const get = (name: string) => url.searchParams.get(name);
+  const key = get('key');
+  const id = get('id');
+  if (kind === 'album') return key ? { kind, key, title: get('title') ?? '' } : null;
+  if (kind === 'playlist') return id ? { kind, id, name: get('name') ?? '' } : null;
+  if (kind === 'home') return HOME;
+  return devViews(kind)?.at(-1) ?? null;
 }

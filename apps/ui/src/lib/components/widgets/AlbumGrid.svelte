@@ -38,7 +38,7 @@
     /** Where the grid sits in its layout; its scroll position is remembered per layout. */
     at?: string;
     /** Opens an album's page on a plain click or Enter, instead of selecting it (the Albums view). */
-    onopen?: (key: string, title: string) => void;
+    onopen?: (key: string, title: string, art?: string | null) => void;
     /** What the cards are: the library's albums, recently played albums, or the saved playlists. */
     items?: 'albums' | 'played' | 'playlists';
     /** The order instead of the view's (library albums only). */
@@ -215,7 +215,7 @@
   function release(e: MouseEvent, i: number) {
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
     const album = card(i);
-    if (onopen && album) onopen(album.key, album.title);
+    if (onopen && album) onopen(album.key, album.title, album.art);
     else select(i);
   }
 
@@ -326,7 +326,7 @@
   async function onKey(e: KeyboardEvent, i: number, album: Card) {
     if (e.key === 'Enter') {
       e.preventDefault(); // the button's own Enter would only select
-      if (onopen) onopen(album.key, album.title);
+      if (onopen) onopen(album.key, album.title, album.art);
       else playAll(album);
       return;
     }
