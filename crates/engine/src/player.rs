@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::{Duration, Instant},
+};
 
 use protocol::{
     Command, ContextKind, OutputDevice, PlayContext, PlaybackStatus, PlayerState, QueueItem,
@@ -205,6 +208,7 @@ impl Player {
                     None => self.stop(),
                 }
             }
+            Command::UpdateContext { tracks } => self.update_context(tracks),
             Command::PlayItem { item_id } => {
                 self.jump_to(item_id, now)?;
                 self.play(now);
@@ -579,17 +583,16 @@ impl Player {
 
     /// Gives tracks entry ids.
     fn entries(&mut self, tracks: Vec<TrackRef>) -> Vec<QueueItem> {
-        tracks
-            .into_iter()
-            .map(|track| {
-                self.next_id += 1;
-                QueueItem {
-                    id: self.next_id - 1,
-                    track,
-                    error: None,
-                }
-            })
-            .collect()
+        tracks.into_iter().map(|track| self.entry(track)).collect()
+    }
+
+    fn entry(&mut self, track: TrackRef) -> QueueItem {
+        self.next_id += 1;
+        QueueItem {
+            id: self.next_id - 1,
+            track,
+            error: None,
+        }
     }
 
     /// The context entry that plays once the queue is empty.
@@ -653,7 +656,7 @@ impl Player {
                     _ => None,
                 };
                 let next = self.context.get(self.context_next).map(|i| i.id);
-                let mut entries: std::collections::HashMap<u64, QueueItem> =
+                let mut entries: HashMap<u64, QueueItem> =
                     self.context.drain(..).map(|i| (i.id, i)).collect();
                 // Removed entries are missing from `entries` and drop out.
                 self.context = order.iter().filter_map(|id| entries.remove(id)).collect();
@@ -669,16 +672,105 @@ impl Player {
         }
     }
 
-    /// Puts the context's entries from `from` on in a random order (Fisher–Yates).
-    fn shuffle_from(&mut self, from: usize) {
-        for i in (from + 1..self.context.len()).rev() {
-            // xorshift64: plenty for picking an order.
-            self.rng ^= self.rng << 13;
-            self.rng ^= self.rng >> 7;
-            self.rng ^= self.rng << 17;
-            let j = from + (self.rng % (i - from + 1) as u64) as usize;
-            self.context.swap(i, j);
+    /// The list played from is now `tracks`: entries are matched by track
+    /// (see [`Command::UpdateContext`]). Safe to repeat.
+    fn update_context(&mut self, tracks: Vec<TrackRef>) {
+        let mut old: Vec<Option<QueueItem>> = std::mem::take(&mut self.context)
+            .into_iter()
+            .map(Some)
+            .collect();
+        // The source's order: old entries by index, new tracks as new entries.
+        let order: Vec<Result<usize, Box<QueueItem>>> = {
+            // Each track's old entries, so a repeated track matches one each.
+            let mut by_track: HashMap<(&str, &str), VecDeque<usize>> = HashMap::new();
+            for (i, item) in old.iter().flatten().enumerate() {
+                // All still there: `flatten` only unwraps.
+                let key = (item.track.source.as_str(), item.track.id.as_str());
+                by_track.entry(key).or_default().push_back(i);
+            }
+            let matched: Vec<_> = (tracks.iter())
+                .map(|t| {
+                    let key = (t.source.as_str(), t.id.as_str());
+                    by_track.get_mut(&key).and_then(VecDeque::pop_front)
+                })
+                .collect();
+            (tracks.into_iter().zip(matched))
+                .map(|(track, i)| i.ok_or_else(|| Box::new(self.entry(track))))
+                .collect()
+        };
+        let mut kept = vec![false; old.len()];
+        for &i in order.iter().flatten() {
+            kept[i] = true;
         }
+        if let Some(Current::Context(i)) = self.current
+            && !kept[i]
+        {
+            // Gone from the source, but it plays on by itself.
+            let item = old[i].take().expect("not taken yet");
+            self.current = Some(Current::Item(Box::new(item)));
+        }
+        let current = match self.current {
+            Some(Current::Context(i)) => old[i].as_ref().map(|item| item.id),
+            _ => None,
+        };
+        let played = self.context_next.min(old.len());
+        if self.unshuffled.is_none() {
+            let mut at = vec![None; old.len()];
+            for (n, o) in order.iter().enumerate() {
+                if let Ok(i) = o {
+                    at[*i] = Some(n);
+                }
+            }
+            // On after the last played entry that is still there.
+            self.context_next = (0..played).rev().find_map(|i| at[i]).map_or(0, |n| n + 1);
+            let entries = order.into_iter().map(|o| match o {
+                Ok(i) => old[i].take().expect("each old entry is taken once"),
+                Err(item) => *item,
+            });
+            self.context = entries.collect();
+        } else {
+            let ids = order.iter().map(|o| match o {
+                Ok(i) => old[*i].as_ref().expect("kept").id,
+                Err(item) => item.id,
+            });
+            self.unshuffled = Some(ids.collect());
+            let mut added: Vec<_> = order
+                .into_iter()
+                .filter_map(|o| o.err().map(|b| *b))
+                .collect();
+            shuffle(&mut self.rng, &mut added);
+            let played = (0..played).filter(|&i| kept[i]).count();
+            let mut rest = kept.iter().filter(|&&k| k).count() - played;
+            let mut left = old
+                .into_iter()
+                .zip(kept)
+                .filter_map(|(o, k)| o.filter(|_| k));
+            let mut context: Vec<_> = left.by_ref().take(played).collect();
+            // What hasn't played keeps its order, new tracks fall at random among it.
+            let mut fresh = added.len();
+            let mut added = added.into_iter();
+            while rest + fresh > 0 {
+                if fresh > 0 && random(&mut self.rng, rest + fresh) < fresh {
+                    context.extend(added.next());
+                    fresh -= 1;
+                } else {
+                    context.extend(left.next());
+                    rest -= 1;
+                }
+            }
+            self.context = context;
+            self.context_next = played;
+        }
+        if let Some(id) = current {
+            let i = position(&self.context, id).expect("the current entry was kept");
+            self.current = Some(Current::Context(i));
+            self.context_next = i + 1;
+        }
+    }
+
+    /// Puts the context's entries from `from` on in a random order.
+    fn shuffle_from(&mut self, from: usize) {
+        shuffle(&mut self.rng, &mut self.context[from..]);
     }
 
     fn remember(&mut self, entry: Current) {
@@ -812,6 +904,21 @@ impl Player {
         if self.since.is_some() {
             self.since = Some(now);
         }
+    }
+}
+
+/// A random index below `n` (xorshift64: plenty for picking an order).
+fn random(rng: &mut u64, n: usize) -> usize {
+    *rng ^= *rng << 13;
+    *rng ^= *rng >> 7;
+    *rng ^= *rng << 17;
+    (*rng % n as u64) as usize
+}
+
+/// Puts `items` in a random order (Fisher–Yates).
+fn shuffle<T>(rng: &mut u64, items: &mut [T]) {
+    for i in (1..items.len()).rev() {
+        items.swap(i, random(rng, i + 1));
     }
 }
 
@@ -1358,6 +1465,103 @@ mod tests {
             expected,
             "list order, without the removed entry"
         );
+    }
+
+    fn update(p: &mut Player, names: &[&str], now: Instant) {
+        let tracks = names.iter().map(|n| track(n, 1000)).collect();
+        p.apply(Command::UpdateContext { tracks }, now).unwrap();
+    }
+
+    fn context_names(p: &Player) -> Vec<&str> {
+        p.context.iter().map(|i| name(Some(i)).unwrap()).collect()
+    }
+
+    #[test]
+    fn an_updated_context_follows_the_source_without_interrupting_the_current_track() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b", "c"], t0);
+        p.apply(Command::Next, t0).unwrap();
+        let (b, c) = (id(&p, "b"), id(&p, "c"));
+        update(&mut p, &["x", "a", "b", "y", "c", "z"], t0 + ms(400));
+        assert_eq!(p.current_item().unwrap().id, b, "same entry");
+        assert_eq!(p.position(t0 + ms(500)), ms(500), "still playing on");
+        assert_eq!(id(&p, "c"), c, "kept entries keep their ids");
+        assert_eq!(
+            nexts(&mut p, 3, t0 + ms(500)),
+            ["y", "c", "z"],
+            "new tracks after the current one play, in the source's order"
+        );
+        let history: Vec<_> = p.history.iter().map(|i| name(Some(i)).unwrap()).collect();
+        assert_eq!(history, ["a", "b", "y", "c"], "history stays");
+    }
+
+    #[test]
+    fn removed_tracks_drop_but_the_current_one_plays_on() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b", "c", "d"], t0);
+        p.apply(Command::Next, t0).unwrap();
+        let b = id(&p, "b");
+        update(&mut p, &["a", "d"], t0);
+        assert_eq!(p.current_item().unwrap().id, b, "b plays on");
+        assert_eq!(p.status, PlaybackStatus::Playing);
+        assert_eq!(context_names(&p), ["a", "d"]);
+        assert_eq!(nexts(&mut p, 1, t0), ["d"], "c is gone");
+    }
+
+    #[test]
+    fn updating_twice_with_the_same_tracks_changes_nothing() {
+        let t0 = Instant::now();
+        let names = twenty();
+        let mut p = playing(&names.iter().map(String::as_str).collect::<Vec<_>>(), t0);
+        shuffle(&mut p, true);
+        let mut more = names.clone();
+        more.push("new".into());
+        let more: Vec<_> = more.iter().map(String::as_str).collect();
+        update(&mut p, &more, t0);
+        let once = p.playback(t0);
+        update(&mut p, &more, t0);
+        assert_eq!(p.playback(t0), once);
+    }
+
+    #[test]
+    fn shuffled_new_tracks_go_among_the_unplayed_and_played_tracks_stay_played() {
+        let t0 = Instant::now();
+        let names = twenty();
+        let mut p = playing(&names.iter().map(String::as_str).collect::<Vec<_>>(), t0);
+        shuffle(&mut p, true);
+        let played = [vec!["0".to_string()], nexts(&mut p, 4, t0)].concat();
+        let current = now_playing(&p).unwrap().to_string();
+        // A track not yet played goes, five come.
+        let gone = names.iter().find(|n| !played.contains(n)).unwrap().clone();
+        let added: Vec<String> = (20..25).map(|i| i.to_string()).collect();
+        let source: Vec<&str> = (names.iter().filter(|n| **n != gone))
+            .chain(&added)
+            .map(String::as_str)
+            .collect();
+        let upcoming: Vec<String> = context_names(&p)[p.context_next..]
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        update(&mut p, &source, t0);
+        assert_eq!(now_playing(&p), Some(current.as_str()));
+        let rest = nexts(&mut p, 24 - played.len(), t0);
+        let expected: Vec<String> = (source.iter().map(|n| n.to_string()))
+            .filter(|n| !played.contains(n))
+            .collect();
+        assert_eq!(sorted(rest.clone()), sorted(expected), "each unplayed once");
+        assert_ne!(
+            rest[rest.len() - 5..],
+            added[..],
+            "new tracks aren't appended"
+        );
+        let kept: Vec<_> = rest.iter().filter(|n| !added.contains(n)).collect();
+        let before: Vec<_> = (upcoming.iter()).filter(|n| **n != gone).collect();
+        assert_eq!(kept, before, "what was up next keeps its order");
+        p.apply(Command::Next, t0).unwrap();
+        assert_eq!(p.status, PlaybackStatus::Stopped, "nothing played twice");
+
+        shuffle(&mut p, false);
+        assert_eq!(context_names(&p), source, "the source's order comes back");
     }
 
     /// Saves `p` and restores it into a new player through JSON, as the server does.

@@ -51,7 +51,7 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{Pairing, lan::Advert};
+use crate::{Pairing, lan::Advert, live::Live};
 
 const GREETING: &str = "OK MPD 0.21.0\n";
 /// Longer request lines close the connection.
@@ -135,7 +135,7 @@ const TAGS: &[&str] = &[
 
 /// Serves MPD while [`Pairing::mpd_wanted`] says so, moving the listener
 /// when that changes (which also closes every connection).
-pub(crate) async fn serve(engine: Engine, library: Option<Library>, pairing: Pairing) {
+pub(crate) async fn serve(live: Live, library: Option<Library>, pairing: Pairing) {
     let mut states = pairing.subscribe();
     let mut serving = None;
     let mut listener: Option<TcpListener> = None;
@@ -172,7 +172,7 @@ pub(crate) async fn serve(engine: Engine, library: Option<Library>, pairing: Pai
                         continue;
                     };
                     let password = serving.as_ref().and_then(|(_, p)| p.clone());
-                    let client = Client::new(engine.clone(), library.clone(), password);
+                    let client = Client::new(live.clone(), library.clone(), password);
                     clients.spawn(async move {
                         client.run(stream, peer).await;
                         drop(slot);
@@ -406,6 +406,7 @@ impl Seen {
 
 struct Client {
     engine: Engine,
+    live: Live,
     library: Option<Library>,
     password: Option<String>,
     control: bool,
@@ -413,9 +414,10 @@ struct Client {
 }
 
 impl Client {
-    fn new(engine: Engine, library: Option<Library>, password: Option<String>) -> Self {
+    fn new(live: Live, library: Option<Library>, password: Option<String>) -> Self {
         let mut client = Self {
-            engine,
+            engine: live.engine().clone(),
+            live,
             library,
             password,
             control: false,
@@ -1067,7 +1069,7 @@ impl Client {
     async fn send(&self, command: Command) -> Result<(), Ack> {
         let mut states = self.engine.subscribe();
         states.mark_unchanged();
-        self.engine
+        self.live
             .send(command)
             .await
             .map_err(|e| Ack(ACK_ARG, e.to_string()))?;
@@ -1558,7 +1560,7 @@ mod tests {
     #[tokio::test]
     async fn read_only_clients_get_an_ack() {
         let engine = Engine::spawn(engine::LocalFiles);
-        let mut client = Client::new(engine.clone(), None, Some("secret".into()));
+        let mut client = Client::new(Live::new(engine.clone()), None, Some("secret".into()));
         assert_eq!(
             ask(&mut client, "play").await,
             "ACK [4@0] {play} you don't have permission for \"play\"\n"
@@ -1582,7 +1584,7 @@ mod tests {
         );
 
         // No password set: nobody gets control.
-        let mut client = Client::new(engine, None, None);
+        let mut client = Client::new(Live::new(engine), None, None);
         assert!(ask(&mut client, "password ").await.starts_with("ACK [3@0]"));
         assert!(ask(&mut client, "stop").await.starts_with("ACK [4@0]"));
     }
@@ -1594,7 +1596,7 @@ mod tests {
             .send(Command::SetVolume { volume: 0.0 })
             .await
             .unwrap();
-        let mut client = Client::new(engine.clone(), None, Some("pw".into()));
+        let mut client = Client::new(Live::new(engine.clone()), None, Some("pw".into()));
         ask(&mut client, "password pw").await;
         engine
             .send(Command::SetContext {
@@ -1674,7 +1676,7 @@ mod tests {
     #[tokio::test]
     async fn idle_reports_changes_and_noidle_ends_it() {
         let engine = Engine::spawn(engine::LocalFiles);
-        let mut client = Client::new(engine.clone(), None, None);
+        let mut client = Client::new(Live::new(engine.clone()), None, None);
         let (tx, mut lines) = mpsc::channel(1);
         let mut out = String::new();
         engine
@@ -1722,7 +1724,7 @@ mod tests {
         pairing.enable_mpd(true);
         let mut listening = pairing.subscribe();
         tokio::spawn(serve(
-            Engine::spawn(engine::LocalFiles),
+            Live::new(Engine::spawn(engine::LocalFiles)),
             None,
             pairing.clone(),
         ));
@@ -1748,7 +1750,7 @@ mod tests {
     #[tokio::test]
     async fn command_lists_stop_at_the_first_error() {
         let engine = Engine::spawn(engine::LocalFiles);
-        let mut client = Client::new(engine, None, None);
+        let mut client = Client::new(Live::new(engine), None, None);
         let mut out = String::new();
         let list = ["ping".to_owned(), "status".to_owned(), "play".to_owned()];
         client.list(&list, true, &mut out).await;

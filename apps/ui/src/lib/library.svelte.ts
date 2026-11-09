@@ -41,9 +41,14 @@ abstract class PagedList<T> {
     readonly sort: SortRule[] = [],
   ) {}
 
+  /** What the rows depend on: a number that grows whenever they may change. */
+  protected version(): number | undefined {
+    return this.engine.library?.revision;
+  }
+
   /** Refetches if the library changed. Call from an `$effect`. */
   sync() {
-    const revision = this.engine.library?.revision;
+    const revision = this.version();
     if (revision === undefined || revision === this.#revision || this.engine.status !== 'open') return;
     // A scan bumps the revision every few hundred files; don't refetch on each.
     const wait = this.#synced + SYNC_INTERVAL - Date.now();
@@ -205,6 +210,10 @@ export class LibraryAlbums extends PagedList<LibraryAlbum> {
 
 /** Tracks that counted as played, newest first; a track played twice is two rows. */
 export class RecentPlays extends PagedList<PlayedTrack> {
+  protected version() {
+    return playsVersion(this.engine);
+  }
+
   protected key(row: PlayedTrack) {
     return `${row.track.track.id}@${row.played_at}`;
   }
@@ -216,8 +225,18 @@ export class RecentPlays extends PagedList<PlayedTrack> {
   }
 }
 
+/** Both counters only grow, so their sum changes whenever either does. */
+function playsVersion(engine: EngineClient) {
+  const status = engine.library;
+  return status ? status.revision + status.plays : undefined;
+}
+
 /** Albums with a track that counted as played, the latest play first. */
 export class RecentAlbums extends PagedList<LibraryAlbum> {
+  protected version() {
+    return playsVersion(this.engine);
+  }
+
   protected key(row: LibraryAlbum) {
     return row.key;
   }

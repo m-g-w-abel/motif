@@ -11,6 +11,7 @@
 //! MPD clients have a server of their own (see `mpd.rs`), off by default.
 
 mod lan;
+mod live;
 mod mpd;
 mod pairing;
 pub mod playback;
@@ -73,6 +74,7 @@ struct AppState {
     library: Option<Library>,
     integrations: watch::Sender<IntegrationSettings>,
     pairing: Pairing,
+    live: live::Live,
     /// Limits artwork requests in flight. Each can hold a whole image or a
     /// decoded one (tens of MB), and a grid asks for hundreds at once.
     art_slots: Arc<Semaphore>,
@@ -94,12 +96,9 @@ pub async fn bind(
     let addr = listener.local_addr();
     // Tapping is a no-op; axum knows the peer address of tapped listeners.
     let listener = axum::serve::ListenerExt::tap_io(listener, |_| {});
-    let mpd = mpd::serve(
-        engine.clone(),
-        config.library.clone(),
-        config.pairing.clone(),
-    );
-    let app = router(engine, config).into_make_service_with_connect_info::<SocketAddr>();
+    let live = live::Live::new(engine.clone());
+    let mpd = mpd::serve(live.clone(), config.library.clone(), config.pairing.clone());
+    let app = app(live, config).into_make_service_with_connect_info::<SocketAddr>();
     Ok((addr, async move {
         tokio::select! {
             result = axum::serve(listener, app).into_future() => result,
@@ -111,6 +110,13 @@ pub async fn bind(
 /// The routes; serve them with `ConnectInfo<SocketAddr>`, which says who is
 /// local. `config.addr` is unused.
 pub fn router(engine: Engine, config: Config) -> Router {
+    app(live::Live::new(engine), config)
+}
+
+fn app(live: live::Live, config: Config) -> Router {
+    if let Some(library) = &config.library {
+        tokio::spawn(live.clone().follow(library.clone()));
+    }
     // A phone opening a pairing QR code GETs /pair: the UI answers it.
     let pair_route = match &config.ui {
         Some(Ui::Dir(dir)) => post(pair).get_service(ServeFile::new(dir.join("index.html"))),
@@ -126,7 +132,8 @@ pub fn router(engine: Engine, config: Config) -> Router {
         .route("/images", get(images))
         .route("/pair", pair_route)
         .with_state(AppState {
-            engine,
+            engine: live.engine().clone(),
+            live,
             library: config.library,
             integrations: config.integrations,
             pairing: config.pairing,
@@ -312,7 +319,7 @@ async fn art(
     }
 }
 
-/// Answers a library query. Play queries set the engine's context.
+/// Answers a library query. Play queries set the engine's context and follow its source.
 async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, String> {
     let library = state.library.clone().ok_or("this engine has no library")?;
     if matches!(
@@ -321,15 +328,7 @@ async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, Str
             | LibraryQuery::PlayAlbum { .. }
             | LibraryQuery::PlayPlaylist { .. }
     ) {
-        let command = tokio::task::spawn_blocking(move || library.selection(&query))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        state
-            .engine
-            .send(command)
-            .await
-            .map_err(|e| e.to_string())?;
+        state.live.play(&library, query).await?;
         return Ok(QueryResult::Done);
     }
     let lrclib = state
@@ -366,6 +365,7 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | Command::SetRepeat { .. }
             | Command::SetShuffle { .. }
             | Command::SetContext { .. }
+            | Command::UpdateContext { .. }
             | Command::PlayItem { .. } => Scope::Playback,
             Command::Enqueue { .. }
             | Command::EnqueueNext { .. }
@@ -546,7 +546,7 @@ async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr)
         let reply = match message {
             Ok(ClientMessage::Command { id, command }) => ServerMessage::Response {
                 id,
-                error: engine.send(command).await.err().map(|e| e.to_string()),
+                error: state.live.send(command).await.err().map(|e| e.to_string()),
             },
             Ok(ClientMessage::Query { id, query: q }) => {
                 // Queries can take a moment; don't hold up commands behind them.

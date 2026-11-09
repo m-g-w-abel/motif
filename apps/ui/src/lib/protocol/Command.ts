@@ -8,4 +8,4 @@ export type Command = { "type": "play" } | { "type": "pause" } | { "type": "togg
 /**
  * E.g. the album or list name.
  */
-label: string | null, } | { "type": "play_item", item_id: number, } | { "type": "remove_item", item_id: number, } | { "type": "move_item", item_id: number, to: number, } | { "type": "clear_queue" } | { "type": "set_decoders", order: Array<string>, } | { "type": "set_output", device: string | null, } | { "type": "list_outputs" } | { "type": "set_replay_gain", settings: ReplayGainSettings, };
+label: string | null, } | { "type": "update_context", tracks: Array<TrackRef>, } | { "type": "play_item", item_id: number, } | { "type": "remove_item", item_id: number, } | { "type": "move_item", item_id: number, to: number, } | { "type": "clear_queue" } | { "type": "set_decoders", order: Array<string>, } | { "type": "set_output", device: string | null, } | { "type": "list_outputs" } | { "type": "set_replay_gain", settings: ReplayGainSettings, };
