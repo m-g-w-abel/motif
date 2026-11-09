@@ -12,6 +12,7 @@
   import { menu } from '../../contextMenu.svelte';
   import type { MenuItem } from '../../contextMenu.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
+  import { SLOP } from '../../gestures';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
 
@@ -76,9 +77,17 @@
     go(at + by);
   }
 
+  // A tap on the centre card shows the next image; a drag that ends on it (a swipe, the volume
+  // gesture) or a long press for the menu is not a tap.
+  let down: { x: number; y: number } | null = null;
+  const isTap = (e: PointerEvent) =>
+    e.button === 0 && !!down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < SLOP && !!(e.target as Element).closest('.tap');
+
   // Mouse only: a touch swipe on the artwork skips the track (`gestures.ts`).
   let swipeX: number | null = null;
   function onPointerUp(e: PointerEvent) {
+    if (isTap(e)) go(at + 1);
+    down = null;
     const dx = swipeX === null ? 0 : e.clientX - swipeX;
     swipeX = null;
     if (Math.abs(dx) > 40) go(at - Math.sign(dx));
@@ -93,9 +102,13 @@
   aria-label="Album images"
   tabindex="0"
   onkeydown={onKey}
-  onpointerdown={(e) => (swipeX = e.pointerType === 'mouse' ? e.clientX : null)}
+  onpointerdown={(e) => {
+    down = { x: e.clientX, y: e.clientY };
+    swipeX = e.pointerType === 'mouse' ? e.clientX : null;
+  }}
   onpointerup={onPointerUp}
-  onpointercancel={() => (swipeX = null)}
+  onpointercancel={() => (swipeX = down = null)}
+  oncontextmenu={() => (down = null)}
 >
   <!-- Perspective without preserve-3d: cards are seen from the centre, and z-index (not depth)
        keeps the neighbours behind. -->
@@ -115,7 +128,7 @@
           style:transform={p.transform}
           style:z-index={p.z}
         >
-          <div class="card" class:frame={centre} use:menu={centre ? items : () => []}>
+          <div class="card" class:frame={centre} class:tap={centre && !alone} use:menu={centre ? items : () => []}>
             <!-- An empty key is the track's own cover, looked up (and held while the next loads). -->
             <Artwork {track} art={card.key || undefined} size={side} drawn={side * p.scale} />
             {#if !centre}
@@ -205,6 +218,10 @@
     border-radius: var(--radius-lg);
     line-height: 0;
     box-shadow: 0 2px 0 rgb(0 0 0 / 0.25);
+  }
+
+  .card.tap {
+    cursor: pointer;
   }
 
   .card :global(.art) {
