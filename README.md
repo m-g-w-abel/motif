@@ -51,6 +51,9 @@ control isn't an add-on: it's the normal code path.
 - A navigation of views: a Library home (All Songs, Albums, Playlists, Recently
   Played, Recently Added) that is the left panel on desktop and the first
   screen on phones, with album pages opening above it and back to return.
+  Albums, playlists and recent albums show as a cover grid, a name list or a
+  list with covers, with columns, titles, artists and order remembered per
+  device for each kind of view.
   Phones show one widget per view, a full-screen now-playing sheet and touch
   gestures, each remappable in Settings.
 

@@ -10,7 +10,10 @@
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
+  import type { MenuItem } from '../../contextMenu.svelte';
   import { albumMenu, playTracks, queueTracks } from '../../menus';
+  import type { SortRule } from '../../protocol/SortRule';
+  import type { ViewMode } from '../../viewOptions';
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
   import { sortLabel, viewSort } from '../../sort.svelte';
   import Artwork from '../player/Artwork.svelte';
@@ -22,6 +25,13 @@
     columns: layoutColumns,
     at,
     onopen,
+    items = 'albums',
+    sort: sortOverride,
+    mode = 'grid',
+    titles = true,
+    artists = true,
+    oncolumns,
+    shownColumns = $bindable(),
   }: {
     cardSize: number;
     columns?: number;
@@ -29,9 +39,22 @@
     at?: string;
     /** Opens an album's page on a plain click or Enter, instead of selecting it (the Albums view). */
     onopen?: (key: string, title: string) => void;
+    /** What the cards are: the library's albums, recently played albums, or the saved playlists. */
+    items?: 'albums' | 'played' | 'playlists';
+    /** The order instead of the view's (library albums only). */
+    sort?: SortRule[];
+    /** Cover grid, or one row per item: a name list, or a list with covers. */
+    mode?: ViewMode;
+    /** Grid only: titles and artists under the covers. */
+    titles?: boolean;
+    artists?: boolean;
+    /** Takes the user's column choice (Ctrl+scroll) instead of remembering it per layout. */
+    oncolumns?: (n: number | null) => void;
+    /** The columns shown, for a view's options. */
+    shownColumns?: number;
   } = $props();
 
-  const { engine, library, settings } = getApp();
+  const { engine, library, settings, playlists } = getApp();
   const view = getViewState();
   const memoryKey = $derived(at === undefined ? undefined : `${view.source}/${view.layoutId}/${at}`);
 
@@ -51,16 +74,33 @@
   const demoAlbums: Card[] = isDemo
     ? groupConsecutive(demoLibrary).map((g) => ({ ...g, tracks: g.count, track: demoLibrary[g.start] }))
     : [];
-  const sort = $derived(viewSort(view));
+  const sort = $derived(sortOverride ?? viewSort(view));
+  const search = $derived(view.browse.search.trim().toLowerCase());
+  // Playlists are few and all here; the library's albums come a page at a time.
+  const fixed = $derived.by((): Card[] | null => {
+    if (items === 'playlists') {
+      return playlists.list
+        .filter((p) => p.name.toLowerCase().includes(search))
+        .map((p) => ({ key: p.id, title: p.name, artist: `${p.tracks} songs`, tracks: p.tracks, duration_ms: p.duration_ms, art: p.art }));
+    }
+    return isDemo ? (items === 'played' ? [] : demoAlbums) : null;
+  });
+  $effect(() => {
+    if (items === 'playlists') playlists.sync();
+  });
   const shownList: Shown<LibraryAlbums> = {};
-  const nextAlbums = $derived(isDemo ? null : library.albums(view.browse.search || null, sort));
+  const nextAlbums = $derived(
+    fixed ? null : items === 'played' ? library.recentAlbums : library.albums(view.browse.search || null, sort),
+  );
   const albums = $derived(nextAlbums && hold(nextAlbums, shownList));
   $effect(() => albums?.sync());
-  const count = $derived(albums ? albums.total : demoAlbums.length);
-  const card = (i: number): Card | undefined => (albums ? albums.get(i) : demoAlbums[i]);
+  const count = $derived(albums ? albums.total : fixed!.length);
+  const card = (i: number): Card | undefined => (albums ? albums.get(i) : fixed![i]);
 
   function play(album: Card) {
-    if (album.track) {
+    if (items === 'playlists') {
+      playlists.play(album.key);
+    } else if (album.track) {
       const start = demoLibrary.indexOf(album.track);
       engine.run({
         type: 'set_context',
@@ -76,6 +116,7 @@
 
   /** The tracks of these albums, album by album. */
   async function albumTracks(keys: string[]): Promise<TrackRef[]> {
+    if (items === 'playlists') return (await Promise.all(keys.map((id) => playlists.entries(id)))).flat().map((e) => e.track.track);
     if (isDemo) {
       return keys.flatMap((key) => {
         const album = demoAlbums.find((a) => a.key === key);
@@ -124,6 +165,29 @@
       .catch((e: Error) => (engine.error = e.message));
   }
 
+  /** Plays every item, in order or shuffled. */
+  export async function playEverything(shuffle = false) {
+    try {
+      if (!shuffle && items === 'albums' && !isDemo) {
+        await engine.query({ type: 'play', search: view.browse.search || null, sort, start: 0 });
+        return;
+      }
+      await albums?.load(0, count - 1);
+      const keys = Array.from({ length: count }, (_, i) => card(i)?.key).filter((k) => k !== undefined);
+      // shortcut: the client shuffles (sending every track) until the engine has a shuffle of its own.
+      const tracks = await albumTracks(keys);
+      if (shuffle) {
+        for (let i = tracks.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
+        }
+      }
+      playTracks(engine, tracks);
+    } catch (e) {
+      engine.error = (e as Error).message;
+    }
+  }
+
   // As in the track list: a press inside a selection waits for the click,
   // so a right-click acts on all of it.
   function press(e: PointerEvent, i: number, album: Card) {
@@ -157,6 +221,24 @@
     else select(i);
   }
 
+  function menuFor(album: Card): MenuItem[] {
+    const keys = keysFor(album);
+    if (items !== 'playlists') return albumMenu(engine, album, () => playAll(album), () => albumTracks(keys), keys.length);
+    const label = keys.length > 1 ? `${keys.length} playlists` : album.title;
+    const queue: MenuItem[] = engine.can('queue')
+      ? [
+          { label: 'Queue next', run: () => queueTracks(engine, albumTracks(keys), true, label) },
+          { label: 'Add to queue', run: () => queueTracks(engine, albumTracks(keys), false, label) },
+        ]
+      : [];
+    const playlist = keys.length === 1 && playlists.list.find((p) => p.id === album.key);
+    if (!playlist) return [...(engine.can('playback') ? [{ label: 'Play', run: () => playAll(album) }] : []), ...queue];
+    const menu = playlists.menu(playlist);
+    const at = menu.findIndex((item) => item.label === 'Rename…');
+    menu.splice(at < 0 ? menu.length : at, 0, ...queue);
+    return menu;
+  }
+
   /** The playing track's album, keyed the way the library keys albums. */
   const playingKey = $derived.by(() => {
     const track = engine.current?.track;
@@ -166,8 +248,10 @@
   });
 
   // Only the rows of cards in view are in the DOM. Columns follow the CSS
-  // grid's auto-fill rule; the card height is measured once rendered.
-  const GAP = 16;
+  // grid's auto-fill rule; the card height is measured once rendered. The
+  // list modes are a grid of one column without gaps.
+  const grid = $derived(mode === 'grid');
+  const GAP = $derived(grid ? 16 : 0);
   let width = $state(0);
   let viewHeight = $state(0);
   let scrollTop = $state(0);
@@ -184,6 +268,7 @@
   const colsKey = $derived(`album-columns.${view.layoutId}`);
   let chosen = $state<number>();
   $effect(() => {
+    if (oncolumns) return;
     try {
       const n = Number(localStorage.getItem(colsKey));
       chosen = n >= 1 ? n : undefined;
@@ -192,8 +277,12 @@
     }
   });
   const wanted = $derived(chosen ?? layoutColumns);
-  const columns = $derived(wanted ? Math.min(wanted, maxColumns) : autoColumns);
+  const columns = $derived(!grid ? 1 : wanted ? Math.min(wanted, maxColumns) : autoColumns);
+  $effect(() => {
+    shownColumns = columns;
+  });
   function choose(n: number | undefined) {
+    if (oncolumns) return oncolumns(n === undefined ? null : Math.max(1, Math.min(n, maxColumns)));
     chosen = n === undefined ? undefined : Math.max(1, Math.min(n, maxColumns));
     try {
       if (chosen === undefined) localStorage.removeItem(colsKey);
@@ -202,7 +291,7 @@
   }
   // Wheel up = bigger cards = fewer columns.
   function wheel(e: WheelEvent) {
-    if (!e.ctrlKey) return;
+    if (!e.ctrlKey || !grid) return;
     e.preventDefault();
     choose(columns + (e.deltaY > 0 ? 1 : -1));
   }
@@ -210,7 +299,7 @@
     scroller?.addEventListener('wheel', wheel, { passive: false });
     return () => scroller?.removeEventListener('wheel', wheel);
   });
-  const rowHeight = $derived((cardHeight || cardSize + 48) + GAP);
+  const rowHeight = $derived((cardHeight || (grid ? cardSize + 48 : 48)) + GAP);
   const rowCount = $derived(Math.ceil(count / columns));
   const firstRow = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - 1));
   const lastRow = $derived(Math.min(rowCount, Math.ceil((scrollTop + viewHeight) / rowHeight) + 1));
@@ -363,6 +452,9 @@
   $effect(() => {
     void visible;
     void width;
+    void mode;
+    void titles;
+    void artists;
     const frame = requestAnimationFrame(() => (cardHeight = list?.querySelector('li')?.offsetHeight ?? 0));
     return () => cancelAnimationFrame(frame);
   });
@@ -384,12 +476,15 @@
     }}
   >
     <ul
+      class:rows={!grid}
+      class:covers={mode === 'covers'}
       bind:this={list}
       bind:clientWidth={width}
       style:--card="{cardSize}px"
       style:grid-template-columns="repeat({columns}, minmax(0, 1fr))"
       style:padding-top="{GAP + firstRow * rowHeight}px"
       style:padding-bottom="{GAP + (rowCount - lastRow) * rowHeight}px"
+      style:gap="{GAP}px"
     >
       {#each visible as i (card(i)?.key ?? `#${i}`)}
         {@const album = card(i)}
@@ -401,31 +496,49 @@
               tabindex={i === tabStop ? 0 : -1}
               onfocus={() => (cursor = i)}
               onkeydown={(e) => onKey(e, i, album)}
-              use:menu={() =>
-                albumMenu(engine, album, () => playAll(album), () => albumTracks(keysFor(album)), keysFor(album).length)}
+              use:menu={() => menuFor(album)}
               class:playing={album.key === playingKey}
               class:focused={picked.has(album.key) || album.key === view.browse.focusAlbum}
               aria-pressed={picked.has(album.key)}
-              title="{album.title} — {album.artist} · {album.tracks} tracks · {formatTime(album.duration_ms)}"
+              title={items === 'playlists'
+                ? `${album.title} · ${album.artist} · ${formatTime(album.duration_ms)}`
+                : `${album.title} — ${album.artist} · ${album.tracks} tracks · ${formatTime(album.duration_ms)}`}
               onpointerdown={(e) => press(e, i, album)}
               onclick={(e) => release(e, i)}
               onauxclick={(e) => e.button === 1 && queueAlbum(i, album)}
               ondblclick={() => play(album)}
             >
-              <Artwork track={album.track} art={album.art} title={album.title} />
-              <span class="title">{album.title || 'Unknown album'}</span>
-              <span class="artist">{album.artist || 'Unknown artist'}</span>
+              {#if mode !== 'list'}
+                <Artwork track={album.track} art={album.art} title={album.title} size={grid ? undefined : 40} />
+              {/if}
+              {#if grid}
+                {#if titles}<span class="title">{album.title || 'Unknown album'}</span>{/if}
+                {#if artists}<span class="artist">{album.artist || 'Unknown artist'}</span>{/if}
+              {:else}
+                <span class="text">
+                  <span class="title">{album.title || 'Unknown album'}</span>
+                  <span class="artist">{album.artist || 'Unknown artist'}</span>
+                </span>
+              {/if}
             </button>
           {:else}
-            <div class="card loading" aria-hidden="true"><Artwork track={undefined} art={null} /></div>
+            <div class="card loading" aria-hidden="true">
+              {#if mode !== 'list'}<Artwork track={undefined} art={null} size={grid ? undefined : 40} />{/if}
+            </div>
           {/if}
         </li>
       {/each}
     </ul>
     {#if count === 0 && albums?.loaded !== false}
       <div class="empty">
-        <p>{library.status?.roots.length ? 'No albums found.' : 'No music folders yet.'}</p>
-        {#if !library.status?.roots.length && engine.can('library')}
+        <p>
+          {items === 'playlists'
+            ? search ? 'No playlists found.' : 'No playlists yet.'
+            : items === 'played'
+              ? 'Nothing played yet.'
+              : library.status?.roots.length ? 'No albums found.' : 'No music folders yet.'}
+        </p>
+        {#if items === 'albums' && !library.status?.roots.length && engine.can('library')}
           <button class="button primary" onclick={() => addFolder(engine)}>Add folder…</button>
         {/if}
       </div>
@@ -480,6 +593,55 @@
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   }
 
+  .rows {
+    padding: 0;
+  }
+
+  .rows .card {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+    height: 48px;
+    padding: 0 var(--space-3);
+    border: 0;
+    border-radius: 0;
+    background: none;
+    outline-offset: -2px;
+  }
+
+  .covers .card {
+    height: 56px;
+  }
+
+  .rows .card :global(.art) {
+    width: 40px;
+    border-radius: var(--radius-sm);
+    flex: none;
+  }
+
+  .rows .card:hover {
+    background: var(--hover);
+  }
+
+  .text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .rows .title,
+  .rows .artist {
+    padding: 0;
+  }
+
+  .rows .title {
+    margin: 0;
+  }
+
+  .rows .loading {
+    min-height: 0;
+  }
+
   .card:hover {
     outline-color: var(--border);
   }
@@ -510,8 +672,13 @@
   }
 
   .artist {
+    margin-top: var(--space-2);
     font-size: 0.88em;
     color: var(--text-muted);
+  }
+
+  .title + .artist {
+    margin-top: 0;
   }
 
   .count {

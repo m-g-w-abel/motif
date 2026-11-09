@@ -1,6 +1,7 @@
 <script lang="ts" module>
   const paths = {
     play: 'M7 4.5v15L20 12z',
+    shuffle: 'M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5',
     pause: 'M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z',
     next: 'M5 4.5v15L15.5 12zM16.5 4.5h2.5v15h-2.5z',
     previous: 'M19 4.5v15L8.5 12zM5 4.5h2.5v15H5z',
