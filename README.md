@@ -53,7 +53,8 @@ control isn't an add-on: it's the normal code path.
   screen on phones, with album pages opening above it and back to return.
   Phones show one widget per view, a bottom bar (mini player, progress,
   Library / Search / Menu, the menu holding the engine switcher and Settings),
-  a full-screen now-playing sheet and touch gestures, each remappable in Settings.
+  a full-screen now-playing sheet and touch gestures, each remappable in
+  Settings, which on a phone is a list of groups with a search.
 
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable
