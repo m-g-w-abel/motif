@@ -98,6 +98,15 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
          -- LRCLIB answers by audio hash (lyrics.rs): LRC and plain text, both
          -- NULL for a miss, and when it was asked (Unix seconds).
          CREATE TABLE IF NOT EXISTS lyrics (hash TEXT PRIMARY KEY, synced TEXT, plain TEXT, fetched INTEGER NOT NULL);
+         -- Saved playlists (playlists.rs). Ids come from clients, so repeated
+         -- commands find their earlier work. Entries name a track by path and,
+         -- for when it moves, by audio hash.
+         CREATE TABLE IF NOT EXISTS playlists (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+         CREATE TABLE IF NOT EXISTS playlist_items (
+             playlist TEXT NOT NULL, item TEXT NOT NULL, pos INTEGER NOT NULL,
+             file TEXT NOT NULL, hash TEXT,
+             PRIMARY KEY (playlist, item)
+         );
          CREATE TABLE IF NOT EXISTS tracks (
              id INTEGER PRIMARY KEY,
              path TEXT NOT NULL UNIQUE,

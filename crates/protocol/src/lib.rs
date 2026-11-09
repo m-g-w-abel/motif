@@ -604,6 +604,50 @@ pub enum LibraryQuery {
         #[serde(default)]
         offset_ms: i32,
     },
+    /// Saved playlists, by name.
+    Playlists,
+    /// A playlist's tracks in order. Entries whose files the library no
+    /// longer has are left out (and come back with them).
+    PlaylistTracks {
+        id: String,
+    },
+    /// Makes the playlist the context and plays from `start`.
+    PlayPlaylist {
+        id: String,
+        start: u32,
+    },
+    /// Makes a playlist with these tracks. `id` is the client's (e.g. a UUID),
+    /// so a repeat does nothing.
+    CreatePlaylist {
+        id: String,
+        name: String,
+        #[serde(default)]
+        paths: Vec<String>,
+    },
+    RenamePlaylist {
+        id: String,
+        name: String,
+    },
+    DeletePlaylist {
+        id: String,
+    },
+    /// Appends tracks. `op` is the client's id for this addition, so a
+    /// repeat adds nothing; the entries' ids are `<op>/<index>`.
+    AddToPlaylist {
+        id: String,
+        op: String,
+        paths: Vec<String>,
+    },
+    RemoveFromPlaylist {
+        id: String,
+        items: Vec<String>,
+    },
+    /// Moves an entry before another (`None`: to the end).
+    MovePlaylistItem {
+        id: String,
+        item: String,
+        before: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -643,7 +687,34 @@ pub enum QueryResult {
     Lyrics {
         lyrics: Option<Lyrics>,
     },
+    Playlists {
+        playlists: Vec<Playlist>,
+    },
+    PlaylistTracks {
+        entries: Vec<PlaylistEntry>,
+    },
     Done,
+}
+
+/// A saved playlist, summed up like a [`LibraryAlbum`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Playlist {
+    pub id: String,
+    pub name: String,
+    pub tracks: u32,
+    #[ts(type = "number")]
+    pub duration_ms: u64,
+    /// The first track's artwork.
+    pub art: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PlaylistEntry {
+    /// Names this entry for removing and moving; a track may be in a playlist twice.
+    pub item: String,
+    pub track: LibraryTrack,
 }
 
 /// A track's lyrics. Synced lyrics have a time on every line, in order;
@@ -694,6 +765,9 @@ pub struct LibraryStatus {
     /// Bumped whenever the contents change, so clients refetch what they show.
     #[ts(type = "number")]
     pub revision: u64,
+    /// Bumped whenever a playlist changes.
+    #[ts(type = "number")]
+    pub playlists: u64,
     pub error: Option<String>,
 }
 
@@ -794,7 +868,7 @@ pub enum Scope {
     Playback,
     /// Adding, moving and removing queue entries.
     Queue,
-    /// Library folders, rescans, watching, saving lyrics.
+    /// Library folders, rescans, watching, saving lyrics, editing playlists.
     Library,
     /// Engine and integration settings (decoders, output, ReplayGain…).
     Settings,
@@ -1048,6 +1122,33 @@ mod tests {
 
         let unit: Command = serde_json::from_str(r#"{"type":"toggle_playback"}"#).unwrap();
         assert_eq!(unit, Command::TogglePlayback);
+    }
+
+    #[test]
+    fn playlist_wire_format() {
+        let query: LibraryQuery = serde_json::from_str(
+            r#"{"type":"move_playlist_item","id":"p1","item":"a1/0","before":null}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            query,
+            LibraryQuery::MovePlaylistItem {
+                id: "p1".into(),
+                item: "a1/0".into(),
+                before: None
+            }
+        );
+        let create: LibraryQuery =
+            serde_json::from_str(r#"{"type":"create_playlist","id":"p1","name":"Road"}"#).unwrap();
+        assert_eq!(
+            create,
+            LibraryQuery::CreatePlaylist {
+                id: "p1".into(),
+                name: "Road".into(),
+                paths: vec![]
+            },
+            "an empty playlist needs no paths"
+        );
     }
 
     #[test]

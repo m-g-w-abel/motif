@@ -30,6 +30,17 @@ describe('views', () => {
     expect(views.top).toEqual({ kind: 'home' });
   });
 
+  it('a playlist opens once however often it is asked, and is told apart from others by id', () => {
+    const views = new Views();
+    views.open({ kind: 'playlists' });
+    views.open({ kind: 'playlist', id: 'p1', name: 'Road' });
+    views.open({ kind: 'playlist', id: 'p1', name: 'Road trip' });
+    expect(views.parent).toEqual({ kind: 'playlists' });
+    views.open({ kind: 'playlist', id: 'p2', name: 'Road' });
+    expect(views.parent).toEqual({ kind: 'playlist', id: 'p1', name: 'Road' });
+    expect(viewTitle(views.top)).toBe('Road');
+  });
+
   it('show starts again from a category, as picking one in the desktop panel does', () => {
     const views = new Views();
     views.open({ kind: 'albums' });

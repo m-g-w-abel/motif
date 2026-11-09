@@ -33,6 +33,8 @@
   import ContentArea from './lib/components/shell/ContentArea.svelte';
   import ViewScreen from './lib/components/shell/ViewScreen.svelte';
   import { devViews, Views } from './lib/views.svelte';
+  import PlaylistPrompt from './lib/components/playlists/PlaylistPrompt.svelte';
+  import { Playlists } from './lib/playlists.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
   import ExpandedPlayer from './lib/components/player/ExpandedPlayer.svelte';
   import FloatingPlayer from './lib/components/player/FloatingPlayer.svelte';
@@ -49,7 +51,10 @@
   const sheet = new PlayerSheet();
   const settingsView = new SettingsView();
   const views = new Views();
-  setApp({ engine, library, position, layout, themes, settings, sheet, settingsView, views });
+  const playlists = new Playlists(engine);
+  setApp({ engine, library, position, layout, themes, settings, sheet, settingsView, views, playlists });
+  // The list is wanted everywhere: Add to playlist menus, the Playlists view.
+  $effect(() => playlists.sync());
   // All Songs is the layout-arranged view; on desktop it also stands in for the Library home, which is the left panel.
   const allSongs = $derived(views.top.kind === 'songs' || (views.top.kind === 'home' && !views.phone));
   onDestroy(() => engine.close());
@@ -293,6 +298,7 @@
     routeBack(() => [
       { open: settingsView.scanning, close: () => void import('@tauri-apps/plugin-barcode-scanner').then((s) => s.cancel()) },
       { open: contextMenu.items.length > 0, close: escape },
+      { open: !!playlists.asking, close: () => playlists.answer(null) },
       { open: helpOpen || settingsView.pairing || settingsView.addingEngine, close: escape },
       { open: editing, close: () => (editing = false) },
       { open: layout.arranging, close: () => (layout.arranging = false) },
@@ -352,6 +358,7 @@
 {#if helpOpen}<ShortcutHelp onClose={() => (helpOpen = false)} />{/if}
 
 <ContextMenu />
+<PlaylistPrompt />
 <ResizeEdges />
 
 {#if StressTest}<StressTest />{/if}

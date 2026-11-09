@@ -13,6 +13,7 @@ export type View =
   | { kind: 'played' }
   | { kind: 'added' }
   | { kind: 'album'; key: string; title: string }
+  | { kind: 'playlist'; id: string; name: string }
   | { kind: 'search' };
 
 export type Category = Extract<View['kind'], 'songs' | 'albums' | 'playlists' | 'played' | 'added'>;
@@ -32,10 +33,15 @@ export function viewTitle(view: View): string {
   if (view.kind === 'home') return 'Library';
   if (view.kind === 'search') return 'Search';
   if (view.kind === 'album') return view.title || 'Unknown album';
+  if (view.kind === 'playlist') return view.name;
   return CATEGORIES.find((c) => c.kind === view.kind)!.label;
 }
 
-const same = (a: View, b: View) => a.kind === b.kind && (a.kind !== 'album' || a.key === (b as typeof a).key);
+function same(a: View, b: View): boolean {
+  if (a.kind === 'album') return b.kind === 'album' && a.key === b.key;
+  if (a.kind === 'playlist') return b.kind === 'playlist' && a.id === b.id;
+  return a.kind === b.kind;
+}
 
 /** The stack of views, the top one showing; back pops it. */
 export class Views {

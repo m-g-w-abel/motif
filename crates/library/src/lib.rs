@@ -12,6 +12,7 @@ mod hash;
 mod history;
 mod loudness;
 mod lyrics;
+mod playlists;
 mod scan;
 mod tags;
 mod waveform;
@@ -144,7 +145,7 @@ impl Library {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Answers a query. `Play` and `PlayAlbum` are answered by
+    /// Answers a query. `Play`, `PlayAlbum` and `PlayPlaylist` are answered by
     /// [`Self::selection`] instead, since they act on the engine.
     pub fn query(&self, query: LibraryQuery) -> Result<QueryResult> {
         if let LibraryQuery::Waveform { path } = &query {
@@ -273,10 +274,42 @@ impl Library {
                     tracks,
                 }
             }
+            LibraryQuery::Playlists => QueryResult::Playlists {
+                playlists: playlists::list(&conn)?,
+            },
+            LibraryQuery::PlaylistTracks { id } => QueryResult::PlaylistTracks {
+                entries: playlists::entries(&conn, &id)?,
+            },
+            LibraryQuery::CreatePlaylist { id, name, paths } => {
+                playlists::create(&conn, &id, &name, &paths)?;
+                self.playlists_changed()
+            }
+            LibraryQuery::RenamePlaylist { id, name } => {
+                playlists::rename(&conn, &id, &name)?;
+                self.playlists_changed()
+            }
+            LibraryQuery::DeletePlaylist { id } => {
+                playlists::delete(&conn, &id)?;
+                self.playlists_changed()
+            }
+            LibraryQuery::AddToPlaylist { id, op, paths } => {
+                playlists::add(&conn, &id, &op, &paths)?;
+                self.playlists_changed()
+            }
+            LibraryQuery::RemoveFromPlaylist { id, items } => {
+                playlists::remove(&conn, &id, &items)?;
+                self.playlists_changed()
+            }
+            LibraryQuery::MovePlaylistItem { id, item, before } => {
+                playlists::move_item(&conn, &id, &item, before.as_deref())?;
+                self.playlists_changed()
+            }
             LibraryQuery::Waveform { .. }
             | LibraryQuery::RecentlyPlayed { .. }
             | LibraryQuery::RecentlyPlayedAlbums { .. } => unreachable!("answered above"),
-            LibraryQuery::Play { .. } | LibraryQuery::PlayAlbum { .. } => {
+            LibraryQuery::Play { .. }
+            | LibraryQuery::PlayAlbum { .. }
+            | LibraryQuery::PlayPlaylist { .. } => {
                 return Err(Error::Other("play queries go through selection()".into()));
             }
             LibraryQuery::Lyrics { .. } | LibraryQuery::SaveLyrics { .. } => {
@@ -326,6 +359,11 @@ impl Library {
         })
     }
 
+    fn playlists_changed(&self) -> QueryResult {
+        self.shared.update(|s| s.playlists += 1);
+        QueryResult::Done
+    }
+
     fn roots_changed(&self, conn: &Connection) -> Result<()> {
         let (roots, tracks) = (db::roots(conn)?, db::track_count(conn)?);
         self.shared.update(|s| {
@@ -337,10 +375,22 @@ impl Library {
         Ok(())
     }
 
-    /// The engine command that plays what a `Play` or `PlayAlbum` query
+    /// The engine command that plays what a `Play`, `PlayAlbum` or `PlayPlaylist` query
     /// selects: the tracks in order as the context, labelled, from the start index.
     pub fn selection(&self, query: &LibraryQuery) -> Result<Command> {
         let conn = self.db();
+        if let LibraryQuery::PlayPlaylist { id, start } = query {
+            let (name, entries) = playlists::named_entries(&conn, id)?;
+            if entries.is_empty() {
+                return Err(Error::Other("nothing to play".into()));
+            }
+            return Ok(Command::SetContext {
+                tracks: entries.into_iter().map(|e| e.track.track).collect(),
+                start: Some(*start),
+                kind: ContextKind::List,
+                label: Some(name),
+            });
+        }
         let (sql, arg, start, kind) = match query {
             LibraryQuery::Play {
                 search,
