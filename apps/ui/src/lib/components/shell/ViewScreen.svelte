@@ -24,7 +24,6 @@
   const own = $derived(settings.current.ownDecorations && canDecorate);
   const drag = $derived(own ? { 'data-tauri-drag-region': '' } : {});
 
-
   /** Opens the menu `items` below the button pressed. */
   function openBelow(e: MouseEvent, items: MenuItem[]) {
     const button = e.currentTarget as HTMLElement;

@@ -8,7 +8,8 @@
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
 
-  // shortcut: a plain list until the album/playlist page (#170) shows playlists like albums.
+  // shortcut: a plain list rendering every row (fine for hundreds, slow for thousands) until the
+  // album/playlist page (#170) shows playlists like albums, with only the rows in view.
   let { id, name }: { id: string; name: string } = $props();
   const { engine, playlists } = getApp();
   let entries = $state<PlaylistEntry[]>([]);
