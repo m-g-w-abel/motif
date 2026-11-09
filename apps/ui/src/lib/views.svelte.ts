@@ -94,11 +94,15 @@ function stackOf(view: View): View[] {
   return [HOME, view];
 }
 
-/** The stack `?dev-view=` opens: a category (`albums`), `search`, or `album:<key>`. */
+/** The stack `?dev-view=` opens: a category (`albums`), `search`, `album:<key>` or `playlist:<id>`. */
 export function devViews(param: string): View[] | null {
   if (param.startsWith('album:')) {
     const key = param.slice('album:'.length);
     return key ? stackOf({ kind: 'album', key, title: key }) : null;
+  }
+  if (param.startsWith('playlist:')) {
+    const id = param.slice('playlist:'.length);
+    return id ? stackOf({ kind: 'playlist', id, name: id }) : null;
   }
   const kind = param === 'search' ? 'search' : CATEGORIES.find((c) => c.kind === param)?.kind;
   return kind ? stackOf({ kind }) : null;

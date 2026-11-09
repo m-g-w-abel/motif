@@ -25,9 +25,9 @@
       if (times.length > 120) times.shift();
       fps = Math.round(1000 / (times.reduce((a, b) => a + b, 0) / times.length));
       worst = Math.round(Math.max(...times));
-      (window as unknown as { stress: object }).stress = { fps, worst, rows: document.querySelectorAll('tr.track').length };
+      (window as unknown as { stress: object }).stress = { fps, worst, rows: document.querySelectorAll('tr.track, .song-list .song').length };
 
-      for (const list of document.querySelectorAll<HTMLElement>('main .tracklist .scroll, main .album-grid .scroll')) {
+      for (const list of document.querySelectorAll<HTMLElement>('main .tracklist .scroll, main .album-grid .scroll, main .song-list .scroll')) {
         list.scrollTop = list.scrollTop + list.clientHeight >= list.scrollHeight - 1 ? 0 : list.scrollTop + 40;
       }
 

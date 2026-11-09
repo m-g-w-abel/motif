@@ -55,8 +55,9 @@
   setApp({ engine, library, position, layout, themes, settings, sheet, settingsView, views, playlists });
   // The list is wanted everywhere: Add to playlist menus, the Playlists view.
   $effect(() => playlists.sync());
-  // All Songs is the layout-arranged view; on desktop it also stands in for the Library home, which is the left panel.
-  const allSongs = $derived(views.top.kind === 'songs' || (views.top.kind === 'home' && !views.phone));
+  // All Songs is the layout-arranged view on desktop, where it also stands in for the Library home (the left
+  // panel); phones use no layouts and show it as a song view.
+  const allSongs = $derived(!views.phone && (views.top.kind === 'songs' || views.top.kind === 'home'));
   onDestroy(() => engine.close());
 
   $effect(() => position.track());

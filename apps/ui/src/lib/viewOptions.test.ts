@@ -18,6 +18,12 @@ describe('view options', () => {
     expect(viewOptions(saved, 'playlist:abc').mode).toBe('list');
   });
 
+  it('start every song view as a song list, apart from its collection twin', () => {
+    const saved = new SettingsStore().current.viewOptions;
+    for (const key of ['songs', 'album', 'played:songs', 'added:songs'] as const) expect(viewOptions(saved, key).mode).toBe('list');
+    expect(viewOptions(saved, 'added').mode).toBe('grid');
+  });
+
   it('sort Albums by album artist, then year, and Recently Added newest first', () => {
     const saved = new SettingsStore().current.viewOptions;
     expect(viewOptions(saved, 'albums').sort).toEqual([

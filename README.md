@@ -59,7 +59,12 @@ control isn't an add-on: it's the normal code path.
   screen on phones, with album pages opening above it and back to return.
   Albums, playlists and recent albums show as a cover grid, a name list or a
   list with covers, with columns, titles, artists and order remembered per
-  device for each kind of view.
+  device for each kind of view. Album and playlist pages (big cover, title,
+  artist and year) and the song lists of All Songs and the recents do the
+  same for songs: a numbered list, a list with covers or a grid, drawing only
+  the rows in view even at 50,000 songs. Each page searches within itself,
+  plays its songs in its order, and has a Select mode to play, queue or add
+  several songs to a playlist at once.
   Phones show one widget per view, a bottom bar (mini player, progress,
   Library / Search / Menu, the menu holding the engine switcher and Settings),
   a full-screen now-playing sheet and touch gestures, each remappable in

@@ -581,6 +581,10 @@ pub enum LibraryQuery {
         album: String,
         #[serde(default)]
         sort: Vec<SortRule>,
+        /// Index of the track to start at; the first if left out.
+        #[serde(default)]
+        #[ts(optional)]
+        start: Option<u32>,
     },
     /// The tracks of these albums, album after album in the order given,
     /// e.g. to queue them.

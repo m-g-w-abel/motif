@@ -119,16 +119,25 @@ export class Playlists {
     void this.#run({ type: 'move_playlist_item', id, ...moveCommand(items, from, to) });
   }
 
-  /** "Add to playlist…", opening a menu of playlists; nothing if this device may not edit them or no track is a library file. */
+  /** Whether this device may add `tracks` to a playlist: it may edit them and some track is a library file. */
+  canAdd(tracks: TrackRef[]): boolean {
+    return this.engine.can('library') && local(tracks).length > 0;
+  }
+
+  /** Opens the menu of playlists to add `tracks` to, at `x`, `y`. */
+  pick(tracks: TrackRef[], x: number, y: number, origin: HTMLElement | null) {
+    contextMenu.show(
+      [{ label: 'New playlist…', run: () => this.create(tracks) }, ...this.list.map((p) => ({ label: p.name, run: () => this.add(p, tracks) }))],
+      x,
+      y,
+      origin,
+    );
+  }
+
+  /** "Add to playlist…", opening a menu of playlists; nothing unless {@link canAdd}. */
   addItems(tracks: TrackRef[]): MenuItem[] {
-    if (!this.engine.can('library') || !local(tracks).length) return [];
-    const choose = () =>
-      contextMenu.show(
-        [{ label: 'New playlist…', run: () => this.create(tracks) }, ...this.list.map((p) => ({ label: p.name, run: () => this.add(p, tracks) }))],
-        contextMenu.x,
-        contextMenu.y,
-        document.activeElement as HTMLElement | null,
-      );
+    if (!this.canAdd(tracks)) return [];
+    const choose = () => this.pick(tracks, contextMenu.x, contextMenu.y, document.activeElement as HTMLElement | null);
     return [{ label: 'Add to playlist…', run: choose }];
   }
 

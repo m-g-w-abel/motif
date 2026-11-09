@@ -1,7 +1,7 @@
 import { groupConsecutive } from './albums';
 import { demoLibrary, isDemo } from './demo';
 import type { EngineClient } from './engine.svelte';
-import { hold, type LibraryClient, type LibraryTracks, type Shown } from './library.svelte';
+import { hold, type LibraryClient, type LibraryTracks, type RecentPlays, type Shown } from './library.svelte';
 import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
@@ -44,6 +44,77 @@ export interface TrackListData {
   load?(from: number, to: number): Promise<void>;
   /** Pins the first visible row; `onShift` hears if rows inserted above move it. */
   anchor?(index: number, onShift: (index: number) => void): void;
+}
+
+/**
+ * What a song view lists (`SongList.svelte`): the rows and what playing means, without album runs.
+ * Its `currentKey` is the playing track's id, which a row with that track shows as playing.
+ */
+export type SongListData = Pick<
+  TrackListData,
+  'title' | 'count' | 'track' | 'details' | 'key' | 'order' | 'currentKey' | 'play' | 'error' | 'empty' | 'sync' | 'load'
+>;
+
+const localKey = (engine: EngineClient) => {
+  const track = engine.current?.track;
+  return track?.source === 'local' ? track.id : null;
+};
+
+/**
+ * Songs all here at once (an album's, a playlist's); `play(start)` plays them from row `start`.
+ * A playlist's rows are keyed by `item`, its entry id: the same song can be in it twice.
+ */
+export function fixedData(
+  engine: EngineClient,
+  title: string,
+  rows: { track: TrackRef; details?: LibraryTrack; item?: string }[],
+  play: (start: number) => void,
+  empty: string,
+): SongListData {
+  return {
+    title,
+    count: rows.length,
+    track: (i) => rows[i]?.track,
+    details: (i) => rows[i]?.details,
+    key: (i) => rows[i]?.item ?? rows[i]?.track.id ?? `#${i}`,
+    get currentKey() {
+      return engine.current?.track.id ?? null;
+    },
+    play,
+    error: (i) => (rows[i]?.details?.missing ? 'File missing' : (rows[i]?.details?.problem ?? null)),
+    empty: { message: empty },
+  };
+}
+
+/** Recently Played's songs, newest first; playing makes them the context, as listed. */
+export function playedData(engine: EngineClient, plays: RecentPlays): SongListData {
+  const row = (i: number) => plays.get(i);
+  return {
+    title: 'Recently Played',
+    get count() {
+      return plays.total;
+    },
+    track: (i) => row(i)?.track.track,
+    details: (i) => row(i)?.track,
+    key: (i) => {
+      const r = row(i);
+      return r ? `${r.track.track.id}@${r.played_at}` : `#${i}`;
+    },
+    get currentKey() {
+      return localKey(engine);
+    },
+    play: async (start) => {
+      // shortcut: fetches every play to make the context; a server-side "play history" query would send none.
+      await plays.load(0, plays.total - 1);
+      const tracks = Array.from({ length: plays.total }, (_, i) => row(i)?.track.track).filter((t) => t !== undefined);
+      engine.run({ type: 'set_context', tracks, start, kind: 'list', label: 'Recently Played' });
+    },
+    get empty() {
+      return { message: 'Nothing played yet.', hint: 'A song shows here once you have listened to half of it.' };
+    },
+    sync: () => plays.sync(),
+    load: (from, to) => plays.load(from, to),
+  };
 }
 
 export function trackListData(
@@ -126,8 +197,7 @@ function libraryData(
       return list().groups.reduce((n, g) => n + g.duration_ms, 0);
     },
     get currentKey() {
-      const track = engine.current?.track;
-      return track?.source === 'local' ? track.id : null;
+      return localKey(engine);
     },
     play: (start) => void run({ type: 'play', search, sort, start }),
     playGroup: (g) => void run({ type: 'play_album', album: g.key, sort }),
