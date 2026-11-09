@@ -22,7 +22,7 @@
 //!   `getvol`.
 //! - Playback (control): `play`, `playid`, `pause`, `stop`, `next`,
 //!   `previous`, `seek`, `seekid`, `seekcur`, `setvol`, `volume`, `repeat`,
-//!   `single` (repeat + single is repeat one), `random 0`, `consume 0`.
+//!   `single` (repeat + single is repeat one), `random` (shuffle), `consume 0`.
 //! - Playlist: `playlistinfo`, `playlistid`, `plchanges`, `plchangesposid`
 //!   (both answer the whole playlist); control: `add`, `addid`, `delete`,
 //!   `deleteid`, `move`, `moveid`, `clear`.
@@ -33,8 +33,8 @@
 //!   `tagtypes`, `urlhandlers`, `decoders`, `listplaylists` (none),
 //!   `binarylimit`, command lists.
 //!
-//! Anything else answers `ACK [5@0]` (unknown command); `random 1`,
-//! `consume 1`, `shuffle` and stored playlists aren't supported.
+//! Anything else answers `ACK [5@0]` (unknown command); `consume 1`,
+//! `shuffle` and stored playlists aren't supported.
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -375,6 +375,7 @@ struct Seen {
     start: i64,
     volume: u32,
     repeat: RepeatMode,
+    shuffle: bool,
     playlist: u32,
     database: u64,
 }
@@ -390,7 +391,7 @@ impl Seen {
         if self.volume != now.volume {
             changes.push("mixer");
         }
-        if self.repeat != now.repeat {
+        if (self.repeat, self.shuffle) != (now.repeat, now.shuffle) {
             changes.push("options");
         }
         if self.playlist != now.playlist {
@@ -424,6 +425,7 @@ impl Client {
                 start: 0,
                 volume: 0,
                 repeat: RepeatMode::Off,
+                shuffle: false,
                 playlist: 0,
                 database: 0,
             },
@@ -589,6 +591,7 @@ impl Client {
             },
             volume: percent(state.volume),
             repeat: state.repeat,
+            shuffle: state.shuffle,
             playlist: Playlist::of(&self.engine).version(),
             database: self
                 .library
@@ -779,7 +782,11 @@ impl Client {
                 };
                 self.send(Command::SetRepeat { mode }).await?;
             }
-            "random" | "consume" => {
+            "random" => {
+                let on = bool_arg(args.first())?;
+                self.send(Command::SetShuffle { on }).await?;
+            }
+            "consume" => {
                 if bool_arg(args.first())? {
                     return Err(arg_error(format!("{name} isn't supported")));
                 }
@@ -998,7 +1005,7 @@ impl Client {
         let playlist = Playlist::of(&self.engine);
         line(out, "volume", percent(state.volume));
         line(out, "repeat", u8::from(state.repeat != RepeatMode::Off));
-        line(out, "random", 0);
+        line(out, "random", u8::from(state.shuffle));
         line(out, "single", u8::from(state.repeat == RepeatMode::One));
         line(out, "consume", 0);
         line(out, "playlist", playlist.version());
@@ -1643,7 +1650,12 @@ mod tests {
         assert_eq!(engine.state().repeat, RepeatMode::All);
         assert_eq!(ask(&mut client, "repeat 0").await, "OK\n");
         assert_eq!(engine.state().repeat, RepeatMode::Off);
-        assert!(ask(&mut client, "random 1").await.starts_with("ACK [2@0]"));
+        assert_eq!(ask(&mut client, "random 1").await, "OK\n");
+        assert!(engine.state().shuffle);
+        assert_eq!(field(&ask(&mut client, "status").await, "random"), ["1"]);
+        assert_eq!(ask(&mut client, "random 0").await, "OK\n");
+        assert!(!engine.state().shuffle);
+        assert!(ask(&mut client, "consume 1").await.starts_with("ACK [2@0]"));
 
         assert_eq!(ask(&mut client, "pause 1").await, "OK\n");
         assert_eq!(engine.state().status, PlaybackStatus::Paused);

@@ -10,7 +10,7 @@ import type { ReplayGainSettings } from "./ReplayGainSettings";
  * Snapshot of the transport. The queue and context entries come separately
  * in [`Event::Queue`] and [`Event::Context`].
  */
-export type PlayerState = { status: PlaybackStatus, volume: number, repeat: RepeatMode, 
+export type PlayerState = { status: PlaybackStatus, volume: number, repeat: RepeatMode, shuffle: boolean, 
 /**
  * Position at the moment this snapshot was taken.
  */

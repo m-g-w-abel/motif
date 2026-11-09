@@ -14,6 +14,7 @@ export const COMMAND_SCOPES: Record<Command['type'], Scope> = {
   seek: 'playback',
   set_volume: 'playback',
   set_repeat: 'playback',
+  set_shuffle: 'playback',
   set_context: 'playback',
   play_item: 'playback',
   enqueue: 'queue',

@@ -1,5 +1,6 @@
 import type { ArtColours } from './artAccent';
 import type { Action, Gesture, Overrides, Surface } from './gestures';
+import { withOptions, type OptionsKey, type SavedOptions, type ViewOptions } from './viewOptions';
 
 /**
  * Appearance and player preferences. Client-side and per device; layouts
@@ -30,6 +31,8 @@ export interface Settings {
   gestures: Overrides;
   /** Android: a remote engine's playback shows in the notification and lock screen. Off: only this phone's does. */
   remoteControls: boolean;
+  /** Each view's display options (`viewOptions.ts`), only those changed. */
+  viewOptions: SavedOptions;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -46,6 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ownDecorations: false,
   gestures: {},
   remoteControls: false,
+  viewOptions: {},
 };
 
 const KEY = 'settings';
@@ -74,6 +78,11 @@ export class SettingsStore {
     } catch {
       // Applies until reload.
     }
+  }
+
+  /** Changes some of a view's options, keeping the rest. */
+  setView(key: OptionsKey, patch: Partial<ViewOptions>) {
+    this.set('viewOptions', withOptions(this.current.viewOptions, key, patch));
   }
 
   /** Maps one gesture to `action`, keeping the others. */

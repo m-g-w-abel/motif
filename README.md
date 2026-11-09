@@ -30,6 +30,9 @@ control isn't an add-on: it's the normal code path.
   The playhead comes from samples actually played, not a timer.
 - ReplayGain, with loudness measured on demand for untagged files.
 - A restarted engine comes back paused to the same queue, track and position.
+- Shuffle is engine state, like repeat: it shuffles what hasn't played yet and
+  turning it off returns to the list's order from the current track (also
+  MPD's `random`).
 
 **Library**
 - Incremental scanning into SQLite with FTS5 search, folder watching, artwork
@@ -51,6 +54,9 @@ control isn't an add-on: it's the normal code path.
 - A navigation of views: a Library home (All Songs, Albums, Playlists, Recently
   Played, Recently Added) that is the left panel on desktop and the first
   screen on phones, with album pages opening above it and back to return.
+  Albums, playlists and recent albums show as a cover grid, a name list or a
+  list with covers, with columns, titles, artists and order remembered per
+  device for each kind of view.
   Phones show one widget per view, a bottom bar (mini player, progress,
   Library / Search / Menu, the menu holding the engine switcher and Settings),
   a full-screen now-playing sheet and touch gestures, each remappable in

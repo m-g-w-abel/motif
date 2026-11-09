@@ -364,6 +364,7 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | Command::Seek { .. }
             | Command::SetVolume { .. }
             | Command::SetRepeat { .. }
+            | Command::SetShuffle { .. }
             | Command::SetContext { .. }
             | Command::PlayItem { .. } => Scope::Playback,
             Command::Enqueue { .. }
