@@ -37,14 +37,15 @@
     settled: boolean;
   } = $props();
 
-  // Neighbours each side: fewer on phones, where the cover takes the width.
+  // Neighbours each side: fewer on phones, where the cover takes the width and the neighbours
+  // stay behind it, and the sheet names the album instead of a caption.
   const narrow = new MediaQuery('(max-width: 700px)');
   const near = $derived(narrow.current ? 1 : 2);
   /** How much of each neighbour shows beside the centre card, as a share of its side. */
-  const PEEK = 0.2;
+  const PEEK = $derived(narrow.current ? 0 : 0.2);
   /** The centre card's caption and the dots under the cards, with the gaps between them. */
-  const BELOW = 80;
-  const PADDING = 12;
+  const BELOW = $derived(narrow.current ? 28 : 80);
+  const PADDING = $derived(narrow.current ? 8 : 12);
   const side = $derived(
     Math.max(0, Math.min(height - 2 * PADDING - BELOW, (width - 2 * PADDING) / (1 + 2 * PEEK * near))),
   );
@@ -77,8 +78,9 @@
     go(at + by);
   }
 
-  // A tap on the centre card shows the next image; a drag that ends on it (a swipe, the volume
-  // gesture) or a long press for the menu is not a tap.
+  // A tap on the centre card shows the next image (on phones, where the neighbours hide behind it,
+  // its left half the previous one); a drag that ends on it (a swipe, the volume gesture) or a long
+  // press for the menu is not a tap.
   let down: { x: number; y: number } | null = null;
   const isTap = (e: PointerEvent) =>
     e.button === 0 && !!down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < SLOP && !!(e.target as Element).closest('.tap');
@@ -86,7 +88,10 @@
   // Mouse only: a touch swipe on the artwork skips the track (`gestures.ts`).
   let swipeX: number | null = null;
   function onPointerUp(e: PointerEvent) {
-    if (isTap(e)) go(at + 1);
+    if (isTap(e)) {
+      const card = (e.target as Element).closest('.tap')!.getBoundingClientRect();
+      go(at + (narrow.current && e.clientX < card.left + card.width / 2 ? -1 : 1));
+    }
     down = null;
     const dx = swipeX === null ? 0 : e.clientX - swipeX;
     swipeX = null;
@@ -146,6 +151,8 @@
     {/each}
     <!-- The sheet's morph fades `.turns` and `.below` (inline opacity); what shows inside them
          fades by class, also when the list arrives late. -->
+    <!-- Phones page by swiping or tapping the cover instead. -->
+    {#if !narrow.current}
     <div class="turns">
       <button class="icon-button turn previous" class:hidden={!settled || alone} aria-label="Previous image" onclick={() => go(at - 1)}>
         <Icon name="chevron-left" />
@@ -154,13 +161,16 @@
         <Icon name="chevron-right" />
       </button>
     </div>
+    {/if}
   </div>
   <div class="below">
     <!-- Always two lines high, so nothing below moves as it pages. -->
-    <div class="caption" class:hidden={!settled || !cards[at]?.title} style:width="{side}px" aria-live="polite">
-      <span class="kicker">{cards[at]?.kicker ?? ''}</span>
-      <span class="title">{cards[at]?.title ?? ''}</span>
-    </div>
+    {#if !narrow.current}
+      <div class="caption" class:hidden={!settled || !cards[at]?.title} style:width="{side}px" aria-live="polite">
+        <span class="kicker">{cards[at]?.kicker ?? ''}</span>
+        <span class="title">{cards[at]?.title ?? ''}</span>
+      </div>
+    {/if}
     <div class="dots" class:hidden={!settled || alone}>
     {#each cards as card, i (card.key)}
       <button

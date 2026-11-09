@@ -6,11 +6,16 @@
   import type { QueueItem } from '../../protocol/QueueItem';
   import { moveItem } from '../../reorder';
   import Icon from '../Icon.svelte';
+  import Artwork from '../player/Artwork.svelte';
   import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
 
-  /** Collapsible queues show a header that folds the list away. */
-  let { collapsible = false }: { collapsible?: boolean } = $props();
+  /**
+   * Collapsible queues show a header that folds the list away. `nowPlaying`
+   * (the phone sheet) starts with the playing track under the album's name,
+   * rows with covers, and leaves the scrolling to the page.
+   */
+  let { collapsible = false, nowPlaying = false }: { collapsible?: boolean; nowPlaying?: boolean } = $props();
 
   /** A list context shows this many upcoming tracks until Show all; an album shows all of its own. */
   const PREVIEW = 10;
@@ -74,7 +79,7 @@
 </script>
 
 {#snippet entry(item: QueueItem, queued: boolean)}
-  <div class="entry" class:failed={item.error}>
+  <div class="entry" class:failed={item.error} class:current={nowPlaying && item.id === engine.current?.id}>
     <button
       class="play"
       title={item.error ?? undefined}
@@ -82,11 +87,21 @@
       onkeydown={(e) => keydown(e, item, queued)}
       use:menu={() => queueMenu(engine, item, queued)}
     >
-      <span class="name">{trackTitle(item.track)}</span>
-      {#if item.track.artist}<span class="artist">{item.track.artist}</span>{/if}
-      <span class="time">{item.track.duration_ms == null ? '' : formatTime(item.track.duration_ms)}</span>
+      {#if nowPlaying}
+        <Artwork track={item.track} size={48} />
+        <span class="lines">
+          <span class="name">{trackTitle(item.track)}</span>
+          <span class="artist">
+            {[item.track.artist, item.track.duration_ms == null ? '' : formatTime(item.track.duration_ms)].filter(Boolean).join(' · ')}
+          </span>
+        </span>
+      {:else}
+        <span class="name">{trackTitle(item.track)}</span>
+        {#if item.track.artist}<span class="artist">{item.track.artist}</span>{/if}
+        <span class="time">{item.track.duration_ms == null ? '' : formatTime(item.track.duration_ms)}</span>
+      {/if}
     </button>
-    {#if queued && engine.can('queue')}
+    {#if queued && engine.can('queue') && !nowPlaying}
       <button
         class="remove"
         aria-label="Remove {trackTitle(item.track)} from the queue"
@@ -99,7 +114,8 @@
   </div>
 {/snippet}
 
-<section class="queue" class:open>
+<section class="queue" class:open class:now-playing={nowPlaying}>
+  {#if !nowPlaying}
   <header>
     {#if collapsible}
       <button class="toggle" aria-expanded={open} onclick={toggle}>
@@ -112,9 +128,14 @@
       <span class="meta">{meta}</span>
     {/if}
   </header>
+  {/if}
   {#if open}
     <div class="body">
       <div class="list custom-scrollbar" bind:this={scroller}>
+        {#if nowPlaying && engine.current}
+          <h2>{context?.label ?? engine.current.track.album ?? 'Now playing'}</h2>
+          <div class="row">{@render entry(engine.current, false)}</div>
+        {/if}
         {#if queue.length}
           <div class="heading">
             <h3>Next in queue</h3>
@@ -125,7 +146,8 @@
           </ReorderList>
         {/if}
         {#if fromContext.length}
-          <div class="heading">
+          <!-- In the phone sheet the album's tracks follow the playing one under its heading. -->
+          <div class="heading" class:hidden={nowPlaying && !queue.length}>
             <h3>Next from {context?.label ?? (context?.kind === 'album' ? 'this album' : 'this list')}</h3>
           </div>
           <ol aria-label="Next from {context?.label ?? 'the list'}">
@@ -333,5 +355,69 @@
   .empty {
     margin: var(--space-4) 0;
     color: var(--text-muted);
+  }
+
+  .hidden {
+    display: none;
+  }
+
+  /* The phone sheet: roomy rows with covers, handles on the right, long names wrapping. */
+  .now-playing .list {
+    padding: 0 0 var(--space-6);
+  }
+
+  .now-playing h2 {
+    margin: var(--space-2) var(--space-4) var(--space-3);
+    font-size: 1.4em;
+    font-weight: 700;
+  }
+
+  .now-playing .heading {
+    padding: var(--space-4) var(--space-4) var(--space-1);
+  }
+
+  .now-playing ol > li {
+    padding-left: 0;
+  }
+
+  .now-playing :global(li:has(> .handle)) {
+    padding-right: var(--space-3);
+  }
+
+  .now-playing :global(li > .handle) {
+    order: 1;
+    width: 40px;
+    height: 48px;
+  }
+
+  .now-playing .play {
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 64px;
+    height: auto;
+    padding: var(--space-2) var(--space-4);
+    border-radius: 0;
+    line-height: 1.3;
+  }
+
+  .now-playing .entry.current {
+    background: var(--hover);
+  }
+
+  .lines {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .now-playing .name {
+    font-weight: 600;
+  }
+
+  .now-playing :is(.name, .artist) {
+    flex: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 </style>

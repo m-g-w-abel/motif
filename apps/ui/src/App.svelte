@@ -244,7 +244,9 @@
     if (devArt) settings.current.artColours = devArt as typeof settings.current.artColours;
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     if (params.has('dev-sheet')) sheet.expand();
-    if (params.has('dev-lyrics')) sheet.lyrics = true;
+    const step = params.get('dev-sheet');
+    if (step === 'half' || step === 'full') sheet.step = step;
+    if (params.has('dev-lyrics')) sheet.step = 'lyrics';
     const devView = devViews(params.get('dev-view') ?? '');
     if (devView) views.stack = devView;
     if (params.has('dev-arrange')) layout.arranging = true;
@@ -312,7 +314,7 @@
       { open: editing, close: () => (editing = false) },
       { open: layout.arranging, close: () => (layout.arranging = false) },
       { open: !!settingsView.group, close: () => settingsView.back() },
-      { open: sheet.open, close: () => sheet.collapse() },
+      { open: sheet.open, close: () => sheet.back() },
       { open: !!views.menu, close: () => (views.menu = null) },
       { open: !!views.parent, close: () => views.back() },
     ]),

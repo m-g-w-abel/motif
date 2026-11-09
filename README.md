@@ -67,8 +67,10 @@ control isn't an add-on: it's the normal code path.
   several songs to a playlist at once.
   Phones show one widget per view, a bottom bar (mini player, progress,
   Library / Search / Menu, the menu holding the engine switcher and Settings),
-  a full-screen now-playing sheet and touch gestures, each remappable in
-  Settings, which on a phone is a list of groups with a search.
+  a full-screen now-playing sheet that steps by drag or handle between now
+  playing, a half and a full reorderable queue, and lyrics, and touch
+  gestures, each remappable in Settings, which on a phone is a list of groups
+  with a search.
 
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable
@@ -90,7 +92,7 @@ pairs in the app. It
 behaves like a good Android audio app: calls and alarms
 pause it until they end, another player pauses it for good, unplugging
 headphones pauses it, and navigation prompts duck it without touching the
-user's volume. System back closes the topmost menu, dialog, screen or sheet,
+user's volume. System back closes the topmost menu, dialog or screen, steps the sheet back,
 then goes back through the views, before it leaves the app. Any view (an album, a playlist, a
 category) can be pinned to the home screen as a shortcut that opens it.
 
