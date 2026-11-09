@@ -118,6 +118,14 @@ pub enum Command {
         /// E.g. the album or list name.
         label: Option<String>,
     },
+    /// The list played from changed (a playlist edited, a scan): its tracks
+    /// now, in order. Entries keep their ids by track; the current entry and
+    /// history stay, removed tracks drop and new ones are added. Unshuffled the
+    /// order follows `tracks`; shuffled, new tracks go at random among what
+    /// hasn't played. The server sends this for live play queries.
+    UpdateContext {
+        tracks: Vec<TrackRef>,
+    },
     /// Plays a queue or context entry by its [`QueueItem::id`]. A queued
     /// entry leaves the queue; a context entry moves the context there. The
     /// rest of the queue is kept either way.

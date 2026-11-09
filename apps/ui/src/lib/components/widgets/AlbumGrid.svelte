@@ -176,7 +176,7 @@
         if (found.type === 'tracks' && found.total) await engine.query({ type: 'play', search, sort, start: from(found.total) });
         return;
       }
-      // shortcut: playlists and recent albums play as a snapshot of their tracks until contexts follow their source.
+      // shortcut: all playlists play as a snapshot of their tracks (one playlist at a time is followed live); recent albums are a snapshot by design.
       await albums?.load(0, count - 1);
       const keys = Array.from({ length: count }, (_, i) => card(i)?.key).filter((k) => k !== undefined);
       const tracks = await albumTracks(keys);

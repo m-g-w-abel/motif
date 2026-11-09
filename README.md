@@ -33,6 +33,9 @@ control isn't an add-on: it's the normal code path.
 - Shuffle is engine state, like repeat: it shuffles what hasn't played yet and
   turning it off returns to the list's order from the current track (also
   MPD's `random`).
+- What plays keeps up with its source: tracks added to the playing playlist,
+  album or library view (a scan, an edit) get played without restarting,
+  shuffled or not, and removed ones drop out.
 
 **Library**
 - Incremental scanning into SQLite with FTS5 search, folder watching, artwork
