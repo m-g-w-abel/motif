@@ -52,7 +52,7 @@ control isn't an add-on: it's the normal code path.
   Played, Recently Added) that is the left panel on desktop and the first
   screen on phones, with album pages opening above it and back to return.
   Phones show one widget per view, a full-screen now-playing sheet and touch
-  gestures, each remappable in Settings.
+  gestures, each remappable in Settings, which on a phone is a list of groups with a search.
 
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable
