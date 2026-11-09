@@ -31,7 +31,7 @@
     search: 'M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM15.5 15.5 20 20',
     folder: 'M3 6h6l2 2h10v11H3z',
     copy: 'M9 9h11v11H9zM5 15V4h11',
-    lyrics: 'M4 6h12M4 11h12M4 16h5M15 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm0 0V9l5-1',
+    lyrics: 'M8 7h8M5 12h14M8 17h8',
   } as const;
 
   const filled = new Set<IconName>(['play', 'pause', 'next', 'previous']);

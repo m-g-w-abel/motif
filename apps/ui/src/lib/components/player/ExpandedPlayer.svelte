@@ -1,14 +1,18 @@
 <script lang="ts">
   import { getApp, setViewState } from '../../context';
   import Icon from '../Icon.svelte';
+  import Artwork from './Artwork.svelte';
+  import Transport from './Transport.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import ArtworkWidget from '../widgets/Artwork.svelte';
   import Controls from '../widgets/Controls.svelte';
   import Lyrics from '../widgets/Lyrics.svelte';
   import Queue from '../widgets/Queue.svelte';
   import TrackInfo from '../widgets/TrackInfo.svelte';
+  import { trackTitle } from '../../format';
+  import { marquee } from '../../marquee';
 
-  const { layout, sheet } = getApp();
+  const { engine, layout, sheet, views } = getApp();
   let body = $state<HTMLElement>();
   let section = $state<HTMLElement>();
   let backdrop = $state<HTMLElement>();
@@ -40,11 +44,13 @@
     ['.time', '.controls .seek .time:first-child', 'box', 'stage'],
     ['.total', '.controls .seek .time:last-child', 'box', 'stage'],
     ['[aria-label^="Repeat"]', '.controls [aria-label^="Repeat"]', 'box', 'stage'],
+    ['[aria-label="Shuffle"]', '.controls [aria-label="Shuffle"]', 'box', 'stage'],
     ['.volume', '.controls .volume', 'box', 'stage'],
     ['.end > [aria-label="Expand player"]', 'header [aria-label="Collapse"]', 'box', 'stage'],
   ];
   /** No counterpart in the bar: fade in in IN (the carousel's side cards and controls after its cover). */
-  const FADE = 'header .handle, header .lyrics-toggle, .art.lyrics, .hero-album, .coverflow .card:not(.frame), .coverflow .turns, .coverflow .below';
+  const FADE =
+    'header .handle, header .lyrics-toggle, .art.lyrics, .hero-album, .album-title, .lyrics-button, .more, .coverflow .card:not(.frame), .coverflow .turns, .coverflow .below';
 
   type Mode = 'box' | 'even' | 'text';
   type Kind = 'move' | 'cross' | 'handover' | 'stage' | 'edge';
@@ -260,6 +266,18 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && sheet.progress === 1) sheet.collapse();
   }
+
+  /** Phones: a drag on now playing closes it (down) or shows the queue (up); the artwork and seek bar keep theirs. */
+  function dragNow(e: PointerEvent) {
+    if (!views.phone || sheet.step !== 'now') return;
+    if ((e.target as Element).closest('.art, [role="slider"], .more')) return;
+    sheet.drag(e, 'sheet', undefined, true);
+  }
+
+  /** The keyboard's press on a handle; pointers go through `sheet.handle`. */
+  const keyed = (e: MouseEvent, then: () => void) => e.detail === 0 && then();
+  const album = $derived(engine.current?.track.album ?? '');
+  let coverWidth = $state(0);
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -273,6 +291,7 @@
 <section
   bind:this={section}
   class="sheet"
+  data-step={sheet.step}
   class:open={sheet.open}
   class:dragging={sheet.dragging}
   aria-label="Now playing"
@@ -290,7 +309,7 @@
       aria-label="Lyrics"
       aria-pressed={sheet.lyrics}
       title={sheet.lyrics ? 'Show artwork' : 'Show lyrics'}
-      onclick={() => (sheet.lyrics = !sheet.lyrics)}
+      onclick={() => sheet.toggleLyrics()}
     >
       <Icon name="lyrics" size={18} />
     </button>
@@ -299,18 +318,57 @@
     </button>
   </header>
 
+  <!-- Phones, full queue and lyrics: the playing track in a strip whose drag or tap steps back. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="mini" onpointerdown={(e) => !(e.target as Element).closest('.transport') && sheet.handle(e, () => sheet.back())}>
+    <div class="mini-row">
+      <Artwork track={engine.current?.track} size={48} />
+      <span class="mini-names">
+        <b>{engine.current ? trackTitle(engine.current.track) : 'Nothing playing'}</b>
+        <span>{engine.current?.track.artist ?? ''}</span>
+      </span>
+      <Transport compact size={22} />
+    </div>
+    <button class="step" aria-label={sheet.lyrics ? 'Back to now playing' : 'Show less of the queue'} onclick={(e) => keyed(e, () => sheet.back())}></button>
+  </div>
+
   <div class="body" bind:this={body}>
-    <div class="now">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="now" onpointerdown={dragNow}>
+      <!-- Phones, half queue: the cover, full width, behind the title. -->
+      {#if views.phone && sheet.step === 'half'}
+        <div class="cover-bg" aria-hidden="true" bind:clientWidth={coverWidth}>
+          {#if coverWidth}<Artwork track={engine.current?.track} size={coverWidth} />{/if}
+        </div>
+      {/if}
       <div class="art" class:lyrics={sheet.lyrics}>
         {#if sheet.lyrics}<Lyrics />{:else}<ArtworkWidget expands={false} playing />{/if}
       </div>
       <div class="details">
-        <TrackInfo style="hero" playing />
+        <p class="album-title" use:marquee={sheet.progress === 1 ? (engine.current?.track.id ?? null) : null}><span class="marquee">{album}</span></p>
+        <TrackInfo style="hero" playing>
+          {#snippet aside()}
+            <button class="lyrics-button" aria-label="Lyrics" aria-pressed={sheet.lyrics} title="Show lyrics" onclick={() => sheet.toggleLyrics()}>
+              <Icon name="lyrics" size={22} />
+            </button>
+          {/snippet}
+        </TrackInfo>
         <Controls />
+        <!-- Phones: the handle at the bottom; a tap or drag up shows the queue. -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="more" onpointerdown={(e) => sheet.handle(e, () => sheet.up())}>
+          <button class="step" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
+        </div>
       </div>
     </div>
     <div class="queue-slot">
-      <Queue collapsible />
+      <button
+        class="step"
+        aria-label="Show all of the queue"
+        onpointerdown={(e) => sheet.handle(e, () => sheet.up())}
+        onclick={(e) => keyed(e, () => sheet.up())}
+      ></button>
+      <Queue collapsible={!views.phone} nowPlaying={views.phone} />
     </div>
   </div>
   <Scrollbar target={body} />
@@ -380,6 +438,15 @@
     flex: none;
     touch-action: none;
     cursor: grab;
+  }
+
+  /* Phone parts. */
+  .mini,
+  .album-title,
+  .lyrics-button,
+  .more,
+  .queue-slot > .step {
+    display: none;
   }
 
   .handle {
@@ -461,32 +528,274 @@
       padding-bottom: env(safe-area-inset-bottom);
     }
 
+    /* Doesn't scroll: the queue and lyrics scroll inside it. */
     .body {
-      /* Holds the bars of the scroll areas inside it, so they scroll with it. */
       position: relative;
-      overflow-y: auto;
+      overflow: hidden;
+    }
+
+    /* Fills the screen, so the handle sits at the bottom; long titles shrink the cover instead of pushing it off. */
+    .now {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--space-4);
+      padding: 0 var(--space-4) var(--space-2);
+    }
+
+    /* The screen's width (the carousel keeps a small margin), plus room for its dots below. */
+    .art {
+      flex: 0 1 min(calc(100vw + 28px), 66vh);
+      min-height: 40vw;
+      height: auto;
+      margin-inline: calc(-1 * var(--space-4));
+    }
+
+    .details {
+      flex: 1 0 auto;
+    }
+
+    /* The handles step the sheet; Android's back and swipes close it. */
+    header {
+      display: none;
     }
 
     .now {
+      padding-top: var(--space-2);
+    }
+
+    [data-step='now'] .now {
+      touch-action: none;
+    }
+
+    .step {
+      display: block;
+      width: 100%;
+      height: 28px;
+      padding: 0;
+      border: 0;
+      background: none;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .step::before {
+      content: '';
+      display: block;
+      width: 44px;
+      height: 5px;
+      margin: 0 auto;
+      border-radius: 3px;
+      background: var(--border);
+    }
+
+    /* One line each, so the controls never move between tracks; what doesn't fit scrolls (`marquee.ts`). */
+    .album-title {
+      display: flex;
+      height: 1.3em;
+      margin: 0;
+      font-size: 1.5em;
+      font-weight: 700;
+      line-height: 1.3;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    /* Centred while it fits; auto margins drop to 0 when it overflows, so it starts at the left. */
+    .album-title .marquee {
       flex: none;
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-4);
-      padding: 0 var(--space-4) var(--space-4);
+      margin-inline: auto;
     }
 
-    .art {
-      height: min(55vh, calc(100vw - 2 * var(--space-4)));
+    .details :global(.hero :is(h1, .hero-artist)) {
+      overflow: hidden;
+      white-space: nowrap;
     }
 
-    /* Lyrics are the main view: most of the screen, the controls below. */
-    .art.lyrics {
-      height: calc(100dvh - 320px);
-      min-height: 240px;
+    .details :global(.marquee) {
+      display: inline-block;
+    }
+
+    .details :global(.hero-album) {
+      min-height: 1.6em;
+    }
+
+    /* The controls sit low, just above the handle; the space goes between them and the names. */
+    .details > :global(.controls) {
+      margin-top: auto;
+    }
+
+    .lyrics-button {
+      display: grid;
+      place-items: center;
+      flex: none;
+      width: 46px;
+      height: 46px;
+      padding: 0;
+      border: 0;
+      border-radius: var(--radius-lg, 12px);
+      background: var(--text);
+      color: var(--bg);
+      cursor: pointer;
+    }
+
+    /* The album's name sits above the title; under it, the format badge alone. */
+    .details :global(.album-name) {
+      display: none;
+    }
+
+    .details :global(.hero-album) {
+      justify-content: center;
+    }
+
+    .details :global(.hero .format) {
+      padding: 2px var(--space-3);
+      border: 0;
+      border-radius: 999px;
+      background: var(--text);
+      color: var(--bg);
+      text-transform: uppercase;
+    }
+
+    .details :global(.hero .rates) {
+      display: inline;
+    }
+
+    .more {
+      display: block;
+      padding: var(--space-3) 0;
+      touch-action: none;
+    }
+
+    .queue-slot {
+      display: none;
+      border-top: 0;
+    }
+
+    /* Half and full: the queue fills what is left and scrolls on its own; the rest stays put. */
+
+    [data-step='half'] .now {
+      flex: none;
     }
 
     .queue-slot:has(:global(.queue.open)) {
+      flex: 1 1 0;
+      min-height: 0;
+      flex-direction: column;
+    }
+
+    .queue-slot :global(.queue) {
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* Half: the cover fills the top behind the title, the queue below the controls. */
+    [data-step='half'] .now {
+      position: relative;
+      padding-top: calc(min(100vw, 62vh) - 7em);
+    }
+
+    /* Kept laid out (not display: none) so the carousel needn't rebuild on the way back. */
+    [data-step='half'] .art {
+      position: absolute;
+      inset: 0 0 auto;
+      height: min(100vw, 62vh);
+      visibility: hidden;
+    }
+
+    /* Square and full width, its bottom where the 62vh band ends: a taller cover runs off the top. */
+    .cover-bg {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(min(100vw, 62vh) - 100vw);
+      z-index: -1;
+    }
+
+    .cover-bg :global(.art) {
+      border-radius: 0;
+    }
+
+    .cover-bg::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(transparent 45%, var(--bg));
+    }
+
+    [data-step='half'] :is(.album-title, .more),
+    [data-step='half'] .details :global(.hero-album) {
+      display: none;
+    }
+
+    [data-step='half'] .queue-slot,
+    [data-step='full'] .queue-slot {
+      display: flex;
+    }
+
+    [data-step='half'] .queue-slot > .step {
+      display: block;
+    }
+
+    /* Full queue and lyrics: the strip on top, the rest below it. */
+    :is([data-step='full'], [data-step='lyrics']) .mini {
+      display: block;
       flex: none;
-      height: 60vh;
+      padding-top: var(--space-3);
+      background: var(--surface);
+      touch-action: none;
+    }
+
+    .mini-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: 0 var(--space-3) var(--space-2) var(--space-4);
+    }
+
+    .mini-names {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .mini-names > * {
+      overflow-wrap: anywhere;
+    }
+
+    .mini-names span {
+      color: var(--text-muted);
+    }
+
+    [data-step='full'] .now {
+      display: none;
+    }
+
+    [data-step='lyrics'] .now {
+      flex: 1;
+      min-height: 0;
+      padding: 0;
+    }
+
+    [data-step='lyrics'] .details {
+      display: none;
+    }
+
+    /* A flex box, as WebKit leaves a percentage height unresolved in a flex item. */
+    [data-step='lyrics'] .art.lyrics {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    [data-step='lyrics'] .art.lyrics :global(.lyrics) {
+      flex: 1;
+      min-height: 0;
+      height: auto;
     }
   }
 </style>

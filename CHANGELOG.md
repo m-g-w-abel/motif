@@ -7,6 +7,9 @@ grouped by phase of the plan.
 
 - **Changelog and Help**: this changelog, in the menu on phones and the left
   panel on desktop, and Help, which opens the project's documentation online.
+- The phone's now-playing sheet steps, by drag or its handle, between now
+  playing, a half queue under the cover, a full reorderable queue, and lyrics.
+- A shuffle button next to repeat, in the player and the bar.
 - The same engine runs inside the Android app, with background playback that
   holds up through deep Doze, a notification and lock-screen controls.
 - The phone's volume keys and Motif's volume are one control; while the phone

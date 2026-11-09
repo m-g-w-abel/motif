@@ -7,6 +7,7 @@
   import PhoneMenu from '../shell/PhoneMenu.svelte';
   import Artwork from './Artwork.svelte';
   import RepeatButton from './RepeatButton.svelte';
+  import ShuffleButton from './ShuffleButton.svelte';
   import SeekBar from './SeekBar.svelte';
   import TrackLabel from './TrackLabel.svelte';
   import Transport from './Transport.svelte';
@@ -67,6 +68,7 @@
       <span class="time">
         {formatTime(position.ms)}<span class="total">{' / '}{duration ? formatTime(duration) : '-:--'}</span>
       </span>
+      <ShuffleButton />
       <RepeatButton />
       <Volume />
       <button class="icon-button" aria-label="Expand player" title="Expand player" onclick={() => sheet.expand()}>
