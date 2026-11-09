@@ -11,8 +11,8 @@ export interface ViewOptions {
   /** Grid only: titles and artists under the covers. */
   titles: boolean;
   artists: boolean;
-  /** Replaces the library's order (Albums); `null` keeps it. */
-  sort: SortRule | null;
+  /** Tiered sort rules, as for songs; `null` keeps the view's default order. */
+  sort: SortRule[] | null;
 }
 
 /** What remembers its options: each kind of collection view, and each playlist (`playlist:<id>`). */
@@ -38,9 +38,13 @@ function valid(saved: unknown): Partial<ViewOptions> {
   }
   if (typeof s.titles === 'boolean') out.titles = s.titles;
   if (typeof s.artists === 'boolean') out.artists = s.artists;
-  const sort = s.sort as Record<string, unknown> | null | undefined;
-  if (sort && typeof sort.key === 'string' && sort.key in SORT_KEYS && typeof sort.descending === 'boolean') {
-    out.sort = { key: sort.key as SortRule['key'], descending: sort.descending };
+  if (Array.isArray(s.sort)) {
+    const rules = s.sort
+      .filter((r) => r && r.key in SORT_KEYS && typeof r.descending === 'boolean')
+      .map((r) => ({ key: r.key as SortRule['key'], descending: r.descending as boolean }))
+      // A key once: a later tier on the same key could never break a tie.
+      .filter((r, i, all) => all.findIndex((o) => o.key === r.key) === i);
+    if (rules.length) out.sort = rules;
   }
   return out;
 }

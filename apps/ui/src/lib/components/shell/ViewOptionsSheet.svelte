@@ -1,17 +1,13 @@
 <script lang="ts">
   import { getApp } from '../../context';
-  import type { SortKey } from '../../protocol/SortKey';
-  import { SORT_KEYS } from '../../sort.svelte';
   import { MAX_COLUMNS, viewOptions, type OptionsKey, type ViewMode } from '../../viewOptions';
-  import Icon from '../Icon.svelte';
 
-  // The ⋮ sheet of a collection view: its display options, sort and library
-  // actions. A sheet from the bottom on phones, a panel below ⋮ on desktop.
+  // The ⋮ sheet of a collection view: its display options and library
+  // actions (sorting has its own button). A sheet from the bottom on phones, a panel below ⋮ on desktop.
   let {
     title,
     key,
     shownColumns,
-    sortable = false,
     artistsLabel = 'Show artists',
     onclose,
   }: {
@@ -19,8 +15,6 @@
     key: OptionsKey;
     /** The columns the grid shows now, which "Auto" may have picked. */
     shownColumns: number;
-    /** Offers an order of its own (library albums). */
-    sortable?: boolean;
     artistsLabel?: string;
     onclose: () => void;
   } = $props();
@@ -34,7 +28,6 @@
     ['list', 'List'],
     ['covers', 'List + covers'],
   ];
-  const SORTS: SortKey[] = ['album_artist', 'album', 'year', 'added'];
 
   const rescan = () => engine.query({ type: 'rescan' }).catch((e: Error) => (engine.error = e.message));
 
@@ -88,34 +81,6 @@
       <span>{artistsLabel}</span>
       <input type="checkbox" role="switch" checked={o.artists} onchange={(e) => set({ artists: e.currentTarget.checked })} />
     </label>
-  {/if}
-  {#if sortable}
-    <div class="row">
-      <span>Sort by</span>
-      <div class="sort">
-        <select
-          aria-label="Sort by"
-          value={o.sort?.key ?? ''}
-          onchange={(e) => {
-            const k = e.currentTarget.value as SortKey | '';
-            set({ sort: k ? { key: k, descending: o.sort?.descending ?? k === 'added' } : null });
-          }}
-        >
-          <option value="">Library order</option>
-          {#each SORTS as k (k)}<option value={k}>{SORT_KEYS[k]}</option>{/each}
-        </select>
-        {#if o.sort}
-          <button
-            class="icon-button"
-            aria-label={o.sort.descending ? 'Descending' : 'Ascending'}
-            title={o.sort.descending ? 'Descending' : 'Ascending'}
-            onclick={() => set({ sort: { ...o.sort!, descending: !o.sort!.descending } })}
-          >
-            <Icon name={o.sort.descending ? 'chevron-down' : 'chevron-up'} size={16} />
-          </button>
-        {/if}
-      </div>
-    </div>
   {/if}
   <hr />
   <!-- #177: "Add to launcher" (Android only, a home-screen shortcut to this view) goes here. -->
@@ -198,8 +163,7 @@
     font-weight: 600;
   }
 
-  .step,
-  .sort {
+  .step {
     display: flex;
     align-items: center;
     gap: var(--space-2);

@@ -5,20 +5,17 @@
   import { formatTime } from '../../format';
   import { installLayoutFiles } from '../../layout/install';
   import { toasts } from '../../toast.svelte';
-  import type { SortKey } from '../../protocol/SortKey';
-  import type { SortRule } from '../../protocol/SortRule';
-  import { moveItem } from '../../reorder';
-  import { DEFAULT_RULES, isDefault, SORT_KEYS, sortRules, viewSort } from '../../sort.svelte';
+  import { DEFAULT_RULES, sortRules, viewSort } from '../../sort.svelte';
   import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData } from '../../sources.svelte';
   import Icon from '../Icon.svelte';
-  import ReorderList from '../ReorderList.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import { rootPath } from '../../layout/overlay';
   import LayoutNode from './LayoutNode.svelte';
   import { kdlAccept, isAndroid } from '../../platform';
   import { canDecorate } from '../../windowChrome';
   import NavButton from './NavButton.svelte';
+  import SortMenu from './SortMenu.svelte';
   import WindowButtons from './WindowButtons.svelte';
 
   let { onEditLayout }: { onEditLayout: () => void } = $props();
@@ -75,30 +72,14 @@
 
   function onWindowPointer(e: PointerEvent) {
     if (menuOpen && menu && !menu.contains(e.target as Node)) menuOpen = false;
-    if (sortOpen && sortMenu && !sortMenu.contains(e.target as Node)) sortOpen = false;
   }
 
-  // The view's saved sort rules, tier by tier. Editing them drops a one-off
-  // column sort so the edit shows.
-  let sortOpen = $state(false);
-  let sortMenu = $state<HTMLElement>();
-  const rules = $derived(sortRules.rules[view.source]);
-  const sortKeys = Object.keys(SORT_KEYS) as SortKey[];
-
-  function setRules(next: SortRule[]) {
-    view.browse.oneOff = null;
-    sortRules.set(view.source, next);
-  }
-  const change = (i: number, rule: Partial<SortRule>) => setRules(rules.map((r, j) => (j === i ? { ...r, ...rule } : r)));
-  const remove = (i: number) => setRules(rules.filter((_, j) => j !== i));
-  const add = () =>
-    setRules([...rules, { key: sortKeys.find((k) => !rules.some((r) => r.key === k)) ?? 'title', descending: false }]);
 </script>
 
 <svelte:window
   onpointerdown={onWindowPointer}
   onkeydown={(e) => {
-    if (e.key === 'Escape') menuOpen = sortOpen = false;
+    if (e.key === 'Escape') menuOpen = false;
   }}
 />
 
@@ -125,66 +106,18 @@
       />
     </div>
 
-    <div class="menu" bind:this={sortMenu}>
-      <button
-        class="icon-button"
-        class:active={!isDefault(rules) || view.browse.oneOff}
-        aria-haspopup="dialog"
-        aria-expanded={sortOpen}
-        aria-label="Sort order"
-        title="Sort order"
-        onclick={() => (sortOpen = !sortOpen)}
-      >
-        <Icon name="sort" size={16} />
-      </button>
-      {#if sortOpen}
-        <div class="popover sorting" role="dialog" aria-label="Sort order">
-          <div class="current">Sort by</div>
-          {#if view.browse.oneOff}
-            <p class="tip">
-              Sorted by {SORT_KEYS[view.browse.oneOff.key].toLowerCase()} from a column header for now.
-              <button class="link" onclick={() => (view.browse.oneOff = null)}>Use these rules</button>
-            </p>
-          {/if}
-          <div class="tiers">
-            <ReorderList items={rules} label="Sort tiers" onmove={(from, to) => setRules(moveItem(rules, from, to))}>
-              {#snippet row(rule, i)}
-                <div class="tier">
-                  <select
-                    aria-label="Sort tier {i + 1}"
-                    value={rule.key}
-                    onchange={(e) => change(i, { key: e.currentTarget.value as SortKey })}
-                  >
-                    {#each sortKeys as key (key)}
-                      <option value={key}>{SORT_KEYS[key]}</option>
-                    {/each}
-                  </select>
-                  <button
-                    class="direction"
-                    title={rule.descending ? 'Descending: click for ascending' : 'Ascending: click for descending'}
-                    onclick={() => change(i, { descending: !rule.descending })}
-                  >
-                    {rule.descending ? 'Desc' : 'Asc'}
-                  </button>
-                  <button
-                    class="icon"
-                    aria-label="Remove tier"
-                    title="Remove tier"
-                    disabled={rules.length === 1}
-                    onclick={() => remove(i)}
-                  >
-                    <Icon name="close" size={12} />
-                  </button>
-                </div>
-              {/snippet}
-            </ReorderList>
-          </div>
-          {#if rules.length < sortKeys.length}<button onclick={add}>Add a tier</button>{/if}
-          {#if !isDefault(rules)}<button onclick={() => setRules([...DEFAULT_RULES])}>Reset to default</button>{/if}
-          <p class="tip">Click a column header to sort by it once; this order stays saved.</p>
-        </div>
-      {/if}
-    </div>
+    <SortMenu
+      rules={sortRules.rules[view.source]}
+      defaults={DEFAULT_RULES}
+      onchange={(rules) => {
+        // Editing the rules drops a one-off column sort so the edit shows.
+        view.browse.oneOff = null;
+        sortRules.set(view.source, rules);
+      }}
+      oneOff={view.browse.oneOff}
+      onclearOneOff={() => (view.browse.oneOff = null)}
+      tip="Click a column header to sort by it once; this order stays saved."
+    />
 
     {#if layout.arranging && !views.phone}
       <button class="button primary" onclick={() => (layout.arranging = false)}>Done</button>
@@ -440,62 +373,6 @@
 
   .popover button:hover {
     background: var(--hover);
-  }
-
-  .sorting {
-    width: 300px;
-  }
-
-  .tiers {
-    padding: 0 var(--space-3) var(--space-1);
-  }
-
-  .tier {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: 2px 0;
-  }
-
-  .sorting select {
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--surface);
-    color: var(--text);
-    font: inherit;
-  }
-
-  .popover .tier button {
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border-radius: var(--radius-sm);
-    text-align: center;
-    font-size: 10px;
-  }
-
-  .popover .tier .direction {
-    width: 40px;
-    font-size: 11px;
-  }
-
-  .popover .tier button:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
-
-  .popover .link {
-    display: inline;
-    width: auto;
-    padding: 0;
-    color: var(--accent);
   }
 
   .save-as {

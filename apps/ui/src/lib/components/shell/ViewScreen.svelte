@@ -3,7 +3,7 @@
   import { getApp, setViewState, type ViewState } from '../../context';
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
   import { libraryMenu } from '../../menus';
-  import { effectiveSort, sortRules } from '../../sort.svelte';
+  import { DEFAULT_RULES } from '../../sort.svelte';
   import { viewOptions, type OptionsKey } from '../../viewOptions';
   import { CATEGORIES, viewTitle } from '../../views.svelte';
   import { canDecorate } from '../../windowChrome';
@@ -12,6 +12,7 @@
   import PlaylistPage from '../playlists/PlaylistPage.svelte';
   import RecentlyPlayed from '../widgets/RecentlyPlayed.svelte';
   import NavButton from './NavButton.svelte';
+  import SortMenu from './SortMenu.svelte';
   import ViewOptionsSheet from './ViewOptionsSheet.svelte';
   import WindowButtons from './WindowButtons.svelte';
 
@@ -48,13 +49,10 @@
     view.kind === 'albums' || view.kind === 'playlists' || view.kind === 'played' || view.kind === 'added' ? view.kind : null;
   const collection = $derived(view.kind === 'albums' || view.kind === 'playlists' || (recents && show === 'albums'));
   const options = $derived(optionsKey && viewOptions(settings.current.viewOptions, optionsKey));
-  const sort = $derived(
-    view.kind === 'added'
-      ? effectiveSort(sortRules.rules.library, { key: 'added', descending: true })
-      : options?.sort
-        ? effectiveSort(sortRules.rules.library, options.sort)
-        : undefined,
-  );
+  // Albums sort like songs, each kind by its own rules; Recently Added starts newest first.
+  const sortDefaults = view.kind === 'added' ? [{ key: 'added' as const, descending: true }, ...DEFAULT_RULES] : DEFAULT_RULES;
+  const sortable = view.kind === 'albums' || view.kind === 'added';
+  const sort = $derived(sortable ? (options?.sort ?? [...sortDefaults]) : undefined);
   let grid = $state<AlbumGrid>();
   let shownColumns = $state(1);
 
@@ -141,6 +139,14 @@
           </div>
         {/if}
         <span class="grow"></span>
+        {#if collection && optionsKey && sort}
+          <SortMenu
+            rules={sort}
+            defaults={sortDefaults}
+            onchange={(rules) =>
+              settings.setView(optionsKey, { sort: JSON.stringify(rules) === JSON.stringify(sortDefaults) ? null : rules })}
+          />
+        {/if}
         {#if collection && optionsKey}
           <button
             class="tool"
@@ -157,7 +163,6 @@
               title={category.label}
               key={optionsKey}
               {shownColumns}
-              sortable={view.kind === 'albums'}
               artistsLabel={view.kind === 'playlists' ? 'Show song counts' : 'Show artists'}
               onclose={() => (views.options = false)}
             />
@@ -354,6 +359,14 @@
     background: none;
     color: var(--text);
     cursor: pointer;
+  }
+
+  /* The sort button matches the toolbar's. */
+  .actions :global(.menu > .icon-button) {
+    width: 44px;
+    height: 36px;
+    border: 1px solid var(--border);
+    color: var(--text);
   }
 
   .tool:hover,

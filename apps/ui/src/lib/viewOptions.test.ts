@@ -39,8 +39,8 @@ describe('view options', () => {
 
   it('keep only what differs from the defaults', () => {
     const s = new SettingsStore();
-    s.setView('albums', { mode: 'list', titles: false });
-    s.setView('albums', { mode: 'grid', titles: true });
+    s.setView('albums', { mode: 'list', titles: false, sort: [{ key: 'year', descending: false }] });
+    s.setView('albums', { mode: 'grid', titles: true, sort: null });
     expect(s.current.viewOptions).toEqual({});
   });
 
@@ -49,9 +49,12 @@ describe('view options', () => {
       'settings',
       JSON.stringify({
         viewOptions: {
-          albums: { mode: 'carousel', columns: 0, titles: 'yes', sort: { key: 'colour', descending: false } },
-          played: { columns: 2.5, sort: { key: 'year', descending: 'no' } },
-          added: { columns: 99, sort: { key: 'year', descending: true } },
+          albums: { mode: 'carousel', columns: 0, titles: 'yes', sort: [{ key: 'colour', descending: false }] },
+          played: { columns: 2.5, sort: { key: 'year', descending: true } },
+          added: {
+            columns: 99,
+            sort: [{ key: 'year', descending: true }, { key: 'album', descending: 'no' }, { key: 'album', descending: false }],
+          },
           playlists: 'grid',
         },
       }),
@@ -59,7 +62,13 @@ describe('view options', () => {
     const saved = new SettingsStore().current.viewOptions;
     expect(viewOptions(saved, 'albums')).toEqual({ mode: 'grid', columns: null, titles: true, artists: true, sort: null });
     expect(viewOptions(saved, 'played')).toMatchObject({ columns: null, sort: null });
-    expect(viewOptions(saved, 'added')).toMatchObject({ columns: null, sort: { key: 'year', descending: true } });
+    expect(viewOptions(saved, 'added')).toMatchObject({
+      columns: null,
+      sort: [
+        { key: 'year', descending: true },
+        { key: 'album', descending: false },
+      ],
+    });
     expect(viewOptions(saved, 'playlists').mode).toBe('grid');
   });
 });
