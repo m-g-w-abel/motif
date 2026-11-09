@@ -2,7 +2,7 @@
   import { getApp } from '../../context';
   import Icon from '../Icon.svelte';
 
-  /** Previous / play-pause / next only; `compact` drops previous. */
+  /** Previous / play-pause / next; `compact` is play-pause alone. */
   let { compact = false, size = 20 }: { compact?: boolean; size?: number } = $props();
 
   const { engine } = getApp();
@@ -25,9 +25,11 @@
   >
     <Icon name={playing ? 'pause' : 'play'} size={size * 1.35} />
   </button>
-  <button class="icon-button" aria-label="Next" onclick={() => engine.run({ type: 'next' })}>
-    <Icon name="next" {size} />
-  </button>
+  {#if !compact}
+    <button class="icon-button" aria-label="Next" onclick={() => engine.run({ type: 'next' })}>
+      <Icon name="next" {size} />
+    </button>
+  {/if}
 </div>
 {/if}
 

@@ -1,3 +1,4 @@
+import { MediaQuery } from 'svelte/reactivity';
 import type { PairLink } from './discover';
 
 export const SETTINGS_GROUPS = ['interface', 'library', 'playback', 'keyboard', 'gestures', 'integrations', 'devices', 'technical', 'about'] as const;
@@ -15,8 +16,31 @@ export class SettingsView {
   /** Its camera is scanning a QR; system back closes the camera, not the dialog. */
   scanning = $state(false);
 
-  open(group: SettingsGroup = 'interface') {
-    this.group = group;
+  /** On a phone, Settings opens on the list of groups; `group` is the page behind it. */
+  list = $state(false);
+  #phone: () => boolean;
+
+  /** `phone` says whether the screen is phone width; tests pass their own (there is no window). */
+  constructor(phone?: () => boolean) {
+    const narrow = typeof window === 'undefined' ? { current: false } : new MediaQuery('(max-width: 700px)');
+    this.#phone = phone ?? (() => narrow.current);
+  }
+
+  /** Phone width: Settings is a list of groups, each opening its own page. */
+  get phone() {
+    return this.#phone();
+  }
+
+  /** Opens `group`, or with none the phone's list (the desktop's first group). */
+  open(group?: SettingsGroup) {
+    this.list = group === undefined && this.phone;
+    this.group = group ?? 'interface';
+  }
+
+  /** From a group's page to the list; from the list (or the desktop) closes Settings. */
+  back() {
+    if (this.phone && !this.list && this.group) this.list = true;
+    else this.close();
   }
 
   /** Pairs with `link` as if its QR was scanned. */
@@ -28,5 +52,6 @@ export class SettingsView {
 
   close() {
     this.group = null;
+    this.list = false;
   }
 }

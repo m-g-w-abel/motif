@@ -55,6 +55,10 @@ export class Views {
     return this.#narrow.current;
   }
   top: View = $derived(this.stack.at(-1)!);
+  /** The phone bar's button the views are under (highlighted there). */
+  root: 'library' | 'search' = $derived(this.stack[1]?.kind === 'search' ? 'search' : 'library');
+  /** The phone bar's menu sheet: its main list, or the engine switcher in its place. */
+  menu = $state<'main' | 'engines' | null>(null);
   /** Where back goes; the Library home is under every view, even when it isn't on the stack. */
   parent: View | null = $derived(this.stack.at(-2) ?? (this.top.kind === 'home' ? null : HOME));
 
@@ -66,6 +70,7 @@ export class Views {
 
   /** Starts again from the Library home with `view` above it. */
   show(view: View) {
+    this.menu = null;
     this.stack = view.kind === 'home' ? [HOME] : [HOME, view];
     this.options = false;
   }
