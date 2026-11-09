@@ -299,6 +299,7 @@
       { open: settingsView.scanning, close: () => void import('@tauri-apps/plugin-barcode-scanner').then((s) => s.cancel()) },
       { open: contextMenu.items.length > 0, close: escape },
       { open: views.options, close: () => (views.options = false) },
+      { open: views.sorting, close: () => (views.sorting = false) },
       { open: !!playlists.asking, close: () => playlists.answer(null) },
       { open: helpOpen || settingsView.pairing || settingsView.addingEngine, close: escape },
       { open: editing, close: () => (editing = false) },

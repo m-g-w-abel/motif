@@ -48,6 +48,8 @@ export class Views {
   stack = $state.raw<View[]>([HOME]);
   /** The top view's ⋮ sheet is open; any move to another view closes it. */
   options = $state(false);
+  /** The top view's sort menu is open (as `options`); kept here so system back closes it first. */
+  sorting = $state(false);
   // No window under unit tests.
   #narrow = typeof window === 'undefined' ? { current: false } : new MediaQuery('(max-width: 700px)');
   /** Phone width: views fill the music area and the Library home is one of them, not the left panel. */
@@ -65,21 +67,21 @@ export class Views {
   /** Opens `view` above the current one; safe to repeat. */
   open(view: View) {
     if (!same(view, this.top)) this.stack = [...this.stack, view];
-    this.options = false;
+    this.options = this.sorting = false;
   }
 
   /** Starts again from the Library home with `view` above it. */
   show(view: View) {
     this.menu = null;
     this.stack = view.kind === 'home' ? [HOME] : [HOME, view];
-    this.options = false;
+    this.options = this.sorting = false;
   }
 
   /** Goes back a view. False when already at the Library home. */
   back(): boolean {
     if (!this.parent) return false;
     this.stack = this.stack.length > 1 ? this.stack.slice(0, -1) : [HOME];
-    this.options = false;
+    this.options = this.sorting = false;
     return true;
   }
 }

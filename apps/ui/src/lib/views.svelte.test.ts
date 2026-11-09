@@ -24,6 +24,17 @@ describe('views', () => {
     expect(views.menu).toBeNull();
   });
 
+  it('close the sort menu and the ⋮ sheet when going to another view', () => {
+    const views = new Views();
+    views.open({ kind: 'albums' });
+    for (const go of [() => views.open(album), () => views.back(), () => views.show({ kind: 'playlists' })]) {
+      views.sorting = true;
+      views.options = true;
+      go();
+      expect([views.sorting, views.options]).toEqual([false, false]);
+    }
+  });
+
   it('start at the Library home, with nothing to go back to', () => {
     const views = new Views();
     expect(views.top).toEqual({ kind: 'home' });
