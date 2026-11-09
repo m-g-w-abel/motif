@@ -41,6 +41,10 @@ impl Library {
             "INSERT OR IGNORE INTO plays (track_path, played_at) VALUES (?1, ?2)",
             params![path, started_at as i64],
         )?;
+        if added > 0 {
+            // Clients refetch their lists when the revision changes.
+            self.shared.update(|s| s.revision += 1);
+        }
         Ok(added > 0)
     }
 
@@ -178,7 +182,13 @@ mod tests {
     fn recording_the_same_play_twice_adds_it_once_and_unknown_tracks_are_left_out() {
         let (library, dir) = library();
         assert!(library.record_play(&local("/m/a1.flac"), 100).unwrap());
+        let revision = library.status().revision;
         assert!(!library.record_play(&local("/m/a1.flac"), 100).unwrap());
+        assert_eq!(
+            library.status().revision,
+            revision,
+            "nothing new, nothing to refetch"
+        );
         assert!(!library.record_play(&local("/elsewhere.flac"), 100).unwrap());
         let QueryResult::Played { total, .. } = library.recently_played(0, 10).unwrap() else {
             panic!()

@@ -7,6 +7,7 @@
   import { canDecorate } from '../../windowChrome';
   import Icon from '../Icon.svelte';
   import AlbumGrid from '../widgets/AlbumGrid.svelte';
+  import RecentlyPlayed from '../widgets/RecentlyPlayed.svelte';
   import NavButton from './NavButton.svelte';
   import WindowButtons from './WindowButtons.svelte';
 
@@ -64,6 +65,8 @@
       </ul>
     {:else if view.kind === 'albums'}
       <AlbumGrid cardSize={150} onopen={(key, title) => views.open({ kind: 'album', key, title })} />
+    {:else if view.kind === 'played'}
+      <RecentlyPlayed onopen={(key, title) => views.open({ kind: 'album', key, title })} />
     {:else if view.kind === 'album'}
       <div class="placeholder">
         <button class="button primary" onclick={() => playAlbum(view.key)}><Icon name="play" size={14} /> Play album</button>
