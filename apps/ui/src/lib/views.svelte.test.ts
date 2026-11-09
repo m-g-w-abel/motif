@@ -4,6 +4,26 @@ import { devViews, Views, viewTitle } from './views.svelte';
 const album = { kind: 'album', key: 'a1', title: 'Amnesiac' } as const;
 
 describe('views', () => {
+  it("know which of the phone bar's roots they are under: Library or Search", () => {
+    const views = new Views();
+    expect(views.root).toBe('library');
+    views.open({ kind: 'albums' });
+    views.open(album);
+    expect(views.root).toBe('library');
+    views.show({ kind: 'search' });
+    views.open(album);
+    expect(views.root).toBe('search');
+    views.show({ kind: 'home' });
+    expect(views.root).toBe('library');
+  });
+
+  it("close the phone bar's menu when going to another view", () => {
+    const views = new Views();
+    views.menu = 'engines';
+    views.show({ kind: 'search' });
+    expect(views.menu).toBeNull();
+  });
+
   it('start at the Library home, with nothing to go back to', () => {
     const views = new Views();
     expect(views.top).toEqual({ kind: 'home' });

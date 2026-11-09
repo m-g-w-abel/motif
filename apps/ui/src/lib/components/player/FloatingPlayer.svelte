@@ -12,8 +12,6 @@
   const { engine, sheet } = getApp();
   const KEY_STEP = 16;
   const POSITION_KEY = 'floating-player.position';
-  /** Phone width: keep clear of the back button at the top left. */
-  const PHONE_TOP = 56;
   const DEFAULT_POS: FloatPos = { h: 'right', v: 'bottom', x: MARGIN, y: MARGIN };
 
   let el = $state<HTMLElement>();
@@ -38,7 +36,6 @@
       h: el?.offsetHeight ?? 0,
       W: window.innerWidth,
       H: window.innerHeight - inset,
-      minTop: window.innerWidth <= 700 ? PHONE_TOP : 0,
     };
   }
 
