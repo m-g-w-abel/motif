@@ -33,6 +33,8 @@ const QUERY_SCOPES: Record<LibraryQuery['type'], Scope | null> = {
   tracks: null,
   groups: null,
   albums: null,
+  recently_played: null,
+  recently_played_albums: null,
   album_position: null,
   lookup: null,
   album_tracks: null,

@@ -3,8 +3,9 @@ import type { LibraryAlbum } from "./LibraryAlbum";
 import type { LibraryStatus } from "./LibraryStatus";
 import type { LibraryTrack } from "./LibraryTrack";
 import type { Lyrics } from "./Lyrics";
+import type { PlayedTrack } from "./PlayedTrack";
 import type { Playlist } from "./Playlist";
 import type { PlaylistEntry } from "./PlaylistEntry";
 import type { TrackGroup } from "./TrackGroup";
 
-export type QueryResult = { "type": "status", status: LibraryStatus, } | { "type": "tracks", total: number, offset: number, tracks: Array<LibraryTrack>, } | { "type": "groups", groups: Array<TrackGroup>, } | { "type": "albums", total: number, offset: number, albums: Array<LibraryAlbum>, } | { "type": "position", index: number | null, } | { "type": "waveform", levels: Array<number>, } | { "type": "lyrics", lyrics: Lyrics | null, } | { "type": "playlists", playlists: Array<Playlist>, } | { "type": "playlist_tracks", entries: Array<PlaylistEntry>, } | { "type": "done" };
+export type QueryResult = { "type": "status", status: LibraryStatus, } | { "type": "tracks", total: number, offset: number, tracks: Array<LibraryTrack>, } | { "type": "played", total: number, offset: number, plays: Array<PlayedTrack>, } | { "type": "groups", groups: Array<TrackGroup>, } | { "type": "albums", total: number, offset: number, albums: Array<LibraryAlbum>, } | { "type": "position", index: number | null, } | { "type": "waveform", levels: Array<number>, } | { "type": "lyrics", lyrics: Lyrics | null, } | { "type": "playlists", playlists: Array<Playlist>, } | { "type": "playlist_tracks", entries: Array<PlaylistEntry>, } | { "type": "done" };

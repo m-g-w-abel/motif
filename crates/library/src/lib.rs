@@ -9,6 +9,7 @@
 
 mod db;
 mod hash;
+mod history;
 mod loudness;
 mod lyrics;
 mod playlists;
@@ -152,6 +153,16 @@ impl Library {
                 levels: self.waveform(path)?,
             });
         }
+        // These lock the database themselves.
+        match query {
+            LibraryQuery::RecentlyPlayed { offset, limit } => {
+                return self.recently_played(offset, limit);
+            }
+            LibraryQuery::RecentlyPlayedAlbums { offset, limit } => {
+                return self.recently_played_albums(offset, limit);
+            }
+            _ => {}
+        }
         let conn = self.db();
         Ok(match query {
             LibraryQuery::Status => QueryResult::Status {
@@ -211,17 +222,7 @@ impl Library {
                     order = db::album_order(&sort)
                 ))?;
                 let albums = stmt
-                    .query_map(params![fts, limit, offset], |r| {
-                        Ok(LibraryAlbum {
-                            key: r.get(0)?,
-                            title: r.get(1)?,
-                            artist: r.get(2)?,
-                            year: r.get(3)?,
-                            tracks: r.get(4)?,
-                            duration_ms: r.get::<_, i64>(5)? as u64,
-                            art: r.get(6)?,
-                        })
-                    })?
+                    .query_map(params![fts, limit, offset], library_album)?
                     .collect::<rusqlite::Result<_>>()?;
                 QueryResult::Albums {
                     total,
@@ -303,7 +304,9 @@ impl Library {
                 playlists::move_item(&conn, &id, &item, before.as_deref())?;
                 self.playlists_changed()
             }
-            LibraryQuery::Waveform { .. } => unreachable!("answered above"),
+            LibraryQuery::Waveform { .. }
+            | LibraryQuery::RecentlyPlayed { .. }
+            | LibraryQuery::RecentlyPlayedAlbums { .. } => unreachable!("answered above"),
             LibraryQuery::Play { .. }
             | LibraryQuery::PlayAlbum { .. }
             | LibraryQuery::PlayPlaylist { .. } => {
@@ -982,6 +985,18 @@ fn tracks_with_art(conn: &Connection, key: &str) -> Vec<PathBuf> {
 const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track_no, disc_no, year, genre, \
      duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, audio_hash, art, \
      missing, problem, original_year";
+
+fn library_album(r: &Row<'_>) -> rusqlite::Result<LibraryAlbum> {
+    Ok(LibraryAlbum {
+        key: r.get(0)?,
+        title: r.get(1)?,
+        artist: r.get(2)?,
+        year: r.get(3)?,
+        tracks: r.get(4)?,
+        duration_ms: r.get::<_, i64>(5)? as u64,
+        art: r.get(6)?,
+    })
+}
 
 fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
     Ok(LibraryTrack {

@@ -529,6 +529,18 @@ pub enum LibraryQuery {
         offset: u32,
         limit: u32,
     },
+    /// Tracks that counted as played (the scrobble rule), newest first; a
+    /// track played twice is listed twice.
+    RecentlyPlayed {
+        offset: u32,
+        limit: u32,
+    },
+    /// Albums with a track that counted as played, the latest play first.
+    /// (Recently added albums: [`LibraryQuery::Albums`] sorted by `added`, descending.)
+    RecentlyPlayedAlbums {
+        offset: u32,
+        limit: u32,
+    },
     /// Index of an album's first track in [`LibraryQuery::Tracks`].
     AlbumPosition {
         search: Option<String>,
@@ -649,6 +661,11 @@ pub enum QueryResult {
         total: u32,
         offset: u32,
         tracks: Vec<LibraryTrack>,
+    },
+    Played {
+        total: u32,
+        offset: u32,
+        plays: Vec<PlayedTrack>,
     },
     Groups {
         groups: Vec<TrackGroup>,
@@ -781,6 +798,16 @@ pub struct LibraryTrack {
     pub missing: bool,
     /// Why the file can't be played, if it is damaged.
     pub problem: Option<String>,
+}
+
+/// A library track and when it was played.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PlayedTrack {
+    pub track: LibraryTrack,
+    /// When the listen started, Unix seconds.
+    #[ts(type = "number")]
+    pub played_at: u64,
 }
 
 /// One of a track's images, as listed by the server's `GET /images`.

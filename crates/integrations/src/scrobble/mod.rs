@@ -14,6 +14,7 @@ use std::{
 };
 
 use engine::Engine;
+use library::Library;
 use protocol::{IntegrationSettings, ScrobbleAccount, TrackRef};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -110,8 +111,14 @@ pub trait Scrobbler: Clone + Send + Sync + 'static {
 }
 
 /// Starts scrobbling what `engine` plays to the services signed in through
-/// `settings`. Secrets and unsent scrobbles are kept in `dir`.
-pub fn start(engine: Engine, settings: watch::Sender<IntegrationSettings>, dir: &Path) {
+/// `settings`. Secrets and unsent scrobbles are kept in `dir`. Listens that
+/// count as played go to the library's history, if there is one.
+pub fn start(
+    engine: Engine,
+    library: Option<Library>,
+    settings: watch::Sender<IntegrationSettings>,
+    dir: &Path,
+) {
     let http = match client() {
         Ok(http) => http,
         Err(err) => {
@@ -138,7 +145,7 @@ pub fn start(engine: Engine, settings: watch::Sender<IntegrationSettings>, dir: 
         settings,
         dir.to_owned(),
     ));
-    tokio::spawn(follow(engine, actions));
+    tokio::spawn(follow(engine, library, actions));
 }
 
 fn client() -> reqwest::Result<reqwest::Client> {
@@ -155,12 +162,21 @@ fn client() -> reqwest::Result<reqwest::Client> {
 }
 
 /// Turns engine states into now playing and scrobble actions.
-async fn follow(engine: Engine, actions: broadcast::Sender<Action>) {
+async fn follow(engine: Engine, library: Option<Library>, actions: broadcast::Sender<Action>) {
     let mut states = engine.subscribe();
     let mut tracker = Tracker::default();
     let mut found = tracker.update(&states.borrow_and_update());
     loop {
         for action in found.drain(..) {
+            if let (Action::Played { track, started_at }, Some(library)) = (&action, &library) {
+                let (library, track, started_at) = (library.clone(), track.clone(), *started_at);
+                // SQLite waits on the scanner's writes, so not on this task.
+                tokio::task::spawn_blocking(move || {
+                    if let Err(err) = library.record_play(&track, started_at) {
+                        tracing::warn!(%err, "can't record the play");
+                    }
+                });
+            }
             let _ = actions.send(action);
         }
         let due = tracker.due_in_ms();

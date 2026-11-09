@@ -2,6 +2,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { withToken, type EngineClient } from './engine.svelte';
 import type { LibraryAlbum } from './protocol/LibraryAlbum';
 import type { LibraryTrack } from './protocol/LibraryTrack';
+import type { PlayedTrack } from './protocol/PlayedTrack';
 import type { QueryResult } from './protocol/QueryResult';
 import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
@@ -202,6 +203,32 @@ export class LibraryAlbums extends PagedList<LibraryAlbum> {
   }
 }
 
+/** Tracks that counted as played, newest first; a track played twice is two rows. */
+export class RecentPlays extends PagedList<PlayedTrack> {
+  protected key(row: PlayedTrack) {
+    return `${row.track.track.id}@${row.played_at}`;
+  }
+
+  protected async fetch(offset: number, limit: number) {
+    const result = await this.engine.query({ type: 'recently_played', offset, limit });
+    if (result.type !== 'played') throw new Error(`unexpected ${result.type}`);
+    return { total: result.total, rows: result.plays };
+  }
+}
+
+/** Albums with a track that counted as played, the latest play first. */
+export class RecentAlbums extends PagedList<LibraryAlbum> {
+  protected key(row: LibraryAlbum) {
+    return row.key;
+  }
+
+  protected async fetch(offset: number, limit: number) {
+    const result = await this.engine.query({ type: 'recently_played_albums', offset, limit });
+    if (result.type !== 'albums') throw new Error(`unexpected ${result.type}`);
+    return { total: result.total, rows: result.albums };
+  }
+}
+
 /**
  * Shared library state for the UI: list views (cached per search and order, so
  * switching layouts reuses fetched pages) and details looked up per track.
@@ -218,9 +245,13 @@ export class LibraryClient {
   #revision = -1;
   #refreshed = 0;
   private engine: EngineClient;
+  readonly recentPlays: RecentPlays;
+  readonly recentAlbums: RecentAlbums;
 
   constructor(engine: EngineClient) {
     this.engine = engine;
+    this.recentPlays = new RecentPlays(engine, null);
+    this.recentAlbums = new RecentAlbums(engine, null);
   }
 
   get status() {
