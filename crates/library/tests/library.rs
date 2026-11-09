@@ -287,6 +287,7 @@ fn scans_queries_matches_and_rescans() {
                 key: SortKey::Track,
                 descending: true,
             }],
+            start: None,
         })
         .unwrap()
     else {
@@ -296,6 +297,18 @@ fn scans_queries_matches_and_rescans() {
     assert_eq!(names, ["Closing", "Opening"]);
     assert_eq!(kind, ContextKind::Album);
     assert_eq!(label, refs[0].album);
+    // An album page plays from the row pressed.
+    let Command::SetContext { start, .. } = library
+        .selection(&LibraryQuery::PlayAlbum {
+            album: albums[0].key.clone(),
+            sort: vec![],
+            start: Some(1),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(start, Some(1));
     // Album tracks come album by album, in the order asked for.
     let QueryResult::Tracks { tracks, .. } = library
         .query(LibraryQuery::AlbumTracks {

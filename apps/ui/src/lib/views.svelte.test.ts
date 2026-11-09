@@ -103,10 +103,12 @@ describe('dev-view', () => {
     expect(devViews('albums')).toEqual([{ kind: 'home' }, { kind: 'albums' }]);
     expect(devViews('album:a1')).toEqual([{ kind: 'home' }, { kind: 'albums' }, { kind: 'album', key: 'a1', title: 'a1' }]);
     expect(devViews('search')).toEqual([{ kind: 'home' }, { kind: 'search' }]);
+    expect(devViews('playlist:p1')).toEqual([{ kind: 'home' }, { kind: 'playlists' }, { kind: 'playlist', id: 'p1', name: 'p1' }]);
   });
 
   it('ignores names it does not know', () => {
     expect(devViews('nope')).toBeNull();
     expect(devViews('album:')).toBeNull();
+    expect(devViews('playlist:')).toBeNull();
   });
 });

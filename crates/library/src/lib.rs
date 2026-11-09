@@ -406,14 +406,14 @@ impl Library {
                 *start,
                 ContextKind::List,
             ),
-            LibraryQuery::PlayAlbum { album, sort } => (
+            LibraryQuery::PlayAlbum { album, sort, start } => (
                 format!(
                     "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 {}",
                     db::ALBUM_KEY,
                     db::order(sort)
                 ),
                 Some(album.clone()),
-                0,
+                start.unwrap_or(0),
                 ContextKind::Album,
             ),
             _ => return Err(Error::Other("not a play query".into())),

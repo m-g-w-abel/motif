@@ -118,8 +118,13 @@
     }
   });
   const shown = $derived(rows.filter((r) => matches(r.track, area.browse.search)));
+  // Unfiltered pages play the album or playlist itself, which the engine keeps up to date; a search's result plays as listed.
   function playRows(start: number) {
-    if (view.kind === 'playlist' && shown.length === rows.length) return playlists.play(view.id, start);
+    if (shown.length === rows.length && view.kind === 'playlist') return playlists.play(view.id, start);
+    if (shown.length === rows.length && view.kind === 'album' && !isDemo) {
+      engine.query({ type: 'play_album', album: view.key, sort: [], start }).catch((e: Error) => (engine.error = e.message));
+      return;
+    }
     const kind = view.kind === 'album' ? 'album' : 'list';
     engine.run({ type: 'set_context', tracks: shown.map((r) => r.track), start, kind, label: title });
   }
