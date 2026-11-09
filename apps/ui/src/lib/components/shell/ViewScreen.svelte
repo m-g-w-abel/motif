@@ -14,14 +14,13 @@
 
   // Every view but All Songs, which the layouts arrange (ContentArea). The
   // parent re-creates this component for each view.
-  const { engine, layout, settings, settingsView, views, playlists } = getApp();
+  const { engine, layout, settings, views, playlists } = getApp();
   const view = untrack(() => views.top);
 
   // The Albums view's grid keeps its own search and selection, apart from All Songs'.
   const state: ViewState = $state({ source: 'library', layoutId: `view:${view.kind}`, browse: layout.browseState(`view:${view.kind}`) });
   setViewState(state);
 
-  const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
   const own = $derived(settings.current.ownDecorations && canDecorate);
   const drag = $derived(own ? { 'data-tauri-drag-region': '' } : {});
 
@@ -60,11 +59,6 @@
       </button>
     {/if}
     {#if view.kind === 'home'}
-      <!-- shortcut: the connection and Settings are here on phones until the bottom bar's menu (#168) holds them. -->
-      <span class="connection {engine.status}" role="status" aria-label={statusLabel[engine.status]} title={statusLabel[engine.status]}></span>
-      <button class="icon-button" aria-label="Settings" title="Settings" onclick={() => settingsView.open()}>
-        <Icon name="settings" size={16} />
-      </button>
       <button class="icon-button" aria-label="More" title="More" aria-haspopup="menu" onclick={(e) => openBelow(e, libraryMenu(engine))}>
         <Icon name="more" size={16} />
       </button>
@@ -143,23 +137,6 @@
     font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .connection {
-    width: 7px;
-    height: 7px;
-    margin: 0 var(--space-1);
-    border-radius: 50%;
-    background: var(--text-muted);
-    flex: none;
-  }
-
-  .connection.open {
-    background: var(--ok);
-  }
-
-  .connection.closed {
-    background: var(--danger);
   }
 
   .body {

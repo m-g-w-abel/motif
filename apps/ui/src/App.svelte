@@ -304,6 +304,7 @@
       { open: layout.arranging, close: () => (layout.arranging = false) },
       { open: !!settingsView.group, close: () => settingsView.back() },
       { open: sheet.open, close: () => sheet.collapse() },
+      { open: !!views.menu, close: () => (views.menu = null) },
       { open: !!views.parent, close: () => views.back() },
     ]),
   );
@@ -346,13 +347,14 @@
       {/if}
     </main>
 
-    {#if player === 'bar'}<NowPlayingBar />{/if}
+    <!-- Phones always have the bar: it holds the view buttons and the menu. -->
+    {#if player === 'bar' || views.phone}<NowPlayingBar />{/if}
 
     <ExpandedPlayer />
   </div>
 
   <!-- Hidden, not unmounted, while the sheet is open: it collapses back into it. -->
-  {#if player === 'floating'}<FloatingPlayer />{/if}
+  {#if player === 'floating' && !views.phone}<FloatingPlayer />{/if}
 </div>
 
 {#if helpOpen}<ShortcutHelp onClose={() => (helpOpen = false)} />{/if}
@@ -484,8 +486,9 @@
       position: static;
     }
 
+    /* Above the bottom bar (player, progress, view buttons). */
     .toasts {
-      bottom: 76px;
+      bottom: calc(148px + env(safe-area-inset-bottom));
     }
   }
 </style>
