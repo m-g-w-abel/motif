@@ -14,8 +14,26 @@ beforeEach(() => storage.clear());
 describe('view options', () => {
   it('start as a cover grid for collections and a song list for a playlist', () => {
     const saved = new SettingsStore().current.viewOptions;
-    expect(viewOptions(saved, 'albums')).toEqual({ mode: 'grid', columns: null, titles: true, artists: true, sort: null });
+    expect(viewOptions(saved, 'albums')).toMatchObject({ mode: 'grid', columns: null, titles: true, artists: true });
     expect(viewOptions(saved, 'playlist:abc').mode).toBe('list');
+  });
+
+  it('sort Albums by album artist, then year, and Recently Added newest first', () => {
+    const saved = new SettingsStore().current.viewOptions;
+    expect(viewOptions(saved, 'albums').sort).toEqual([
+      { key: 'album_artist', descending: false },
+      { key: 'year', descending: false },
+    ]);
+    expect(viewOptions(saved, 'added').sort?.[0]).toEqual({ key: 'added', descending: true });
+    expect(viewOptions(saved, 'playlists').sort).toBeNull();
+  });
+
+  it('forget a sort reset to its default', () => {
+    const s = new SettingsStore();
+    s.setView('albums', { sort: [{ key: 'year', descending: true }] });
+    expect(viewOptions(new SettingsStore().current.viewOptions, 'albums').sort).toEqual([{ key: 'year', descending: true }]);
+    s.setView('albums', { sort: viewOptions({}, 'albums').sort });
+    expect(s.current.viewOptions).toEqual({});
   });
 
   it('are remembered per kind of view across restarts', () => {
@@ -40,7 +58,7 @@ describe('view options', () => {
   it('keep only what differs from the defaults', () => {
     const s = new SettingsStore();
     s.setView('albums', { mode: 'list', titles: false, sort: [{ key: 'year', descending: false }] });
-    s.setView('albums', { mode: 'grid', titles: true, sort: null });
+    s.setView('albums', { mode: 'grid', titles: true, sort: viewOptions({}, 'albums').sort });
     expect(s.current.viewOptions).toEqual({});
   });
 
@@ -60,7 +78,7 @@ describe('view options', () => {
       }),
     );
     const saved = new SettingsStore().current.viewOptions;
-    expect(viewOptions(saved, 'albums')).toEqual({ mode: 'grid', columns: null, titles: true, artists: true, sort: null });
+    expect(viewOptions(saved, 'albums')).toEqual({ ...viewOptions({}, 'albums') });
     expect(viewOptions(saved, 'played')).toMatchObject({ columns: null, sort: null });
     expect(viewOptions(saved, 'added')).toMatchObject({
       columns: null,

@@ -1,5 +1,5 @@
 import type { SortRule } from './protocol/SortRule';
-import { SORT_KEYS } from './sort.svelte';
+import { DEFAULT_RULES, SORT_KEYS } from './sort.svelte';
 
 /** How a view shows its items: a cover grid, a name list, or a list with covers. */
 export type ViewMode = 'grid' | 'list' | 'covers';
@@ -11,7 +11,7 @@ export interface ViewOptions {
   /** Grid only: titles and artists under the covers. */
   titles: boolean;
   artists: boolean;
-  /** Tiered sort rules, as for songs; `null` keeps the view's default order. */
+  /** Tiered sort rules, as for songs; `null` where the order is fixed (playlists, recently played). */
   sort: SortRule[] | null;
 }
 
@@ -23,8 +23,18 @@ export type SavedOptions = Record<string, Partial<ViewOptions>>;
 
 export const MAX_COLUMNS = 12;
 
+/** Each kind's own order: Albums by album artist then year, Recently Added newest first. */
+const SORTS: Partial<Record<OptionsKey, SortRule[]>> = {
+  albums: [
+    { key: 'album_artist', descending: false },
+    { key: 'year', descending: false },
+  ],
+  added: [{ key: 'added', descending: true }, ...DEFAULT_RULES],
+};
+
 function defaults(key: OptionsKey): ViewOptions {
-  return { mode: key.startsWith('playlist:') ? 'list' : 'grid', columns: null, titles: true, artists: true, sort: null };
+  const sort = SORTS[key] ?? null;
+  return { mode: key.startsWith('playlist:') ? 'list' : 'grid', columns: null, titles: true, artists: true, sort };
 }
 
 /** The saved values that make sense; anything else falls back to the default. */

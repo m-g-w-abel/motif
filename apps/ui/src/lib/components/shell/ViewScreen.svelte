@@ -48,10 +48,11 @@
     view.kind === 'albums' || view.kind === 'playlists' || view.kind === 'played' || view.kind === 'added' ? view.kind : null;
   const collection = $derived(view.kind === 'albums' || view.kind === 'playlists' || (recents && show === 'albums'));
   const options = $derived(optionsKey && viewOptions(settings.current.viewOptions, optionsKey));
-  // Albums sort like songs, each kind by its own rules; Recently Added starts newest first.
-  const sortDefaults = view.kind === 'added' ? [{ key: 'added' as const, descending: true }, ...DEFAULT_RULES] : DEFAULT_RULES;
-  const sortable = view.kind === 'albums' || view.kind === 'added';
-  const sort = $derived(sortable ? (options?.sort ?? [...sortDefaults]) : undefined);
+  // Albums sort like songs, each kind by its own rules (viewOptions.ts).
+  const sortDefaults = optionsKey && viewOptions({}, optionsKey).sort;
+  const sort = $derived(options?.sort ?? undefined);
+  // The library breaks ties by path: its own tiers keep an album's tracks in disc and track order.
+  const order = $derived(sort && [...sort, ...DEFAULT_RULES.filter((d) => !sort.some((r) => r.key === d.key))]);
   let grid = $state<AlbumGrid>();
   let shownColumns = $state(1);
 
@@ -133,13 +134,8 @@
           </div>
         {/if}
         <span class="grow"></span>
-        {#if collection && optionsKey && sort}
-          <SortMenu
-            rules={sort}
-            defaults={sortDefaults}
-            onchange={(rules) =>
-              settings.setView(optionsKey, { sort: JSON.stringify(rules) === JSON.stringify(sortDefaults) ? null : rules })}
-          />
+        {#if collection && optionsKey && sort && sortDefaults}
+          <SortMenu rules={sort} defaults={sortDefaults} onchange={(rules) => settings.setView(optionsKey, { sort: rules })} />
         {/if}
         {#if collection && optionsKey}
           <button
@@ -196,7 +192,7 @@
         bind:shownColumns
         cardSize={150}
         items={view.kind === 'playlists' ? 'playlists' : view.kind === 'played' ? 'played' : 'albums'}
-        {sort}
+        sort={order}
         mode={options.mode}
         columns={options.columns ?? undefined}
         titles={options.titles}

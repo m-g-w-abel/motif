@@ -8,9 +8,9 @@
   import Icon from '../Icon.svelte';
   import ReorderList from '../ReorderList.svelte';
 
-  // A view's sort button and its tiered rules, edited tier by tier. On
-  // phones the popover hangs from the nearest positioned ancestor (the
-  // toolbar) instead of the button, so it isn't clipped off the left.
+  // A view's sort button and its tiered rules, edited tier by tier: a
+  // popover below the button on desktop, a sheet along the bottom on phones
+  // (as the ⋮ sheet).
   let {
     rules,
     defaults,
@@ -65,6 +65,7 @@
     <Icon name="sort" size={16} />
   </button>
   {#if views.sorting}
+    <button class="scrim" tabindex="-1" aria-label="Close" onclick={() => (views.sorting = false)}></button>
     <div class="popover" role="dialog" aria-label="Sort order">
       <div class="current">Sort by</div>
       {#if oneOff}
@@ -203,14 +204,53 @@
     color: var(--text-muted);
   }
 
+  .scrim {
+    display: none;
+  }
+
+  /* Phones: a sheet along the bottom, over the bar, like the ⋮ sheet. */
   @media (max-width: 700px) {
-    .menu {
-      position: static;
+    .scrim {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: block;
+      padding: 0;
+      border: 0;
+      background: rgb(0 0 0 / 0.4);
+      cursor: default;
     }
 
     .popover {
-      right: var(--space-2);
-      max-width: calc(100% - 2 * var(--space-2));
+      position: fixed;
+      top: auto;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 41;
+      width: auto;
+      max-height: 80%;
+      overflow-y: auto;
+      padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+      border-radius: var(--radius-md) var(--radius-md) 0 0;
+      box-shadow: none;
+    }
+
+    .popover > button {
+      min-height: 48px;
+    }
+
+    .tier {
+      min-height: 44px;
+    }
+
+    select {
+      height: 36px;
+    }
+
+    .popover .tier button {
+      width: 36px;
+      height: 36px;
     }
   }
 </style>
