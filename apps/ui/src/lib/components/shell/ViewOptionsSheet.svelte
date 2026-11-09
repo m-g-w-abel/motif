@@ -1,17 +1,29 @@
 <script lang="ts">
   import { getApp } from '../../context';
+  import type { MenuItem } from '../../contextMenu.svelte';
+  import { launcherItems } from '../../launcher';
   import { MAX_COLUMNS, viewOptions, type OptionsKey, type ViewMode } from '../../viewOptions';
+  import type { View } from '../../views.svelte';
 
   // The ⋮ sheet of a collection view: its display options and library
   // actions (sorting has its own button). A sheet from the bottom on phones, a panel below ⋮ on desktop.
   let {
     title,
+    view,
+    cover = null,
+    items = [],
     key,
     shownColumns,
     artistsLabel = 'Show artists',
     onclose,
   }: {
     title: string;
+    /** The view the sheet is for, which Add to launcher opens. */
+    view: View;
+    /** The artwork URL Add to launcher's shortcut shows. */
+    cover?: string | null;
+    /** The view's own actions (a playlist's Rename, Delete…). */
+    items?: MenuItem[];
     key: OptionsKey;
     /** The columns the grid shows now, which "Auto" may have picked. */
     shownColumns: number;
@@ -83,7 +95,9 @@
     </label>
   {/if}
   <hr />
-  <!-- #177: "Add to launcher" (Android only, a home-screen shortcut to this view) goes here. -->
+  {#each [...items, ...launcherItems(view, cover)] as item (item.label)}
+    <button class="item" onclick={() => (item.run(), onclose())}>{item.label}</button>
+  {/each}
   {#if engine.can('library')}
     <button class="item" onclick={() => (void rescan(), onclose())}>Rescan library</button>
   {/if}

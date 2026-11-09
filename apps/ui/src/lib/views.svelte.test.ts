@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { devViews, Views, viewTitle } from './views.svelte';
+import { devViews, parseViewLink, viewLink, Views, viewTitle } from './views.svelte';
 
 const album = { kind: 'album', key: 'a1', title: 'Amnesiac' } as const;
 
@@ -110,5 +110,36 @@ describe('dev-view', () => {
     expect(devViews('nope')).toBeNull();
     expect(devViews('album:')).toBeNull();
     expect(devViews('playlist:')).toBeNull();
+  });
+});
+
+describe('launcher links', () => {
+  it('reopen the view', () => {
+    const album = { kind: 'album', key: 'Radiohead\u0000Amnesiac & more?', title: 'Amnesiac & more?' } as const;
+    const playlist = { kind: 'playlist', id: 'p/1', name: 'Gym #2' } as const;
+    for (const view of [album, playlist, { kind: 'played' }, { kind: 'search' }, { kind: 'home' }] as const) {
+      expect(parseViewLink(viewLink(view))).toEqual(view);
+    }
+  });
+
+  it('open an album or a playlist above its category', () => {
+    const views = new Views();
+    const album = { kind: 'album', key: 'k', title: 't' } as const;
+    views.show(album);
+    expect(views.stack).toEqual([{ kind: 'home' }, { kind: 'albums' }, album]);
+    views.show({ kind: 'playlist', id: 'p', name: 'n' });
+    expect(views.stack.map((v) => v.kind)).toEqual(['home', 'playlists', 'playlist']);
+  });
+
+  it('leave out what the view only shows', () => {
+    expect(viewLink({ kind: 'album', key: 'k', title: 't', art: 'abc' })).toBe(viewLink({ kind: 'album', key: 'k', title: 't' }));
+  });
+
+  it('are not pairing links, nor anything else', () => {
+    expect(parseViewLink('motif://192.168.1.5:7700/pair?code=C&id=k')).toBeNull();
+    expect(parseViewLink('motif://view/nope')).toBeNull();
+    expect(parseViewLink('motif://view/album?title=t')).toBeNull();
+    expect(parseViewLink('motif://view/playlist?name=p')).toBeNull();
+    expect(parseViewLink('not a link')).toBeNull();
   });
 });

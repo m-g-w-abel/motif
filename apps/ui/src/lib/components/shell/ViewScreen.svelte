@@ -4,6 +4,7 @@
   import { getApp, setViewState, type ViewState } from '../../context';
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
   import { demoLibrary, isDemo } from '../../demo';
+  import { launcherItems } from '../../launcher';
   import type { LibraryTracks, Shown } from '../../library.svelte';
   import { libraryMenu } from '../../menus';
   import type { LibraryTrack } from '../../protocol/LibraryTrack';
@@ -48,11 +49,16 @@
   const title = $derived(playlist?.name ?? viewTitle(view));
   // The playlist's own page for dragging songs into order and removing them.
   let editing = $state(false);
-  const playlistMenu = $derived(
-    playlist && [
-      ...playlists.menu(playlist, () => views.back()),
-      ...(engine.can('library') && !editing ? [{ label: 'Edit songs…', run: () => (editing = true) }] : []),
-    ],
+  /** A launcher shortcut's icon: the artwork `art`, at launcher size. */
+  const cover = (art: string | null | undefined) => (art ? library.artUrl(art, 256, true) : null);
+  // An album's or playlist's ⋮ sheet also holds the page's own actions.
+  const pageItems = $derived<MenuItem[]>(
+    playlist
+      ? [
+          ...playlists.menu(playlist, () => views.back()).filter((item) => item.label !== 'Play'),
+          ...(engine.can('library') ? [{ label: 'Edit songs…', run: () => (editing = true) }] : []),
+        ]
+      : [],
   );
 
   // A category's header: its round icon and title, then the toolbar.
@@ -197,6 +203,9 @@
       {#if views.options}
         <ViewOptionsSheet
           {title}
+          {view}
+          cover={cover(view.kind === 'album' ? view.art : playlist?.art)}
+          items={pageItems}
           key={optionsKey}
           {shownColumns}
           artistsLabel={view.kind === 'playlists' ? 'Show song counts' : 'Show artists'}
@@ -243,16 +252,6 @@
       </button>
     {:else if playlist && editing}
       <button class="button primary" onclick={() => (editing = false)}>Done</button>
-    {:else if playlist && playlistMenu}
-      <button
-        class="icon-button"
-        aria-label="{playlist.name} menu"
-        title="More"
-        aria-haspopup="menu"
-        onclick={(e) => openBelow(e, playlistMenu)}
-      >
-        <Icon name="more" size={16} />
-      </button>
     {/if}
     {#if view.kind === 'home'}
       <button class="icon-button" aria-label="More" title="More" aria-haspopup="menu" onclick={(e) => openBelow(e, libraryMenu(engine))}>
@@ -296,8 +295,8 @@
         titles={options.titles}
         artists={options.artists}
         oncolumns={(columns) => optionsKey && settings.setView(optionsKey, { columns })}
-        onopen={(key, title) =>
-          views.open(view.kind === 'playlists' ? { kind: 'playlist', id: key, name: title } : { kind: 'album', key, title })}
+        onopen={(key, title, art) =>
+          views.open(view.kind === 'playlists' ? { kind: 'playlist', id: key, name: title } : { kind: 'album', key, title, art })}
       />
     {:else if view.kind === 'playlist' && editing}
       <PlaylistPage id={view.id} name={title} />

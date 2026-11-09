@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineClient } from './engine.svelte';
-import { LibraryTracks } from './library.svelte';
+import { LibraryTracks, RecentPlays } from './library.svelte';
 import type { LibraryQuery } from './protocol/LibraryQuery';
 import type { QueryResult } from './protocol/QueryResult';
 
@@ -9,9 +9,10 @@ function fakeEngine(total: number) {
   const queries: LibraryQuery[] = [];
   const engine = {
     status: 'open',
-    library: { revision: 1 },
+    library: { revision: 1, plays: 1 },
     query: async (q: LibraryQuery): Promise<QueryResult> => {
       queries.push(q);
+      if (q.type === 'recently_played') return { type: 'played', total: 0, plays: [] } as unknown as QueryResult;
       if (q.type === 'groups') return { type: 'groups', groups: [] };
       if (q.type !== 'tracks') throw new Error(q.type);
       const tracks = Array.from({ length: Math.max(0, Math.min(q.limit, total - q.offset)) }, (_, i) => ({
@@ -20,7 +21,7 @@ function fakeEngine(total: number) {
       return { type: 'tracks', total, offset: q.offset, tracks } as unknown as QueryResult;
     },
   };
-  return { engine: engine as unknown as EngineClient & { library: { revision: number } }, queries };
+  return { engine: engine as unknown as EngineClient & { library: { revision: number; plays: number } }, queries };
 }
 
 vi.useFakeTimers({ toFake: ['Date'] });
@@ -52,6 +53,23 @@ describe('LibraryTracks', () => {
     await settle();
     expect(queries.filter((q) => q.type === 'tracks')).toHaveLength(2);
     expect(queries.every((q) => !('search' in q) || q.search === 'x')).toBe(true);
+  });
+});
+
+describe('RecentPlays', () => {
+  it('refetches on a new play, which tracks lists ignore', async () => {
+    const { engine, queries } = fakeEngine(10);
+    const [plays, tracks] = [new RecentPlays(engine, null), new LibraryTracks(engine, null)];
+    plays.sync();
+    tracks.sync();
+    await settle();
+    engine.library.plays = 2;
+    vi.advanceTimersByTime(1000);
+    plays.sync();
+    tracks.sync();
+    await settle();
+    expect(queries.filter((q) => q.type === 'recently_played')).toHaveLength(2);
+    expect(queries.filter((q) => q.type === 'tracks')).toHaveLength(1);
   });
 });
 

@@ -7,6 +7,7 @@ import { addFolder } from './folders';
 import type { QueueItem } from './protocol/QueueItem';
 import type { TrackRef } from './protocol/TrackRef';
 import { inSelection, ordered } from './selection';
+import { launcherItems } from './launcher';
 import { isAndroid } from './platform';
 import type { Playlists } from './playlists.svelte';
 import type { SongListData } from './sources.svelte';
@@ -143,11 +144,12 @@ export function albumMenu(
   return items;
 }
 
-/** The Library home's ⋮ menu (Add to launcher joins it with #177). */
+/** The Library home's ⋮ menu. */
 export function libraryMenu(engine: EngineClient): MenuItem[] {
   const rescan = () => engine.query({ type: 'rescan' }).catch((e: Error) => (engine.error = e.message));
   return [
     { label: 'Add folder…', run: () => void addFolder(engine) },
     { label: 'Rescan library', run: () => void rescan() },
+    ...launcherItems({ kind: 'home' }),
   ];
 }

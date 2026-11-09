@@ -33,6 +33,9 @@ control isn't an add-on: it's the normal code path.
 - Shuffle is engine state, like repeat: it shuffles what hasn't played yet and
   turning it off returns to the list's order from the current track (also
   MPD's `random`).
+- What plays keeps up with its source: tracks added to the playing playlist,
+  album or library view (a scan, an edit) get played without restarting,
+  shuffled or not, and removed ones drop out.
 
 **Library**
 - Incremental scanning into SQLite with FTS5 search, folder watching, artwork
@@ -88,7 +91,8 @@ behaves like a good Android audio app: calls and alarms
 pause it until they end, another player pauses it for good, unplugging
 headphones pauses it, and navigation prompts duck it without touching the
 user's volume. System back closes the topmost menu, dialog, screen or sheet,
-then goes back through the views, before it leaves the app.
+then goes back through the views, before it leaves the app. Any view (an album, a playlist, a
+category) can be pinned to the home screen as a shortcut that opens it.
 
 ## Engineering notes
 
