@@ -74,8 +74,10 @@ describe('dragValue', () => {
 describe('GESTURES', () => {
   it('has the decided defaults', () => {
     expect(GESTURES.bar).toEqual({ 'swipe-left': 'next', 'swipe-right': 'previous' });
-    expect(GESTURES.artwork).toEqual({ 'swipe-left': 'next', 'swipe-right': 'previous', 'drag-vertical': 'volume' });
-    expect(GESTURES.row).toEqual({ 'long-press': 'queue' });
+    expect(GESTURES.artwork).toEqual({ 'swipe-left': 'next', 'swipe-right': 'previous', 'drag-vertical': 'close' });
+    expect(GESTURES.row).toEqual({ 'long-press': 'queue', 'swipe-left': 'queue' });
+    expect(GESTURES.queued).toEqual({ 'swipe-left': 'remove' });
+    expect(GESTURES.view).toEqual({ 'swipe-right': 'back' });
   });
 });
 
@@ -105,19 +107,23 @@ describe('mapped', () => {
       'swipe-left': 'previous',
       'swipe-right': 'next',
     });
-    expect(mapped({ row: { 'long-press': 'play-next' } }, 'row')).toEqual({ 'long-press': 'play-next' });
+    expect(mapped({ row: { 'long-press': 'play-next' } }, 'row')).toEqual({ 'long-press': 'play-next', 'swipe-left': 'queue' });
+    expect(mapped({ artwork: { 'drag-vertical': 'volume' } }, 'artwork')['drag-vertical']).toBe('volume');
   });
 
   it('drops a gesture mapped to none', () => {
     expect(mapped({ bar: { 'swipe-left': 'none' } }, 'bar')).toEqual({ 'swipe-right': 'previous' });
-    expect(mapped({ row: { 'long-press': 'none' } }, 'row')).toEqual({});
+    expect(mapped({ row: { 'long-press': 'none', 'swipe-left': 'none' } }, 'row')).toEqual({});
+    expect(mapped({ view: { 'swipe-right': 'none' } }, 'view')).toEqual({});
+    expect(mapped({ queued: { 'swipe-left': 'none' } }, 'queued')).toEqual({});
   });
 
   it('ignores stored overrides the gesture does not offer, and garbage', () => {
-    const bad = { row: { 'long-press': 'volume', 'swipe-left': 'next' }, bar: { 'long-press': 'queue' }, artwork: 'x' };
+    const bad = { row: { 'long-press': 'volume', 'swipe-left': 'next' }, view: { 'swipe-right': 'next', 'swipe-left': 'back' }, bar: { 'long-press': 'queue' }, artwork: 'x' };
     expect(mapped(bad, 'row')).toEqual(GESTURES.row);
     expect(mapped(bad, 'bar')).toEqual(GESTURES.bar);
     expect(mapped(bad, 'artwork')).toEqual(GESTURES.artwork);
+    expect(mapped(bad, 'view')).toEqual(GESTURES.view);
     expect(mapped(null, 'bar')).toEqual(GESTURES.bar);
     expect(mapped('x', 'bar')).toEqual(GESTURES.bar);
   });

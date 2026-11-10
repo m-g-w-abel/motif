@@ -12,6 +12,7 @@
   import { installLayoutFiles } from './lib/layout/install';
   import { LayoutStore } from './lib/layout/store.svelte';
   import { SettingsStore } from './lib/settings.svelte';
+  import { gesture, mapped } from './lib/gestures';
   import { SYSTEM_THEMES, themeById } from './lib/themes';
   import { FONT_LIST } from './lib/themeFile';
   import { UserThemes } from './lib/userThemes.svelte';
@@ -322,6 +323,11 @@
     ]),
   );
   const player = $derived(settings.current.player);
+  /** Touch: swiping right on a view or Settings goes back, unless the press drags a control or scrolls a row (Search's chips) sideways. */
+  function swipeBack(e: PointerEvent) {
+    if ((e.target as Element).closest('[role="slider"], input, textarea, .resize, .divider, .grip, .chips')) return;
+    gesture(e, mapped(settings.current.gestures, 'view'), { back: () => (settingsView.group ? settingsView.back() : views.back()) });
+  }
 </script>
 
 <svelte:document oncontextmenu={onContextMenu} />
@@ -348,7 +354,7 @@
       </div>
     {/if}
 
-    <main>
+    <main onpointerdown={swipeBack}>
       {#if settingsView.group}
         <SettingsScreen />
       {:else if allSongs}
@@ -422,6 +428,8 @@
   main {
     flex: 1;
     min-height: 0;
+    /* Sideways moves are swipes (back, queue a row), not browser pans. */
+    touch-action: pan-y;
   }
 
   .error {

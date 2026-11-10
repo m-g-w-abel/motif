@@ -9,6 +9,10 @@ grouped by phase of the plan.
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.
   Tap a folder to play it, or an artist to see their albums and songs.
+- **Swipes** on touch screens: swipe right to go back, swipe a song left to
+  add it to the queue (or, in the queue, to remove it), and swipe down anywhere
+  on now playing to close it. Dragging the artwork up or down now does this
+  too instead of setting the volume; Settings → Gestures brings that back.
 - **Changelog and Help**: this changelog, in the menu on phones and the left
   panel on desktop, and Help, which opens the project's documentation online.
 - The phone's now-playing sheet steps, by drag or its handle, between now
