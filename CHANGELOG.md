@@ -7,8 +7,12 @@ grouped by phase of the plan.
 
 - **Animated screen changes**: opening and leaving a view slides it, and an
   album's or playlist's cover and title fly from its tile to its page and
-  back (the Library's categories too). A song swiped into the queue slides
-  out and back in, and one swiped out of the queue slides away.
+  back (the Library's categories too). Swiping back moves the screen with
+  your finger. Now playing grows out of the bar with the artist, album, play
+  button and seek bar each moving to their place, while the bar's buttons
+  drop away. The queue, lyrics, menus and sheets rise from the bottom. A
+  swipe on a song shows a green + (add to the queue) or a red × (remove),
+  and the songs below a removed one slide up.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

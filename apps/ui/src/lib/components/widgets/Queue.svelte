@@ -1,14 +1,16 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { getApp } from '../../context';
   import { menu } from '../../contextMenu.svelte';
   import { formatTime, trackTitle } from '../../format';
-  import { gesture, mapped, OUT, slide } from '../../gestures';
+  import { gesture, mapped, OUT, swipeRow } from '../../gestures';
   import { queueMenu } from '../../menus';
   import type { QueueItem } from '../../protocol/QueueItem';
   import { moveItem } from '../../reorder';
   import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
   import ReorderList from '../ReorderList.svelte';
+  import { slideRows } from '../../screens';
   import Scrollbar from '../Scrollbar.svelte';
 
   /**
@@ -61,6 +63,16 @@
     }
   }
 
+  // Rows that move when another comes or goes (removed, played, dropped elsewhere) slide into place.
+  let root = $state<HTMLElement>();
+  $effect.pre(() => {
+    void queue;
+    void fromContext;
+    if (!root) return;
+    const rows = root;
+    tick().then(slideRows(() => rows.querySelectorAll<HTMLElement>('.entry[data-key]')));
+  });
+
   function move(from: number, to: number) {
     if (!engine.can('queue')) return;
     const item = queue[from];
@@ -84,6 +96,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="entry"
+    data-key={item.id}
     onpointerdown={queued && engine.can('queue')
       ? (e) =>
           gesture(
@@ -91,7 +104,7 @@
             mapped(settings.current.gestures, 'queued'),
             // Once the row has slid out: removing it sooner drops it mid-slide.
             { remove: () => setTimeout(() => engine.run({ type: 'remove_item', item_id: item.id }), OUT) },
-            slide(e.currentTarget as HTMLElement, true),
+            swipeRow(e.currentTarget as HTMLElement, 'remove'),
           )
       : undefined}
     class:failed={item.error} class:current={nowPlaying && item.id === engine.current?.id}>
@@ -129,7 +142,7 @@
   </div>
 {/snippet}
 
-<section class="queue" class:open class:now-playing={nowPlaying}>
+<section bind:this={root} class="queue" class:open class:now-playing={nowPlaying}>
   {#if !nowPlaying}
   <header>
     {#if collapsible}

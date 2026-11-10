@@ -147,6 +147,25 @@ button {
   color: var(--accent);
 }
 
+/* Under a row being swiped (`swipeRow` in gestures.ts): what the swipe does. */
+.swipe-strip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: var(--space-4);
+  background: var(--ok);
+  color: #fff;
+  font-size: 1.6em;
+  font-weight: 700;
+  pointer-events: none;
+  transform: translateX(100%);
+}
+
+.swipe-strip.remove {
+  background: var(--danger);
+}
+
 .button {
   height: 28px;
   padding: 0 var(--space-3);

@@ -12,6 +12,7 @@
   import TrackLabel from './TrackLabel.svelte';
   import Transport from './Transport.svelte';
   import Volume from './Volume.svelte';
+  import { dim, rise } from '../../screens';
 
   const { engine, position, sheet, settings, settingsView, views } = getApp();
   let sliding = $state<HTMLElement>();
@@ -46,12 +47,13 @@
   }
 </script>
 
-{#if menu}<button class="scrim" aria-label="Close menu" tabindex="-1" onclick={() => (views.menu = null)}></button>{/if}
+{#if menu}<button class="scrim" aria-label="Close menu" tabindex="-1" onclick={() => (views.menu = null)} transition:dim></button>{/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <section bind:this={sheet.origin} class="bar" class:open={menu} aria-label="Player" onpointerdown={onPointerDown}>
   <!-- Over the music area, not pushing it up. -->
-  {#if menu}<div class="grown"><PhoneMenu /></div>{/if}
+  <!-- It rises out of the bar's top edge, which clips it. -->
+  {#if menu}<div class="grown"><div class="panel" transition:rise><PhoneMenu /></div></div>{/if}
 
   <div class="row">
     <div class="transport"><Transport size={17} /></div>
@@ -188,6 +190,10 @@
     left: -1px;
     right: -1px;
     bottom: 100%;
+    overflow: hidden;
+  }
+
+  .panel {
     border: 1px solid var(--border);
     border-bottom: 0;
     border-radius: 12px 12px 0 0;

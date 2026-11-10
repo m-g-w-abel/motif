@@ -1,5 +1,6 @@
 import { cubicOut } from 'svelte/easing';
 import type { TransitionConfig } from 'svelte/transition';
+import type { Slide } from './gestures';
 
 /**
  * Screen changes in the music area. The leaving screen slides and fades
@@ -38,8 +39,13 @@ let leftAt = 0;
 /** Shared elements that arrived this frame, in case their screen came before the old one left. */
 let arrivals: [string, HTMLElement][] = [];
 
-/** Svelte `out:` transition for a screen giving way: forward it fades to the left, back to the right, across in place. */
+/**
+ * Svelte `out:` transition for a screen giving way: forward it fades to the
+ * left, back to the right, across in place. A screen a swipe back has been
+ * dragging (`follow`) carries on from where the finger left it, off the side.
+ */
 export function leave(node: HTMLElement, how: Motion): TransitionConfig {
+  node.dataset.leaving = '';
   if (still()) return { duration: 0 };
   left = new Map();
   leftAt = performance.now();
@@ -47,8 +53,70 @@ export function leave(node: HTMLElement, how: Motion): TransitionConfig {
     if (el.offsetWidth) left.set(el.dataset.shared!, { el, box: el.getBoundingClientRect(), font: parseFloat(getComputedStyle(el).fontSize) });
   for (const [name, el] of arrivals) match(name, el);
   node.style.pointerEvents = 'none';
-  const x = how === 'forward' ? -8 : how === 'back' ? 24 : 0;
-  return { duration: how === 'swap' ? 160 : DURATION, easing: cubicOut, css: (t, u) => `transform: translateX(${u * x}%); opacity: ${t}` };
+  const dragged = Number(/translateX\((-?[\d.]+)px\)/.exec(node.style.transform)?.[1] ?? 0);
+  const width = node.offsetWidth;
+  const end = dragged ? width : how === 'forward' ? -0.08 * width : how === 'back' ? 0.24 * width : 0;
+  return {
+    duration: how === 'swap' ? 160 : DURATION,
+    easing: cubicOut,
+    css: (t, u) => `transform: translateX(${dragged + (end - dragged) * u}px); opacity: ${t}`,
+  };
+}
+
+/** Moves a screen with a swipe back as the finger goes (rightwards only), springing back if the swipe falls short; `leave` finishes one that went back. */
+export function follow(el: HTMLElement): Slide {
+  const to = (x: number, ms: number) => {
+    el.style.transition = ms ? `transform ${ms}ms ease-out` : 'none';
+    el.style.transform = x > 0 ? `translateX(${x}px)` : '';
+  };
+  return {
+    move: (dx) => to(dx, 0),
+    end: (swipe) => {
+      if (!swipe) to(0, 200);
+    },
+  };
+}
+
+const phone = () => matchMedia('(max-width: 700px)').matches;
+
+/** Svelte transition for a sheet along the bottom of a phone's screen: it rises from below and sinks back. Elsewhere (a popover) it fades. */
+export function rise(_node: HTMLElement): TransitionConfig {
+  if (still()) return { duration: 0 };
+  if (!phone()) return { duration: 120, css: (t) => `opacity: ${t}` };
+  return { duration: 240, easing: cubicOut, css: (_t, u) => `transform: translateY(${u * 100}%)` };
+}
+
+/** Svelte transition for the dimming behind a sheet or menu. */
+export function dim(_node: HTMLElement): TransitionConfig {
+  return { duration: still() ? 0 : 200, css: (t) => `opacity: ${t}` };
+}
+
+/**
+ * FLIP for rows that move when others come or go (a queue row removed):
+ * call it before the change with the rows (each with `data-key`), and the
+ * function it returns after, which slides each kept row from its old place.
+ */
+export function slideRows(rows: () => Iterable<HTMLElement>) {
+  if (still()) return () => {};
+  const tops = new Map<string, number>();
+  for (const el of rows()) tops.set(el.dataset.key!, el.getBoundingClientRect().top);
+  return () => {
+    const moved: HTMLElement[] = [];
+    for (const el of rows()) {
+      const top = tops.get(el.dataset.key!);
+      const dy = top === undefined ? 0 : top - el.getBoundingClientRect().top;
+      if (Math.abs(dy) < 1) continue;
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${dy}px)`;
+      moved.push(el);
+    }
+    if (!moved.length) return;
+    void moved[0].offsetWidth;
+    for (const el of moved) {
+      el.style.transition = `transform 200ms ${CURVE}`;
+      el.style.transform = '';
+    }
+  };
 }
 
 /** Svelte `in:` transition for the arriving screen: it fades in, mostly once the leaving one has gone. */

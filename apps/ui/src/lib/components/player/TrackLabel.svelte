@@ -9,7 +9,10 @@
 <div class="label">
   <span class="title">{track ? trackTitle(track) : 'Nothing playing'}</span>
   <span class="sub">
-    {#if track}{track.artist ?? 'Unknown artist'}{#if track.album}{' · '}{track.album}{/if}{:else}—{/if}
+    <!-- Apart, so each travels to its own place in now playing (`ExpandedPlayer`). -->
+    {#if track}<span class="artist">{track.artist ?? 'Unknown artist'}</span>{#if track.album}<span class="sep">{' · '}</span><span class="album"
+          >{track.album}</span
+        >{/if}{:else}—{/if}
   </span>
 </div>
 

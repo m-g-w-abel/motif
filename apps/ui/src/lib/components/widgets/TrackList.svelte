@@ -14,7 +14,7 @@
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { scrollMemory } from '../../scrollMemory';
   import { menu } from '../../contextMenu.svelte';
-  import { gesture, mapped, slide } from '../../gestures';
+  import { gesture, mapped, swipeRow } from '../../gestures';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
@@ -212,7 +212,7 @@
       e,
       mapped(settings.current.gestures, 'row'),
       { queue: () => queueRow(i), 'play-next': () => queueRow(i, true) },
-      slide(e.currentTarget as HTMLElement),
+      swipeRow(e.currentTarget as HTMLElement, 'queue'),
     );
     const key = data.key(i);
     if (e.button === 2) {

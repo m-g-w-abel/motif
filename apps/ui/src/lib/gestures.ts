@@ -118,11 +118,9 @@ export const OUT = 150;
 /**
  * Moves `el` with a swipe by `transform` alone, in short transitions: it
  * follows the finger, then slides out the swipe's way and back in from the
- * other side (the next track, a queued row), or springs back. With `away`
- * (a row removed) it stays out, springing back only if still shown a while
- * later (the engine refused).
+ * other side (the next track), or springs back.
  */
-export function slide(el: HTMLElement, away = false): Slide {
+export function slide(el: HTMLElement): Slide {
   const to = (x: number, ms: number) => {
     el.style.transition = ms ? `transform ${ms}ms ease-out` : 'none';
     el.style.transform = x ? `translateX(${x}px)` : '';
@@ -134,11 +132,65 @@ export function slide(el: HTMLElement, away = false): Slide {
       const out = swipe === 'swipe-left' ? -el.offsetWidth : el.offsetWidth;
       to(out, OUT);
       setTimeout(() => {
-        if (away) return to(0, 200);
         to(-out, 0);
         void el.offsetWidth; // lays out the jump, so the slide in starts from it
         to(0, 200);
-      }, away ? 1000 : OUT);
+      }, OUT);
+    },
+  };
+}
+
+/**
+ * Moves a list row with a left swipe over a strip that shows what the swipe
+ * does: a green + (`queue`) or a red × (`remove`), uncovered as the row
+ * goes. A queued row slides out to the left and comes back the same way; a
+ * removed one stays out, coming back only if still shown a while later (the
+ * engine refused). The row's parent clips both while it moves; a table row
+ * has none to spare and slides without the strip.
+ */
+export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Slide {
+  const box = el instanceof HTMLTableRowElement ? null : el.parentElement;
+  let strip: HTMLElement | undefined;
+  let kept = '';
+  const to = (x: number, ms: number) => {
+    const transition = ms ? `transform ${ms}ms ease-out` : 'none';
+    el.style.transition = transition;
+    el.style.transform = x ? `translateX(${x}px)` : '';
+    if (!strip) return;
+    strip.style.transition = transition;
+    strip.style.transform = `translateX(calc(100% + ${x}px))`;
+  };
+  const done = () => {
+    strip?.remove();
+    strip = undefined;
+    if (box) box.style.cssText = kept;
+  };
+  return {
+    move(dx) {
+      if (box && !strip) {
+        kept = box.style.cssText;
+        box.style.overflow = 'hidden';
+        if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
+        strip = document.createElement('span');
+        strip.className = `swipe-strip ${does}`;
+        strip.textContent = does === 'queue' ? '+' : '×';
+        strip.ariaHidden = 'true';
+        box.append(strip);
+      }
+      to(Math.min(0, dx), 0);
+    },
+    end(swipe) {
+      if (!swipe) {
+        to(0, 200);
+        return setTimeout(done, 200);
+      }
+      to(-el.offsetWidth, OUT);
+      const back = () => {
+        to(0, 200);
+        setTimeout(done, 200);
+      };
+      if (does === 'queue') setTimeout(back, OUT + 100);
+      else setTimeout(() => el.isConnected && back(), 1000);
     },
   };
 }

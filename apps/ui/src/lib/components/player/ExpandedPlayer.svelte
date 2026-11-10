@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick, untrack } from 'svelte';
   import { getApp, setViewState } from '../../context';
   import { mapped } from '../../gestures';
   import Icon from '../Icon.svelte';
@@ -23,25 +24,31 @@
   /**
    * The morph runs in stages so no two moving things cross: the bar's own
    * controls fade out where they are (OUT), the artwork, title and artist
-   * travel together (MOVE), then the sheet's controls fade in where they
-   * belong (IN). Bar element → its counterpart here, the box to match (`box`
-   * stretches, `even` scales evenly, `text` matches the first letter), and
-   * what it does:
+   * travel together (MOVE), then the sheet's controls rise into place (IN).
+   * Bar element → its counterpart here, the box to match (`box` stretches,
+   * `even` scales evenly, `line` stretches across only, `text` matches the
+   * first letter), and what it does:
    * - `move`: the sheet's own element travels; nothing to hand over.
    * - `cross`: a copy of the bar's (a ghost) travels with the sheet's and they
    *   crossfade once both have arrived, drawn at the same place and size.
    * - `handover`: like `cross`, but the contents differ (the bar's line has
    *   the album too), so the ghost is gone before the sheet's appears.
-   * - `stage`: the bar's fades out in OUT, the sheet's fades in in IN.
+   * - `stage`: the bar's fades out in OUT, the sheet's rises in in IN.
    * - `edge`: the bar's strip rides the top edge of the growing background
-   *   and fades; the sheet's seek bar fades in in IN.
+   *   and fades; the sheet's seek bar rises in in IN. On phones, where the
+   *   strip sits under the track, it travels to the seek bar instead (`cross`).
+   * Each can appear twice, for the counterpart shown here (phone or desktop).
    */
   const MORPH: [string, string, Mode, Kind][] = [
     ['.art', '.frame', 'box', 'move'],
     ['.label .title', '.info h1', 'text', 'cross'],
-    ['.label .sub', '.info .hero-artist', 'text', 'handover'],
-    ['.seek .slider', '.controls .seek .slider', 'box', 'edge'],
-    ['.transport', '.controls .transport', 'box', 'stage'],
+    ['.label .artist', '.info .hero-artist', 'text', 'cross'],
+    ['.label .album', '.album-title .marquee', 'text', 'cross'],
+    ['.label .album', '.info .album-name', 'text', 'cross'],
+    ['.seek .slider', '.controls .seek .slider', 'line', 'edge'],
+    ['.transport [aria-label="Previous"]', '.controls [aria-label="Previous"]', 'box', 'stage'],
+    ['.transport .play', '.controls .transport .play', 'even', 'cross'],
+    ['.transport [aria-label="Next"]', '.controls [aria-label="Next"]', 'box', 'stage'],
     ['.time', '.controls .seek .time:first-child', 'box', 'stage'],
     ['.total', '.controls .seek .time:last-child', 'box', 'stage'],
     ['[aria-label^="Repeat"]', '.controls [aria-label^="Repeat"]', 'box', 'stage'],
@@ -49,11 +56,18 @@
     ['.volume', '.controls .volume', 'box', 'stage'],
     ['.end > [aria-label="Expand player"]', 'header [aria-label="Collapse"]', 'box', 'stage'],
   ];
-  /** No counterpart in the bar: fade in in IN (the carousel's side cards and controls after its cover). */
+  /** No counterpart in the bar: rise in in RISE (the carousel's side cards and controls after its cover). */
   const FADE =
-    'header .handle, header .lyrics-toggle, .art.lyrics, .hero-album, .album-title, .lyrics-button, .more, .coverflow .card:not(.frame), .coverflow .turns, .coverflow .below';
+    'header .handle, header .lyrics-toggle, .art.lyrics, .hero-album .format, .lyrics-button, .more, .coverflow .card:not(.frame), .coverflow .turns, .coverflow .below';
+  /** In the bar only: the album's separator fades as its neighbours leave, and the view buttons fall away under the screen. */
+  const LEAVE: [string, boolean][] = [
+    ['.label .sep', false],
+    ['.buttons', true],
+  ];
+  /** How far parts with no counterpart rise from (px). */
+  const RISE_BY = 40;
 
-  type Mode = 'box' | 'even' | 'text';
+  type Mode = 'box' | 'even' | 'line' | 'text';
   type Kind = 'move' | 'cross' | 'handover' | 'stage' | 'edge';
   /** A stretch of progress. */
   type Span = [number, number];
@@ -64,6 +78,10 @@
   const IN: Span = [0.85, 1];
   /** Text under the artwork (phones) waits until the growing artwork has risen past it. */
   const MOVE_UNDER: Span = [0.4, 0.85];
+  /** Parts with no counterpart rise into place once the movers are nearly there. */
+  const RISE: Span = [0.6, 1];
+  /** The view buttons fall away while the background grows over the bar. */
+  const FALL: Span = [0, 0.5];
   const DURATION = 260;
   const CURVE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
 
@@ -78,6 +96,8 @@
   let parts: Part[] = [];
   /** The progress last drawn, where a settle's transitions start from. */
   let drawn = 0;
+  /** The background's corner radius at the bar (px) and its scale there, on phones. */
+  let corner: { r: number; sx: number; sy: number } | null = null;
   /** MOVE, or MOVE_UNDER for text, set per measure. */
   let textMove = MOVE;
   let ghosts = $state<HTMLElement>();
@@ -113,6 +133,7 @@
     let sy = y.height / x.height;
     if (mode === 'text') sx = sy;
     else if (mode === 'even') sx = sy = Math.min(sx, sy);
+    else if (mode === 'line') sy = 1;
     const dx = y.left + y.width / 2 - e.left - (x.left + x.width / 2 - e.left) * sx;
     const dy = y.top + y.height / 2 - e.top - (x.top + x.height / 2 - e.top) * sy;
     return { dx, dy, sx, sy };
@@ -137,6 +158,9 @@
     return el;
   }
 
+  /** A part with no counterpart (or one that hands over): it rises into place and fades in. */
+  const rising = (el: HTMLElement): Part => ({ el, ghost: false, ...STILL, dy: RISE_BY, move: RISE, show: RISE });
+
   /** The parts that carry bar element `a` to sheet element `b`. */
   function pair(a: HTMLElement, from: string, b: HTMLElement, mode: Mode, kind: Kind, at: DOMRect, o: DOMRect): Part[] {
     const ra = a.getBoundingClientRect();
@@ -158,16 +182,13 @@
     }
     const there = { el: b, ghost: false, ...fit(rb, gb, ga, mode), move };
     if (kind === 'move') return [there];
-    if (kind === 'stage') return [{ el: b, ghost: false, ...STILL, show: IN }, { el: copy(a, from, at), ghost: true, ...STILL, hide: OUT }];
+    if (kind === 'stage') return [rising(b), { el: copy(a, from, at), ghost: true, ...STILL, hide: OUT }];
     if (kind === 'edge') {
       // Keeps its place relative to the background (stretching only across).
       const sx = at.width / o.width;
       const dx = at.left + (ra.left - o.left) * sx - ra.left;
       const dy = at.top + (ra.top - o.top) * (at.height / o.height) - ra.top;
-      return [
-        { el: b, ghost: false, ...STILL, show: IN },
-        { el: copy(a, from, at), ghost: true, dx, dy, sx, sy: 1, move: GROW, hide: [0.3, 0.5] },
-      ];
+      return [rising(b), { el: copy(a, from, at), ghost: true, dx, dy, sx, sy: 1, move: GROW, hide: [0.3, 0.5] }];
     }
     const ghost = { el: copy(a, from, at), ghost: true, ...fit(ra, ga, gb, mode), move };
     return [
@@ -199,14 +220,23 @@
       const art = section.querySelector('.frame')?.getBoundingClientRect();
       const info = section.querySelector('.info')?.getBoundingClientRect();
       textMove = art && info && info.top >= art.bottom ? MOVE_UNDER : MOVE;
-      const found: Part[] = [{ el: backdrop, ghost: false, ...fit(bd, bd, o, 'box'), move: GROW }];
-      for (const [from, to, mode, kind] of MORPH) {
+      const grow = fit(bd, bd, o, 'box');
+      const found: Part[] = [{ el: backdrop, ghost: false, ...grow, move: GROW }];
+      // Phones: the bar is a rounded card inset from the edges, whose corners open out to the screen's.
+      const r = views.phone ? parseFloat(getComputedStyle(origin).borderTopLeftRadius) || 0 : 0;
+      corner = r ? { r, sx: grow.sx, sy: grow.sy } : null;
+      for (const [from, to, mode, k] of MORPH) {
         const b = shown(section, to);
         if (!b) continue;
         const a = shown(origin, from);
-        found.push(...(a ? pair(a, from, b, mode, kind, at, o) : [{ el: b, ghost: false, ...STILL, show: IN }]));
+        const kind = k === 'edge' && views.phone ? 'cross' : k;
+        found.push(...(a ? pair(a, from, b, mode, kind, at, o) : [rising(b)]));
       }
-      for (const el of section.querySelectorAll<HTMLElement>(FADE)) found.push({ el, ghost: false, ...STILL, show: IN });
+      for (const el of section.querySelectorAll<HTMLElement>(FADE)) if (el.offsetWidth) found.push(rising(el));
+      for (const [from, falls] of LEAVE) {
+        const a = shown(origin, from);
+        if (a) found.push({ el: copy(a, from, at), ghost: true, ...STILL, dy: falls ? at.bottom - a.getBoundingClientRect().top : 0, move: FALL, hide: falls ? FALL : OUT });
+      }
       // The queue rises from below the page once the artwork and seek strip are clear of it.
       const queue = section.querySelector<HTMLElement>('.queue-slot');
       if (queue) found.push({ el: queue, ghost: false, ...STILL, dy: at.bottom - queue.getBoundingClientRect().top, move: [0.5, 1] });
@@ -255,10 +285,112 @@
       if (show) el.style.opacity = String(ramp(p, show));
       else if (hide) el.style.opacity = String(1 - ramp(p, hide));
     }
+    if (backdrop) {
+      // A paint, not a transform, but of one layer for a quarter second, and only on phones.
+      const t = corner ? 1 - ramp(p, GROW) : 0;
+      backdrop.style.transition = instant ? 'none' : `border-radius ${timing(GROW, from, p).replace(' ', ` ${CURVE} `)}, ${backdrop.style.transition}`;
+      backdrop.style.borderRadius = corner && t ? `${(corner.r * t) / corner.sx}px / ${(corner.r * t) / corner.sy}px` : '';
+    }
     section.style.opacity = parts.length ? '' : String(p);
     tint.style.transition = instant ? 'none' : `opacity ${timing(GROW, from, p)}`;
     tint.style.opacity = parts.length ? String(1 - ramp(p, GROW)) : '0';
   }
+
+  /** The parts a phone's step (now playing, half or full queue, lyrics) shows or hides. */
+  const STEPPED = ['.mini', '.now > .art:not(.lyrics)', '.now > .art.lyrics', '.cover-bg', '.details', '.queue-slot'];
+  type Seen = { el: HTMLElement; box: DOMRect; copy: HTMLElement; display: string; frame?: DOMRect };
+
+  function seen(root: HTMLElement, copies: boolean) {
+    const found = new Map<string, Seen>();
+    for (const selector of STEPPED) {
+      const el = root.querySelector<HTMLElement>(selector);
+      const look = el && getComputedStyle(el);
+      if (!el?.offsetWidth || look!.visibility === 'hidden') continue;
+      const frame = el.querySelector('.frame')?.getBoundingClientRect();
+      const copy = copies ? (el.cloneNode(true) as HTMLElement) : el;
+      found.set(selector, { el, box: el.getBoundingClientRect(), copy, display: look!.display, frame });
+    }
+    return found;
+  }
+
+  /** Puts `el` at `transform` at once, then lets it go home. */
+  function release(el: HTMLElement, transform: string) {
+    el.style.transition = 'none';
+    el.style.transformOrigin = '0 0';
+    el.style.transform = transform;
+    void el.offsetWidth;
+    el.style.transition = `transform ${DURATION}ms ${CURVE}`;
+    el.style.transform = '';
+  }
+
+  /**
+   * Phones: a step change. Parts on both sides move to their new places; the
+   * cover and the half queue's cover background trade places; parts that
+   * appear rise from below the screen (riding the part under them, if that
+   * moves), and parts that go sink away (or ride) as fading copies behind
+   * the rest, as the layout drops them at once. Stepping back mirrors it.
+   */
+  function stepped(root: HTMLElement, before: Map<string, Seen>) {
+    if (sheet.progress !== 1 || !sinking) return;
+    const after = seen(root, false);
+    const at = root.getBoundingClientRect();
+    const dy = (k: string) => after.get(k)!.box.top - before.get(k)!.box.top;
+    const kept = [...after.keys()].filter((k) => before.has(k) && after.get(k)!.el === before.get(k)!.el);
+    const fresh = [...after.keys()].filter((k) => !kept.includes(k));
+    const gone = [...before.keys()].filter((k) => !kept.includes(k));
+    // The cover and the half queue's background stand for each other.
+    const cover = '.now > .art:not(.lyrics)';
+    for (const [x, y] of [['.cover-bg', cover], [cover, '.cover-bg']]) {
+      const b = after.get(x);
+      const a = before.get(y);
+      if (!fresh.includes(x) || !gone.includes(y) || !a || !b) continue;
+      const m = fit(b.box, b.frame ?? b.box, a.frame ?? a.box, 'even');
+      release(b.el, `translate(${m.dx}px, ${m.dy}px) scale(${m.sx})`);
+      fresh.splice(fresh.indexOf(x), 1);
+      gone.splice(gone.indexOf(y), 1);
+    }
+    for (const k of kept) if (Math.abs(dy(k)) >= 1) release(after.get(k)!.el, `translateY(${-dy(k)}px)`);
+    /** The kept part right under a box, which it rides along with. */
+    const under = (box: DOMRect, side: Map<string, Seen>) =>
+      kept.filter((k) => side.get(k)!.box.top >= box.bottom - 1).sort((a, b) => side.get(a)!.box.top - side.get(b)!.box.top)[0];
+    const rest = (keys: string[], side: Map<string, Seen>) => Math.min(...keys.filter((k) => !under(side.get(k)!.box, side)).map((k) => side.get(k)!.box.top));
+    const rise = at.bottom - rest(fresh, after);
+    for (const k of fresh) {
+      const ride = under(after.get(k)!.box, after);
+      release(after.get(k)!.el, `translateY(${ride ? -dy(ride) : rise}px)`);
+    }
+    const sink = at.bottom - rest(gone, before);
+    for (const k of gone) {
+      const { copy, box, display } = before.get(k)!;
+      const ride = under(box, before);
+      Object.assign(copy.style, {
+        position: 'absolute',
+        left: `${box.left - at.left}px`,
+        top: `${box.top - at.top}px`,
+        width: `${box.width}px`,
+        height: `${box.height}px`,
+        margin: '0',
+        // The new step's rules would hide it.
+        display,
+        visibility: 'visible',
+      });
+      sinking.append(copy);
+      void copy.offsetWidth;
+      copy.style.transition = `transform ${DURATION}ms ${CURVE}, opacity ${DURATION}ms linear`;
+      copy.style.transform = `translateY(${ride ? dy(ride) : sink}px)`;
+      copy.style.opacity = '0';
+      setTimeout(() => copy.remove(), DURATION);
+    }
+  }
+
+  let sinking = $state<HTMLElement>();
+  $effect.pre(() => {
+    void sheet.step;
+    const root = untrack(() => section);
+    if (!root || !views.phone || untrack(() => sheet.progress) !== 1 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const before = seen(root, true);
+    tick().then(() => stepped(root, before));
+  });
 
   sheet.measure = measure;
   // Writes styles only; reads no state it writes.
@@ -302,6 +434,8 @@
 >
   <div class="backdrop" bind:this={backdrop}><div class="tint" bind:this={tint}></div></div>
   <div class="ghosts" bind:this={ghosts} inert aria-hidden="true"></div>
+  <!-- Copies of the parts a step change drops, sinking behind the rest. -->
+  <div class="sinking" bind:this={sinking} inert aria-hidden="true"></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <header onpointerdown={(e) => sheet.drag(e, 'sheet')}>
     <span class="handle"></span>
@@ -403,6 +537,7 @@
     position: absolute;
     inset: 0;
     z-index: -1;
+    overflow: hidden;
     background: var(--bg);
     transform-origin: 0 0;
     will-change: transform;
@@ -421,6 +556,13 @@
     position: absolute;
     inset: 0;
     z-index: 1;
+    pointer-events: none;
+  }
+
+  .sinking {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
     pointer-events: none;
   }
 

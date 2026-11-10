@@ -4,6 +4,7 @@
   import { launcherItems } from '../../launcher';
   import { MAX_COLUMNS, viewOptions, type OptionsKey, type ViewMode } from '../../viewOptions';
   import type { View } from '../../views.svelte';
+  import { dim, rise } from '../../screens';
 
   // The ⋮ sheet of a collection view: its display options and library
   // actions (sorting has its own button). A sheet from the bottom on phones, a panel below ⋮ on desktop.
@@ -48,8 +49,9 @@
   }
 </script>
 
-<button class="scrim" tabindex="-1" aria-label="Close" onclick={onclose}></button>
+<button class="scrim" tabindex="-1" aria-label="Close" onclick={onclose} transition:dim></button>
 <div
+  transition:rise
   class="sheet"
   role="dialog"
   aria-label="{title} options"

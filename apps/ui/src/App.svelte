@@ -35,7 +35,7 @@
   import ContentArea from './lib/components/shell/ContentArea.svelte';
   import ViewScreen from './lib/components/shell/ViewScreen.svelte';
   import { devViews, parseViewLink, Views } from './lib/views.svelte';
-  import { arrive, leave, motion } from './lib/screens';
+  import { arrive, follow, leave, motion } from './lib/screens';
   import PlaylistPrompt from './lib/components/playlists/PlaylistPrompt.svelte';
   import { Playlists } from './lib/playlists.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
@@ -338,7 +338,14 @@
   /** Touch: swiping right on a view or Settings goes back, unless the press drags a control or scrolls a row (Search's chips) sideways. */
   function swipeBack(e: PointerEvent) {
     if ((e.target as Element).closest('[role="slider"], input, textarea, .resize, .divider, .grip, .chips')) return;
-    gesture(e, mapped(settings.current.gestures, 'view'), { back: () => (settingsView.group ? settingsView.back() : views.back()) });
+    // The screen follows the finger, when there is somewhere to go back to.
+    const screen = (e.currentTarget as HTMLElement).querySelector<HTMLElement>(':scope > .screen:not([data-leaving])');
+    gesture(
+      e,
+      mapped(settings.current.gestures, 'view'),
+      { back: () => (settingsView.group ? settingsView.back() : views.back()) },
+      screen && (settingsView.group || views.parent) ? follow(screen) : undefined,
+    );
   }
 </script>
 

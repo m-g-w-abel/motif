@@ -5,7 +5,7 @@
   import { demoLibrary, isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
-  import { gesture, mapped, slide } from '../../gestures';
+  import { gesture, mapped, swipeRow } from '../../gestures';
   import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
@@ -196,7 +196,7 @@
       e,
       mapped(settings.current.gestures, 'row'),
       { queue: () => queueAlbum(i, album), 'play-next': () => queueAlbum(i, album, true) },
-      slide(e.currentTarget as HTMLElement),
+      swipeRow(e.currentTarget as HTMLElement, 'queue'),
     );
     if (e.button === 2) {
       if (!picked.has(album.key)) select(i);
