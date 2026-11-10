@@ -5,6 +5,10 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Search**: one field for the whole library, with filters for songs,
+  albums, artists, album artists, folders and playlists. All shows the
+  best-matching artist and their albums first, then other albums, then songs.
+  Tap a folder to play it, or an artist to see their albums and songs.
 - **Changelog and Help**: this changelog, in the menu on phones and the left
   panel on desktop, and Help, which opens the project's documentation online.
 - The phone's now-playing sheet steps, by drag or its handle, between now

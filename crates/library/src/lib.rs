@@ -30,9 +30,9 @@ use std::{
 };
 
 use protocol::{
-    Command, ContextKind, ImageKind, LibraryAlbum, LibraryQuery, LibraryStatus, LibraryTrack,
-    Lyrics, LyricsLine, LyricsSource, QueryResult, SortRule, TrackGroup, TrackImage, TrackKeys,
-    TrackRef,
+    Command, ContextKind, ImageKind, LibraryAlbum, LibraryArtist, LibraryFolder, LibraryQuery,
+    LibraryStatus, LibraryTrack, Lyrics, LyricsLine, LyricsSource, QueryResult, SortRule,
+    TrackGroup, TrackImage, TrackKeys, TrackRef,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
@@ -199,35 +199,123 @@ impl Library {
             },
             LibraryQuery::Albums {
                 search,
+                artist,
                 sort,
                 offset,
                 limit,
             } => {
                 let fts = db::fts_query(search.as_deref());
+                let filter = format!(
+                    "{} AND (?4 IS NULL OR coalesce(album_artist, artist, '') = ?4)",
+                    db::SEARCH
+                );
                 let total = conn.query_row(
                     &format!(
-                        "SELECT count(DISTINCT {}) FROM tracks WHERE {}",
+                        "SELECT count(DISTINCT {}) FROM tracks WHERE {filter}",
                         db::ALBUM_KEY,
-                        db::SEARCH
                     ),
-                    [&fts],
+                    params![fts, limit, offset, artist],
                     |r| r.get(0),
                 )?;
                 let mut stmt = conn.prepare(&format!(
                     "SELECT {key} AS k, coalesce(album, ''), coalesce(album_artist, artist, ''), min(coalesce(original_year, year)),
                             count(*), sum(coalesce(duration_ms, 0)), max(art)
-                     FROM tracks WHERE {search} GROUP BY k {order} LIMIT ?2 OFFSET ?3",
+                     FROM tracks WHERE {filter} GROUP BY k {order} LIMIT ?2 OFFSET ?3",
                     key = db::ALBUM_KEY,
-                    search = db::SEARCH,
                     order = db::album_order(&sort)
                 ))?;
                 let albums = stmt
-                    .query_map(params![fts, limit, offset], library_album)?
+                    .query_map(params![fts, limit, offset, artist], library_album)?
                     .collect::<rusqlite::Result<_>>()?;
                 QueryResult::Albums {
                     total,
                     offset,
                     albums,
+                }
+            }
+            LibraryQuery::Artists {
+                search,
+                album_artists,
+                offset,
+                limit,
+            } => {
+                // Only the name's own FTS column matches; a track without an album artist counts under its artist.
+                let (name, filter) = if album_artists {
+                    (
+                        "coalesce(album_artist, artist)",
+                        "(album_artist IS NULL AND id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH '{artist} : ' || ?1)
+                          OR id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH '{album_artist} : ' || ?1))",
+                    )
+                } else {
+                    (
+                        "artist",
+                        "id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH '{artist} : ' || ?1)",
+                    )
+                };
+                let fts = db::fts_query(search.as_deref()).map(|q| format!("({q})"));
+                let filter = format!("{name} IS NOT NULL AND (?1 IS NULL OR {filter})");
+                let total = conn.query_row(
+                    &format!("SELECT count(DISTINCT {name}) FROM tracks WHERE {filter}"),
+                    [&fts],
+                    |r| r.get(0),
+                )?;
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {name} AS n, count(DISTINCT {key}), count(*), max(art)
+                     FROM tracks WHERE {filter} GROUP BY n ORDER BY n COLLATE NOCASE LIMIT ?2 OFFSET ?3",
+                    key = db::ALBUM_KEY,
+                ))?;
+                let artists = stmt
+                    .query_map(params![fts, limit, offset], |r| {
+                        Ok(LibraryArtist {
+                            name: r.get(0)?,
+                            albums: r.get(1)?,
+                            tracks: r.get(2)?,
+                            art: r.get(3)?,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<_>>()?;
+                QueryResult::Artists {
+                    total,
+                    offset,
+                    artists,
+                }
+            }
+            LibraryQuery::Folders {
+                search,
+                offset,
+                limit,
+            } => {
+                // `rtrim` by every character but the separator leaves the path up to its last one.
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT rtrim(path, replace(path, '{SEP}', '')) AS dir, count(*), sum(coalesce(duration_ms, 0)), max(art)
+                     FROM tracks GROUP BY dir ORDER BY dir"
+                ))?;
+                let wanted = words(search.as_deref().unwrap_or_default());
+                let mut folders = Vec::new();
+                for folder in stmt.query_map([], |r| {
+                    let dir: String = r.get(0)?;
+                    Ok(LibraryFolder {
+                        path: dir.trim_end_matches(SEP).to_string(),
+                        tracks: r.get(1)?,
+                        duration_ms: r.get::<_, i64>(2)? as u64,
+                        art: r.get(3)?,
+                    })
+                })? {
+                    let folder = folder?;
+                    let name = folder.path.rsplit(SEP).next().unwrap_or_default();
+                    if words_match(&wanted, name) {
+                        folders.push(folder);
+                    }
+                }
+                let total = folders.len() as u32;
+                QueryResult::Folders {
+                    total,
+                    offset,
+                    folders: folders
+                        .into_iter()
+                        .skip(offset as usize)
+                        .take(limit as usize)
+                        .collect(),
                 }
             }
             LibraryQuery::AlbumPosition {
@@ -309,6 +397,7 @@ impl Library {
             | LibraryQuery::RecentlyPlayedAlbums { .. } => unreachable!("answered above"),
             LibraryQuery::Play { .. }
             | LibraryQuery::PlayAlbum { .. }
+            | LibraryQuery::PlayFolder { .. }
             | LibraryQuery::PlayPlaylist { .. } => {
                 return Err(Error::Other("play queries go through selection()".into()));
             }
@@ -406,6 +495,15 @@ impl Library {
                 *start,
                 ContextKind::List,
             ),
+            LibraryQuery::PlayFolder { path, start } => (
+                format!(
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} ORDER BY path",
+                    db::UNDER_ROOT
+                ),
+                Some(path.clone()),
+                *start,
+                ContextKind::List,
+            ),
             LibraryQuery::PlayAlbum { album, sort, start } => (
                 format!(
                     "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 {}",
@@ -432,6 +530,7 @@ impl Library {
                 ..
             } if !search.trim().is_empty() => Some(format!("Search: {}", search.trim())),
             LibraryQuery::Play { .. } => Some("Library".into()),
+            LibraryQuery::PlayFolder { path, .. } => path.rsplit(SEP).next().map(Into::into),
             _ => tracks[0].album.clone(),
         };
         Ok(Command::SetContext {
@@ -986,6 +1085,26 @@ const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track
      duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, audio_hash, art, \
      missing, problem, original_year";
 
+#[cfg(not(windows))]
+const SEP: char = '/';
+#[cfg(windows)]
+const SEP: char = '\\';
+
+/// `text` as lowercase words, split as FTS splits them.
+fn words(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(Into::into)
+        .collect()
+}
+
+/// Whether every word of `search` starts a word of `text`, as an FTS search matches.
+fn words_match(search: &[String], text: &str) -> bool {
+    let text = words(text);
+    search.iter().all(|w| text.iter().any(|t| t.starts_with(w)))
+}
+
 fn library_album(r: &Row<'_>) -> rusqlite::Result<LibraryAlbum> {
     Ok(LibraryAlbum {
         key: r.get(0)?,
@@ -1125,5 +1244,14 @@ mod tests {
         );
         assert_eq!(db::fts_query(Some("  ")), None);
         assert_eq!(db::fts_query(Some("a\"b")).as_deref(), Some("\"a\"\"b\"*"));
+    }
+
+    #[test]
+    fn folder_names_match_word_starts() {
+        let matches = |search: &str, name: &str| words_match(&words(search), name);
+        assert!(matches("ok comp", "OK Computer (1997)"));
+        assert!(matches("ac/dc", "AC-DC Live"));
+        assert!(!matches("comp", "Recomputed"));
+        assert!(matches("", "anything"));
     }
 }

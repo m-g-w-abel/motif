@@ -118,6 +118,7 @@ fn scans_queries_matches_and_rescans() {
 
     let query = LibraryQuery::Albums {
         search: None,
+        artist: None,
         sort: vec![],
         offset: 0,
         limit: 10,
@@ -324,6 +325,7 @@ fn scans_queries_matches_and_rescans() {
     let QueryResult::Albums { albums: desc, .. } = library
         .query(LibraryQuery::Albums {
             search: None,
+            artist: None,
             sort: vec![SortRule {
                 key: SortKey::Album,
                 descending: true,
@@ -1208,4 +1210,95 @@ fn playlists_are_made_edited_played_and_survive_moves_and_repeats() {
     assert!(playlists(&library).is_empty());
     let _ = fs::remove_dir_all(data);
     let _ = fs::remove_dir_all(music);
+}
+
+#[test]
+fn artists_and_folders_are_searched_and_folders_play() {
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &music,
+    );
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 4 && !s.scanning);
+
+    let artists = |search: &str, album_artists: bool| {
+        let query = LibraryQuery::Artists {
+            search: Some(search.into()),
+            album_artists,
+            offset: 0,
+            limit: 10,
+        };
+        let QueryResult::Artists { total, artists, .. } = library.query(query).unwrap() else {
+            panic!()
+        };
+        assert_eq!(total as usize, artists.len());
+        artists
+            .into_iter()
+            .map(|a| (a.name, a.albums, a.tracks))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        artists("art", false),
+        [("Artist A".into(), 1, 2), ("Artist B".into(), 1, 2)]
+    );
+    assert_eq!(artists("artist b", true), [("Artist B".into(), 1, 2)]);
+    // Only the artist's name counts, not a song or album title.
+    assert!(artists("opening", false).is_empty());
+
+    // Albums by one album artist exactly, whatever else the search matches.
+    let QueryResult::Albums { total, albums, .. } = library
+        .query(LibraryQuery::Albums {
+            search: None,
+            artist: Some("Artist B".into()),
+            sort: vec![],
+            offset: 0,
+            limit: 10,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(total, 1);
+    assert_eq!(albums[0].title, "Second Album");
+
+    let folders = |search: &str| {
+        let query = LibraryQuery::Folders {
+            search: Some(search.into()),
+            offset: 0,
+            limit: 10,
+        };
+        let QueryResult::Folders { folders, .. } = library.query(query).unwrap() else {
+            panic!()
+        };
+        folders
+    };
+    let second = folders("seco");
+    assert_eq!(second.len(), 1);
+    assert!(
+        second[0].path.ends_with("Second Album"),
+        "{}",
+        second[0].path
+    );
+    assert_eq!(second[0].tracks, 2);
+    // A folder's own name counts, not the folders above it.
+    assert!(folders("artist").is_empty());
+
+    let artist_b = music.join("Artist B").to_str().unwrap().to_string();
+    let Command::SetContext { tracks, label, .. } = library
+        .selection(&LibraryQuery::PlayFolder {
+            path: artist_b,
+            start: 1,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(tracks.len(), 2, "tracks in folders below count too");
+    assert_eq!(label.as_deref(), Some("Artist B"));
 }

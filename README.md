@@ -65,6 +65,10 @@ control isn't an add-on: it's the normal code path.
   the rows in view even at 50,000 songs. Each page searches within itself,
   plays its songs in its order, and has a Select mode to play, queue or add
   several songs to a playlist at once.
+  A Search view (the phone bar's Search, a button in the desktop left panel)
+  filters by songs, albums, artists, album artists, folders or playlists as
+  you type; All leads with the best-matching artist and their albums, then
+  other albums, then songs.
   Phones show one widget per view, a bottom bar (mini player, progress,
   Library / Search / Menu, the menu holding the engine switcher, Settings,
   the in-app [changelog](CHANGELOG.md) and Help, also in the desktop left panel),

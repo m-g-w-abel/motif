@@ -44,6 +44,18 @@
   <div class="scroll" bind:this={scroller}>
     <div class="head">
       <h2>Library</h2>
+      <button
+        class="icon-button"
+        class:active={current === 'search' && !settingsView.group}
+        aria-label="Search"
+        title="Search"
+        onclick={() => {
+          views.show({ kind: 'search' });
+          settingsView.close();
+        }}
+      >
+        <Icon name="search" size={14} />
+      </button>
       <button class="icon-button" aria-label="Library options" title="Library options" aria-haspopup="menu" onclick={openMenu}>
         <Icon name="more" size={14} />
       </button>
@@ -185,6 +197,7 @@
   }
 
   .head h2 {
+    flex: 1;
     margin-bottom: var(--space-2);
   }
 

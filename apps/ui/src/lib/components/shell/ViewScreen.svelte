@@ -21,6 +21,7 @@
   import SongList from '../widgets/SongList.svelte';
   import PlaylistPage from '../playlists/PlaylistPage.svelte';
   import NavButton from './NavButton.svelte';
+  import SearchView from './SearchView.svelte';
   import SortMenu from './SortMenu.svelte';
   import ViewOptionsSheet from './ViewOptionsSheet.svelte';
   import WindowButtons from './WindowButtons.svelte';
@@ -307,6 +308,8 @@
         onopen={(key, title, art) =>
           views.open(view.kind === 'playlists' ? { kind: 'playlist', id: key, name: title } : { kind: 'album', key, title, art })}
       />
+    {:else if view.kind === 'search'}
+      <SearchView />
     {:else if view.kind === 'playlist' && editing}
       <PlaylistPage id={view.id} name={title} />
     {:else if songView && options}
