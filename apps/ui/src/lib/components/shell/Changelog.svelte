@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dim, pop } from '../../screens';
   import changelog from '../../../../../../CHANGELOG.md?raw';
   import { renderMarkdown } from '../../markdown';
 
@@ -21,8 +22,8 @@
 <svelte:window onkeydowncapture={onKey} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={(e) => e.target === e.currentTarget && onClose()}>
-  <div class="sheet selectable" role="dialog" aria-label="Changelog" tabindex="-1" use:focus>
+<div class="backdrop" transition:dim onclick={(e) => e.target === e.currentTarget && onClose()}>
+  <div in:pop out:pop class="sheet selectable" role="dialog" aria-label="Changelog" tabindex="-1" use:focus>
     <button class="icon-button close" aria-label="Close" onclick={onClose}>×</button>
     {@html html}
   </div>

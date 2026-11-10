@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { rise } from '../../screens';
   import { tick, untrack, type Snippet } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { addFolder } from '../../folders';
@@ -131,6 +132,11 @@
     };
     gesture(e, mapped(settings.current.gestures, 'row'), { queue: () => queue(), 'play-next': () => queue(true) }, swipeRow(e.currentTarget as HTMLElement, 'queue'));
   }
+  /** Go to album: the row's cover flies to the album's page (`screens.ts`). */
+  function goToAlbum(i: number, key: string, title: string) {
+    list?.querySelector<HTMLElement>(`[data-index="${i}"] .art`)?.setAttribute('data-shared', `cover:album:${key}`);
+    openAlbum?.(key, title);
+  }
   function activate(i: number) {
     if (selecting) view.browse.picked = toggle(picked, itemAt, i);
     else if (engine.can('playback')) data.play(i);
@@ -221,7 +227,7 @@
               onkeydown={(e) => onKey(e, i)}
               onpointerdown={(e) => press(e, i)}
               onclick={() => activate(i)}
-              use:menu={() => trackMenu(engine, playlists, data, view, i, openAlbum)}
+              use:menu={() => trackMenu(engine, playlists, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
             >
               <span class="lead">
                 {#if mode !== 'list'}
@@ -267,7 +273,7 @@
   </div>
   <Scrollbar target={scroller} />
   {#if selecting}
-    <div class="select-bar" role="toolbar" aria-label="Selected songs">
+    <div class="select-bar" transition:rise role="toolbar" aria-label="Selected songs">
       <span class="picked-count" aria-live="polite">{picked.size} selected</span>
       <button onclick={() => (picked.size === count ? (view.browse.picked = new Map()) : selectAll())}>
         {picked.size === count && count ? 'None' : 'All'}

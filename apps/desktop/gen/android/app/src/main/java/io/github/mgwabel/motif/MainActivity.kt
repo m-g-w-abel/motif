@@ -20,6 +20,8 @@ import android.view.KeyEvent
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import androidx.activity.BackEventCompat
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
@@ -45,6 +47,28 @@ class MainActivity : TauriActivity() {
    * ([Storage.pinShortcut]) or a host's pairing page.
    */
   @Volatile private var link: String? = null
+  /** Shows the system back swipe in the page; see [Storage.followBack]. */
+  private var backSwipe: BackSwipe? = null
+
+  /**
+   * Predictive back: tells the page how far the system back swipe has come, so its screen
+   * follows it (`window.motifBack`, `apps/ui/src/lib/back.ts`). Letting go passes the press on
+   * to Tauri's own back handler, which the page answers as it does a back button.
+   */
+  private inner class BackSwipe : OnBackPressedCallback(true) {
+    override fun handleOnBackStarted(backEvent: BackEventCompat) = page("start()")
+    override fun handleOnBackProgressed(backEvent: BackEventCompat) = page("progress(${backEvent.progress})")
+    override fun handleOnBackCancelled() = page("cancel()")
+    override fun handleOnBackPressed() {
+      isEnabled = false
+      onBackPressedDispatcher.onBackPressed()
+      isEnabled = true
+    }
+
+    private fun page(call: String) {
+      webView?.evaluateJavascript("window.motifBack?.$call", null)
+    }
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -161,6 +185,12 @@ class MainActivity : TauriActivity() {
         runOnUiThread { if (!isDestroyed) shortcuts.requestPinShortcut(shortcut, null) }
       }
       return true
+    }
+
+    /** Added when the page asks: Tauri's back handler is in place by then, and the last added gets the swipe first. */
+    @JavascriptInterface
+    fun followBack() = runOnUiThread {
+      if (backSwipe == null) backSwipe = BackSwipe().also { onBackPressedDispatcher.addCallback(this@MainActivity, it) }
     }
 
     @JavascriptInterface

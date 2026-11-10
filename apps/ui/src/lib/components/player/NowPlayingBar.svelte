@@ -12,7 +12,8 @@
   import TrackLabel from './TrackLabel.svelte';
   import Transport from './Transport.svelte';
   import Volume from './Volume.svelte';
-  import { dim, rise } from '../../screens';
+  import { untrack } from 'svelte';
+  import { dim, refresh, rise } from '../../screens';
 
   const { engine, position, sheet, settings, settingsView, views } = getApp();
   let sliding = $state<HTMLElement>();
@@ -31,11 +32,25 @@
     gesture(
       e,
       mapped(settings.current.gestures, 'bar'),
-      { next: () => engine.run({ type: 'next' }), previous: () => engine.run({ type: 'previous' }) },
+      { next: () => skip('next'), previous: () => skip('previous') },
       sliding ? slide(sliding) : undefined,
     );
     sheet.drag(e, 'bar', onTrack ? () => sheet.expand() : undefined);
   }
+
+  // A swipe shows its own skip (`slide`); any other change of track, the new one rises into place.
+  let swiped = 0;
+  function skip(type: 'next' | 'previous') {
+    swiped = performance.now();
+    engine.run({ type });
+  }
+  let shownId: number | undefined = untrack(() => engine.current?.id);
+  $effect(() => {
+    const id = engine.current?.id;
+    if (id === shownId) return;
+    shownId = id;
+    if (sliding && performance.now() - swiped > 1000) refresh(sliding);
+  });
 
   /** The phone's Library and Search buttons: back to that root view, out of Settings. */
   // Only phones have the menu; a window widened with it open leaves it closed.

@@ -30,6 +30,8 @@ export class PlayerSheet {
   step = $state<SheetStep>('now');
   /** The bar or floating player the sheet grows out of, when one is shown. */
   origin: HTMLElement | null = null;
+  /** The morph follows a drag down from the sheet closely, not in its stages (`ExpandedPlayer`). */
+  scrub = false;
   /** Set by the sheet: measures the morph's start and end boxes. */
   measure?: () => void;
 
@@ -61,6 +63,7 @@ export class PlayerSheet {
   }
 
   expand() {
+    this.scrub = false;
     this.measure?.();
     this.settle(1);
   }
@@ -71,6 +74,7 @@ export class PlayerSheet {
       this.step = 'now';
       flushSync();
     }
+    this.scrub = false;
     this.measure?.();
     this.settle(0);
   }
@@ -108,7 +112,10 @@ export class PlayerSheet {
         return end();
       }
       if (!moved && Math.abs(dy) < 8) return;
-      if (!moved) this.measure?.();
+      if (!moved) {
+        this.scrub = from === 'sheet';
+        this.measure?.();
+      }
       moved = true;
       this.dragging = true;
       this.progress = Math.min(1, Math.max(0, startProgress - dy / height));

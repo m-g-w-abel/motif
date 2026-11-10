@@ -12,7 +12,11 @@ grouped by phase of the plan.
   button and seek bar each moving to their place, while the bar's buttons
   drop away. The queue, lyrics, menus and sheets rise from the bottom. A
   swipe on a song shows a green + (add to the queue) or a red × (remove),
-  and the songs below a removed one slide up.
+  and the songs below a removed one slide up. Swiping now playing down moves
+  it with your finger, and on Android the system back swipe moves the screen
+  too. Dialogs, the changelog and the selection bar animate in and out, the
+  player bar's song changes smoothly, and so do search results and the
+  Recently Played switch.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

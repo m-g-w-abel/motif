@@ -86,6 +86,23 @@ export function rise(_node: HTMLElement): TransitionConfig {
   return { duration: 240, easing: cubicOut, css: (_t, u) => `transform: translateY(${u * 100}%)` };
 }
 
+/**
+ * Svelte `in:`/`out:` transition for a dialog: it grows a little into place
+ * and fades, and shrinks away. A native `<dialog>` its form has closed
+ * already opens again (no longer from the form) while it goes.
+ */
+export function pop(node: HTMLElement, _params?: unknown, options?: { direction?: 'in' | 'out' | 'both' }): TransitionConfig {
+  if (options?.direction === 'out' && node instanceof HTMLDialogElement && !node.open) node.showModal();
+  if (still()) return { duration: 0 };
+  return { duration: 180, easing: cubicOut, css: (t) => `opacity: ${t}; transform: scale(${0.95 + 0.05 * t})` };
+}
+
+/** Shows that what `el` holds has just changed (results for a new search, another list): it rises a little into place. */
+export function refresh(el: HTMLElement) {
+  if (still()) return;
+  el.animate([{ opacity: 0.4, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }], { duration: 180, easing: CURVE });
+}
+
 /** Svelte transition for the dimming behind a sheet or menu. */
 export function dim(_node: HTMLElement): TransitionConfig {
   return { duration: still() ? 0 : 200, css: (t) => `opacity: ${t}` };

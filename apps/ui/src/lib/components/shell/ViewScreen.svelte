@@ -14,7 +14,7 @@
   import { fixedData, playedData, trackListData } from '../../sources.svelte';
   import { viewOptions, type OptionsKey } from '../../viewOptions';
   import { CATEGORIES, viewTitle } from '../../views.svelte';
-  import { shared } from '../../screens';
+  import { refresh, shared } from '../../screens';
   import { canDecorate } from '../../windowChrome';
   import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
@@ -157,6 +157,14 @@
       : undefined,
   );
   const first = $derived(rows[0]);
+  // The recents' Songs / Albums switch: the other list rises into place.
+  let body = $state<HTMLElement>();
+  let listShown = untrack(() => show);
+  $effect(() => {
+    if (show === listShown || !body) return;
+    listShown = show;
+    refresh(body);
+  });
   /** The page's cover and title fly from and to its card (`AlbumGrid`). */
   const card = view.kind === 'album' ? `album:${view.key}` : view.kind === 'playlist' ? `playlist:${view.id}` : '';
 </script>
@@ -284,7 +292,7 @@
     </div>
   {/if}
 
-  <div class="body">
+  <div class="body" bind:this={body}>
     {#if view.kind === 'home'}
       <ul class="categories">
         {#each CATEGORIES as category (category.kind)}

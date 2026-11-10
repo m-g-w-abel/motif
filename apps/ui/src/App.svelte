@@ -306,6 +306,12 @@
 
   // Android back closes the topmost layer. Menus and dialogs close through
   // their own Esc handling (the pair dialog also cancels its code there).
+  /** The screen showing in the music area, which a swipe back moves (not one already leaving). */
+  const shownScreen = () => document.querySelector<HTMLElement>('main > .screen:not([data-leaving])');
+  const followScreen = () => {
+    const screen = shownScreen();
+    return screen ? follow(screen) : undefined;
+  };
   const escape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   $effect(() =>
     routeBack(() => [
@@ -317,10 +323,10 @@
       { open: helpOpen || views.changelog || settingsView.pairing || settingsView.addingEngine, close: escape },
       { open: editing, close: () => (editing = false) },
       { open: layout.arranging, close: () => (layout.arranging = false) },
-      { open: !!settingsView.group, close: () => settingsView.back() },
+      { open: !!settingsView.group, close: () => settingsView.back(), follow: followScreen },
       { open: sheet.open, close: () => sheet.back() },
       { open: !!views.menu, close: () => (views.menu = null) },
-      { open: !!views.parent, close: () => views.back() },
+      { open: !!views.parent, close: () => views.back(), follow: followScreen },
     ]),
   );
   const player = $derived(settings.current.player);
@@ -339,12 +345,11 @@
   function swipeBack(e: PointerEvent) {
     if ((e.target as Element).closest('[role="slider"], input, textarea, .resize, .divider, .grip, .chips')) return;
     // The screen follows the finger, when there is somewhere to go back to.
-    const screen = (e.currentTarget as HTMLElement).querySelector<HTMLElement>(':scope > .screen:not([data-leaving])');
     gesture(
       e,
       mapped(settings.current.gestures, 'view'),
       { back: () => (settingsView.group ? settingsView.back() : views.back()) },
-      screen && (settingsView.group || views.parent) ? follow(screen) : undefined,
+      settingsView.group || views.parent ? followScreen() : undefined,
     );
   }
 </script>

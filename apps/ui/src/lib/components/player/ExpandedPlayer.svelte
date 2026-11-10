@@ -98,7 +98,13 @@
   let drawn = 0;
   /** The background's corner radius at the bar (px) and its scale there, on phones. */
   let corner: { r: number; sx: number; sy: number } | null = null;
-  /** MOVE, or MOVE_UNDER for text, set per measure. */
+  /**
+   * GROW and MOVE (or MOVE_UNDER for text), set per measure. A drag down
+   * from the sheet (`sheet.scrub`) runs both over the whole drag instead, so
+   * the background and the movers follow the finger from its first pixel.
+   */
+  let growing = GROW;
+  let moving = MOVE;
   let textMove = MOVE;
   let ghosts = $state<HTMLElement>();
 
@@ -167,7 +173,7 @@
     const rb = b.getBoundingClientRect();
     const [ga, gb] = mode === 'text' ? [glyph(a), glyph(b)] : [ra, rb];
     b.style.transformOrigin = '0 0';
-    const move = mode === 'text' ? textMove : MOVE;
+    const move = mode === 'text' ? textMove : moving;
     if (kind === 'cross' && mode === 'text') {
       const [ia, ib] = [ink(a), ink(b)];
       // Same text on one line in both: the sheet's travels alone, matched by width, since any
@@ -188,7 +194,7 @@
       const sx = at.width / o.width;
       const dx = at.left + (ra.left - o.left) * sx - ra.left;
       const dy = at.top + (ra.top - o.top) * (at.height / o.height) - ra.top;
-      return [rising(b), { el: copy(a, from, at), ghost: true, dx, dy, sx, sy: 1, move: GROW, hide: [0.3, 0.5] }];
+      return [rising(b), { el: copy(a, from, at), ghost: true, dx, dy, sx, sy: 1, move: growing, hide: [0.3, 0.5] }];
     }
     const ghost = { el: copy(a, from, at), ghost: true, ...fit(ra, ga, gb, mode), move };
     return [
@@ -219,9 +225,12 @@
       const bd = backdrop.getBoundingClientRect();
       const art = section.querySelector('.frame')?.getBoundingClientRect();
       const info = section.querySelector('.info')?.getBoundingClientRect();
-      textMove = art && info && info.top >= art.bottom ? MOVE_UNDER : MOVE;
+      const whole: Span = [0, 1];
+      growing = sheet.scrub ? whole : GROW;
+      moving = sheet.scrub ? whole : MOVE;
+      textMove = sheet.scrub ? whole : art && info && info.top >= art.bottom ? MOVE_UNDER : MOVE;
       const grow = fit(bd, bd, o, 'box');
-      const found: Part[] = [{ el: backdrop, ghost: false, ...grow, move: GROW }];
+      const found: Part[] = [{ el: backdrop, ghost: false, ...grow, move: growing }];
       // Phones: the bar is a rounded card inset from the edges, whose corners open out to the screen's.
       const r = views.phone ? parseFloat(getComputedStyle(origin).borderTopLeftRadius) || 0 : 0;
       corner = r ? { r, sx: grow.sx, sy: grow.sy } : null;
@@ -287,13 +296,13 @@
     }
     if (backdrop) {
       // A paint, not a transform, but of one layer for a quarter second, and only on phones.
-      const t = corner ? 1 - ramp(p, GROW) : 0;
-      backdrop.style.transition = instant ? 'none' : `border-radius ${timing(GROW, from, p).replace(' ', ` ${CURVE} `)}, ${backdrop.style.transition}`;
+      const t = corner ? 1 - ramp(p, growing) : 0;
+      backdrop.style.transition = instant ? 'none' : `border-radius ${timing(growing, from, p).replace(' ', ` ${CURVE} `)}, ${backdrop.style.transition}`;
       backdrop.style.borderRadius = corner && t ? `${(corner.r * t) / corner.sx}px / ${(corner.r * t) / corner.sy}px` : '';
     }
     section.style.opacity = parts.length ? '' : String(p);
-    tint.style.transition = instant ? 'none' : `opacity ${timing(GROW, from, p)}`;
-    tint.style.opacity = parts.length ? String(1 - ramp(p, GROW)) : '0';
+    tint.style.transition = instant ? 'none' : `opacity ${timing(growing, from, p)}`;
+    tint.style.opacity = parts.length ? String(1 - ramp(p, growing)) : '0';
   }
 
   /** The parts a phone's step (now playing, half or full queue, lyrics) shows or hides. */
