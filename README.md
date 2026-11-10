@@ -66,7 +66,8 @@ control isn't an add-on: it's the normal code path.
   plays its songs in its order, and has a Select mode to play, queue or add
   several songs to a playlist at once.
   Phones show one widget per view, a bottom bar (mini player, progress,
-  Library / Search / Menu, the menu holding the engine switcher and Settings),
+  Library / Search / Menu, the menu holding the engine switcher, Settings,
+  the in-app [changelog](CHANGELOG.md) and Help, also in the desktop left panel),
   a full-screen now-playing sheet that steps by drag or handle between now
   playing, a half and a full reorderable queue, and lyrics, and touch
   gestures, each remappable in Settings, which on a phone is a list of groups
