@@ -5,6 +5,10 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Animated screen changes**: opening and leaving a view slides it, and an
+  album's or playlist's cover and title fly from its tile to its page and
+  back (the Library's categories too). A song swiped into the queue slides
+  out and back in, and one swiped out of the queue slides away.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

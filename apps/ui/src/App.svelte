@@ -35,6 +35,7 @@
   import ContentArea from './lib/components/shell/ContentArea.svelte';
   import ViewScreen from './lib/components/shell/ViewScreen.svelte';
   import { devViews, parseViewLink, Views } from './lib/views.svelte';
+  import { arrive, leave, motion } from './lib/screens';
   import PlaylistPrompt from './lib/components/playlists/PlaylistPrompt.svelte';
   import { Playlists } from './lib/playlists.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
@@ -323,6 +324,17 @@
     ]),
   );
   const player = $derived(settings.current.player);
+  // A new screen in the music area animates in; phones' Settings list and each group are screens of their own.
+  const phoneSettings = $derived(settingsView.phone && (settingsView.list ? 'list' : settingsView.group));
+  const screen = $derived(settingsView.group ? `settings:${phoneSettings || ''}` : allSongs ? 'songs' : views.top);
+  // How deep the screen is, so leaving it goes forward or back: Settings sits above the views.
+  const depth = $derived(views.stack.length + (settingsView.group ? (phoneSettings && phoneSettings !== 'list' ? 2 : 1) : 0));
+  let shownDepth = untrack(() => depth);
+  function leaving(node: HTMLElement) {
+    const how = motion(shownDepth, depth);
+    shownDepth = depth;
+    return leave(node, how);
+  }
   /** Touch: swiping right on a view or Settings goes back, unless the press drags a control or scrolls a row (Search's chips) sideways. */
   function swipeBack(e: PointerEvent) {
     if ((e.target as Element).closest('[role="slider"], input, textarea, .resize, .divider, .grip, .chips')) return;
@@ -355,15 +367,19 @@
     {/if}
 
     <main onpointerdown={swipeBack}>
-      {#if settingsView.group}
-        <SettingsScreen />
-      {:else if allSongs}
-        {#key `${layout.source}/${layout.activeId}`}
-          <ContentArea onEditLayout={() => (editing = true)} />
-        {/key}
-      {:else}
-        {#key views.top}<ViewScreen />{/key}
-      {/if}
+      {#key screen}
+        <div class="screen" in:arrive out:leaving>
+          {#if settingsView.group}
+            <SettingsScreen />
+          {:else if allSongs}
+            {#key `${layout.source}/${layout.activeId}`}
+              <ContentArea onEditLayout={() => (editing = true)} />
+            {/key}
+          {:else}
+            <ViewScreen />
+          {/if}
+        </div>
+      {/key}
     </main>
 
     <!-- Phones always have the bar: it holds the view buttons and the menu. -->
@@ -428,8 +444,16 @@
   main {
     flex: 1;
     min-height: 0;
+    /* The leaving screen and the arriving one share the area while they change over. */
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     /* Sideways moves are swipes (back, queue a row), not browser pans. */
     touch-action: pan-y;
+  }
+
+  .screen {
+    grid-area: 1 / 1;
+    min-height: 0;
   }
 
   .error {

@@ -14,6 +14,7 @@
   import { fixedData, playedData, trackListData } from '../../sources.svelte';
   import { viewOptions, type OptionsKey } from '../../viewOptions';
   import { CATEGORIES, viewTitle } from '../../views.svelte';
+  import { shared } from '../../screens';
   import { canDecorate } from '../../windowChrome';
   import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
@@ -156,6 +157,8 @@
       : undefined,
   );
   const first = $derived(rows[0]);
+  /** The page's cover and title fly from and to its card (`AlbumGrid`). */
+  const card = view.kind === 'album' ? `album:${view.key}` : view.kind === 'playlist' ? `playlist:${view.id}` : '';
 </script>
 
 {#snippet toolbar()}
@@ -225,10 +228,10 @@
 
 {#snippet hero()}
   <div class="hero">
-    <div class="cover">
+    <div class="cover" use:shared={`cover:${card}`}>
       <Artwork track={first?.track} art={playlist ? playlist.art : first?.details ? first.details.art : undefined} {title} />
     </div>
-    <h2>{title}</h2>
+    <h2 use:shared={`title:${card}`}>{title}</h2>
     <p class="line">
       {#if view.kind === 'album'}{first ? albumLine(first.track, first.details) : ''}{:else}{rows.length}
         {rows.length === 1 ? 'song' : 'songs'}{/if}
@@ -259,8 +262,8 @@
   {#if category}
     <div class="head">
       <div class="title-row">
-        <span class="dot" style:--c={category.colour}><Icon name={category.icon} size={22} /></span>
-        <h1>{category.label}</h1>
+        <span class="dot" style:--c={category.colour} use:shared={`dot:${category.kind}`}><Icon name={category.icon} size={22} /></span>
+        <h1><span use:shared={`category:${category.kind}`}>{category.label}</span></h1>
       </div>
     {#if recents}
       <div class="segmented switch" role="radiogroup" aria-label="Show">
@@ -287,8 +290,8 @@
         {#each CATEGORIES as category (category.kind)}
           <li>
             <button onclick={() => views.open({ kind: category.kind })}>
-              <span class="dot" style:--c={category.colour}><Icon name={category.icon} size={18} /></span>
-              {category.label}
+              <span class="dot" style:--c={category.colour} use:shared={`dot:${category.kind}`}><Icon name={category.icon} size={18} /></span>
+              <span use:shared={`category:${category.kind}`}>{category.label}</span>
             </button>
           </li>
         {/each}
@@ -540,7 +543,10 @@
   }
 
   .hero h2 {
-    margin: 0;
+    /* As wide as its words, so its cover-to-card flight lines up with the card's title. */
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
     font-size: 1.4em;
   }
 

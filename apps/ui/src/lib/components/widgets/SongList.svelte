@@ -3,7 +3,7 @@
   import { getApp, getViewState } from '../../context';
   import { addFolder } from '../../folders';
   import { trackTitle } from '../../format';
-  import { gesture, mapped } from '../../gestures';
+  import { gesture, mapped, slide } from '../../gestures';
   import { navTarget, scrollInto } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
@@ -129,7 +129,7 @@
       const track = data.track(i);
       if (track) queueTracks(engine, [track], next);
     };
-    gesture(e, mapped(settings.current.gestures, 'row'), { queue: () => queue(), 'play-next': () => queue(true) });
+    gesture(e, mapped(settings.current.gestures, 'row'), { queue: () => queue(), 'play-next': () => queue(true) }, slide(e.currentTarget as HTMLElement));
   }
   function activate(i: number) {
     if (selecting) view.browse.picked = toggle(picked, itemAt, i);

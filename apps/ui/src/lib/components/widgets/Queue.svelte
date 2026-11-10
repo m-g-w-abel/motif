@@ -2,7 +2,7 @@
   import { getApp } from '../../context';
   import { menu } from '../../contextMenu.svelte';
   import { formatTime, trackTitle } from '../../format';
-  import { gesture, mapped } from '../../gestures';
+  import { gesture, mapped, OUT, slide } from '../../gestures';
   import { queueMenu } from '../../menus';
   import type { QueueItem } from '../../protocol/QueueItem';
   import { moveItem } from '../../reorder';
@@ -85,7 +85,14 @@
   <div
     class="entry"
     onpointerdown={queued && engine.can('queue')
-      ? (e) => gesture(e, mapped(settings.current.gestures, 'queued'), { remove: () => engine.run({ type: 'remove_item', item_id: item.id }) })
+      ? (e) =>
+          gesture(
+            e,
+            mapped(settings.current.gestures, 'queued'),
+            // Once the row has slid out: removing it sooner drops it mid-slide.
+            { remove: () => setTimeout(() => engine.run({ type: 'remove_item', item_id: item.id }), OUT) },
+            slide(e.currentTarget as HTMLElement, true),
+          )
       : undefined}
     class:failed={item.error} class:current={nowPlaying && item.id === engine.current?.id}>
     <button

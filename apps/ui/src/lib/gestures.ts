@@ -112,12 +112,17 @@ export interface Slide {
   end(swipe: Gesture | null): void;
 }
 
+/** How long a swiped element takes to slide out. */
+export const OUT = 150;
+
 /**
  * Moves `el` with a swipe by `transform` alone, in short transitions: it
  * follows the finger, then slides out the swipe's way and back in from the
- * other side (the next track), or springs back.
+ * other side (the next track, a queued row), or springs back. With `away`
+ * (a row removed) it stays out, springing back only if still shown a while
+ * later (the engine refused).
  */
-export function slide(el: HTMLElement): Slide {
+export function slide(el: HTMLElement, away = false): Slide {
   const to = (x: number, ms: number) => {
     el.style.transition = ms ? `transform ${ms}ms ease-out` : 'none';
     el.style.transform = x ? `translateX(${x}px)` : '';
@@ -127,12 +132,13 @@ export function slide(el: HTMLElement): Slide {
     end(swipe) {
       if (!swipe) return to(0, 200);
       const out = swipe === 'swipe-left' ? -el.offsetWidth : el.offsetWidth;
-      to(out, 150);
+      to(out, OUT);
       setTimeout(() => {
+        if (away) return to(0, 200);
         to(-out, 0);
         void el.offsetWidth; // lays out the jump, so the slide in starts from it
         to(0, 200);
-      }, 150);
+      }, away ? 1000 : OUT);
     },
   };
 }
@@ -170,7 +176,9 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
   const move = (ev: PointerEvent) => {
     if (ev.pointerId !== e.pointerId) return;
     const axis = press.move(ev.clientX, ev.clientY);
-    if (axis === 'x' && swipes) shown?.move(press.offset(ev.clientX));
+    // Only the ways that do something follow the finger (a row moves left to queue, not right).
+    const dx = press.offset(ev.clientX);
+    if (axis === 'x' && swipes) shown?.move(map[dx < 0 ? 'swipe-left' : 'swipe-right'] ? dx : 0);
     if (axis !== 'y') return;
     const action = map['drag-vertical'];
     if (action && isFollow(action)) {

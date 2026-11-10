@@ -76,7 +76,9 @@ control isn't an add-on: it's the normal code path.
   playing, a half and a full reorderable queue, and lyrics, and touch
   gestures (swipe right to go back, swipe a song left to queue it or out of
   the queue, swipe now playing down to close it), each remappable in Settings, which on a phone is a list of groups
-  with a search.
+  with a search. Screen changes animate, with an album's cover and title
+  flying from its tile to its page (short transform and opacity transitions,
+  nothing running while idle).
 
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable
