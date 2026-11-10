@@ -36,7 +36,7 @@
   let field = $state<HTMLInputElement>();
   $effect(() => field?.focus());
 
-  // A shortcut's limit: lists of names are drawn whole, so they stop here.
+  // shortcut: artist/folder lists are drawn whole and stop at 200; page them when someone needs more.
   const NAMES = 200;
   const ALBUM_SORT = viewOptions({}, 'albums').sort ?? [];
   let artists = $state.raw<LibraryArtist[]>([]);
