@@ -326,6 +326,7 @@ async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, Str
         query,
         LibraryQuery::Play { .. }
             | LibraryQuery::PlayAlbum { .. }
+            | LibraryQuery::PlayFolder { .. }
             | LibraryQuery::PlayPlaylist { .. }
     ) {
         state.live.play(&library, query).await?;
@@ -382,6 +383,8 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | LibraryQuery::Tracks { .. }
             | LibraryQuery::Groups { .. }
             | LibraryQuery::Albums { .. }
+            | LibraryQuery::Artists { .. }
+            | LibraryQuery::Folders { .. }
             | LibraryQuery::RecentlyPlayed { .. }
             | LibraryQuery::RecentlyPlayedAlbums { .. }
             | LibraryQuery::AlbumPosition { .. }
@@ -393,6 +396,7 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | LibraryQuery::PlaylistTracks { .. } => None,
             LibraryQuery::Play { .. }
             | LibraryQuery::PlayAlbum { .. }
+            | LibraryQuery::PlayFolder { .. }
             | LibraryQuery::PlayPlaylist { .. } => Some(Scope::Playback),
             LibraryQuery::AddRoot { .. }
             | LibraryQuery::RemoveRoot { .. }

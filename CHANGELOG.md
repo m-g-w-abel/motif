@@ -5,6 +5,10 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Search**: one field for the whole library, with filters for songs,
+  albums, artists, album artists, folders and playlists. All shows the
+  best-matching artist and their albums first, then other albums, then songs.
+  Tap a folder to play it, or an artist to see their albums and songs.
 - **Swipes** on touch screens: swipe right to go back, swipe a song left to
   add it to the queue (or, in the queue, to remove it), and swipe down anywhere
   on now playing to close it. Dragging the artwork up or down now does this

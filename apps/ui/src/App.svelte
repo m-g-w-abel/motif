@@ -323,9 +323,9 @@
     ]),
   );
   const player = $derived(settings.current.player);
-  /** Touch: swiping right on a view or Settings goes back, unless the press drags a control sideways. */
+  /** Touch: swiping right on a view or Settings goes back, unless the press drags a control or scrolls a row (Search's chips) sideways. */
   function swipeBack(e: PointerEvent) {
-    if ((e.target as Element).closest('[role="slider"], input, textarea, .resize, .divider, .grip')) return;
+    if ((e.target as Element).closest('[role="slider"], input, textarea, .resize, .divider, .grip, .chips')) return;
     gesture(e, mapped(settings.current.gestures, 'view'), { back: () => (settingsView.group ? settingsView.back() : views.back()) });
   }
 </script>

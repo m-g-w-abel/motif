@@ -541,8 +541,29 @@ pub enum LibraryQuery {
     },
     Albums {
         search: Option<String>,
+        /// Only this album artist's albums (a track without one counts under its artist).
+        #[serde(default)]
+        #[ts(optional)]
+        artist: Option<String>,
         #[serde(default)]
         sort: Vec<SortRule>,
+        offset: u32,
+        limit: u32,
+    },
+    /// Artists whose name matches `search` (as [`LibraryQuery::Tracks`]
+    /// does), by name. `album_artists` lists album artists instead (a track
+    /// without one counts under its artist).
+    Artists {
+        search: Option<String>,
+        #[serde(default)]
+        album_artists: bool,
+        offset: u32,
+        limit: u32,
+    },
+    /// Folders holding tracks whose own name (not the folders above it)
+    /// matches `search`, by path.
+    Folders {
+        search: Option<String>,
         offset: u32,
         limit: u32,
     },
@@ -585,6 +606,12 @@ pub enum LibraryQuery {
         #[serde(default)]
         #[ts(optional)]
         start: Option<u32>,
+    },
+    /// Makes the tracks in a folder and the folders below it the context,
+    /// by path, and plays from `start`.
+    PlayFolder {
+        path: String,
+        start: u32,
     },
     /// The tracks of these albums, album after album in the order given,
     /// e.g. to queue them.
@@ -695,6 +722,16 @@ pub enum QueryResult {
         total: u32,
         offset: u32,
         albums: Vec<LibraryAlbum>,
+    },
+    Artists {
+        total: u32,
+        offset: u32,
+        artists: Vec<LibraryArtist>,
+    },
+    Folders {
+        total: u32,
+        offset: u32,
+        folders: Vec<LibraryFolder>,
     },
     Position {
         index: Option<u32>,
@@ -863,6 +900,28 @@ pub struct LibraryAlbum {
     pub title: String,
     pub artist: String,
     pub year: Option<u32>,
+    pub tracks: u32,
+    #[ts(type = "number")]
+    pub duration_ms: u64,
+    pub art: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LibraryArtist {
+    pub name: String,
+    pub albums: u32,
+    pub tracks: u32,
+    /// Artwork of one of their albums.
+    pub art: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LibraryFolder {
+    /// As used by [`LibraryQuery::PlayFolder`].
+    pub path: String,
+    /// Tracks directly in the folder.
     pub tracks: u32,
     #[ts(type = "number")]
     pub duration_ms: u64,
