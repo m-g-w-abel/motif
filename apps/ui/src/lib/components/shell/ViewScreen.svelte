@@ -13,7 +13,7 @@
   import { DEFAULT_RULES, sortRules, viewSort } from '../../sort.svelte';
   import { fixedData, playedData, trackListData } from '../../sources.svelte';
   import { viewOptions, type OptionsKey } from '../../viewOptions';
-  import { CATEGORIES, viewTitle } from '../../views.svelte';
+  import { CATEGORIES, viewTitle, type View } from '../../views.svelte';
   import { refresh, shared } from '../../screens';
   import { canDecorate } from '../../windowChrome';
   import Icon from '../Icon.svelte';
@@ -29,8 +29,10 @@
 
   // Every view but desktop's All Songs, which the layouts arrange (ContentArea).
   // The parent re-creates this component for each view.
+  // `view`: another than the top one (the view a swipe back is going to, drawn beneath).
+  const { view: given }: { view?: View } = $props();
   const { engine, library, layout, settings, views, playlists } = getApp();
-  const view = untrack(() => views.top);
+  const view = untrack(() => given ?? views.top);
 
   // The Albums view's grid keeps its own search and selection, apart from All Songs'.
   const area: ViewState = $state({ source: 'library', layoutId: `view:${view.kind}`, browse: layout.browseState(`view:${view.kind}`) });
@@ -237,7 +239,12 @@
 {#snippet hero()}
   <div class="hero">
     <div class="cover" use:shared={`cover:${card}`}>
-      <Artwork track={first?.track} art={playlist ? playlist.art : first?.details ? first.details.art : undefined} {title} />
+      <!-- The card's artwork until the songs arrive, so the cover it flew from never blinks out. -->
+      <Artwork
+        track={first?.track}
+        art={playlist ? playlist.art : first?.details ? first.details.art : view.kind === 'album' && view.art ? view.art : undefined}
+        {title}
+      />
     </div>
     <h2 use:shared={`title:${card}`}>{title}</h2>
     <p class="line">

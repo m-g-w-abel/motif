@@ -46,11 +46,11 @@ let arrivals: [string, HTMLElement][] = [];
  */
 export function leave(node: HTMLElement, how: Motion): TransitionConfig {
   node.dataset.leaving = '';
-  if (still()) return { duration: 0 };
+  if (still() || quiet) return { duration: 0 };
   left = new Map();
   leftAt = performance.now();
   for (const el of node.querySelectorAll<HTMLElement>('[data-shared]'))
-    if (el.offsetWidth) left.set(el.dataset.shared!, { el, box: el.getBoundingClientRect(), font: parseFloat(getComputedStyle(el).fontSize) });
+    if (el.offsetWidth) left.set(el.dataset.shared!, leftOf(el));
   for (const [name, el] of arrivals) match(name, el);
   node.style.pointerEvents = 'none';
   const dragged = Number(/translateX\((-?[\d.]+)px\)/.exec(node.style.transform)?.[1] ?? 0);
@@ -136,10 +136,15 @@ export function slideRows(rows: () => Iterable<HTMLElement>) {
   };
 }
 
-/** Svelte `in:` transition for the arriving screen: it fades in, mostly once the leaving one has gone. */
-export function arrive(_node: HTMLElement): TransitionConfig {
-  if (still()) return { duration: 0 };
-  return { duration: DURATION, css: (t) => `opacity: ${t * t}` };
+/**
+ * Svelte `in:` transition for the arriving screen: it fades in, mostly once
+ * the leaving one has gone; going back, it comes in from the left too, as
+ * the forward move took it away.
+ */
+export function arrive(node: HTMLElement, how: () => Motion): TransitionConfig {
+  if (still() || quiet) return { duration: 0 };
+  const x = how() === 'back' ? -0.08 * node.offsetWidth : 0;
+  return { duration: DURATION, easing: cubicOut, css: (t, u) => `transform: translateX(${x * u}px); opacity: ${t * t}` };
 }
 
 /** What a copy keeps of its original's look, which came partly from rules on its ancestors. */
@@ -170,12 +175,36 @@ function match(name: string, el: HTMLElement) {
   return true;
 }
 
-function fly(from: Left, el: HTMLElement) {
-  const to = el.getBoundingClientRect();
-  if (!to.width || !from.el.isConnected) return;
+/** Whether `el` is drawn as it will stay: its artwork (if any) loaded, or settled on its placeholder. */
+function drawn(el: HTMLElement) {
+  const art = el.matches('.art') ? el : el.querySelector<HTMLElement>('.art');
+  if (!art) return true;
+  const img = art.querySelector('img');
+  return img ? img.complete && img.naturalWidth > 0 : !!art.style.background;
+}
+
+/** Shows `el` in place of `ghost` once it is drawn (a second at most), so the copy never gives way to an empty cover. */
+function handOver(el: HTMLElement, ghost: HTMLElement, since = performance.now()) {
+  if (!drawn(el) && performance.now() - since < 1000) return void requestAnimationFrame(() => handOver(el, ghost, since));
+  el.style.visibility = '';
+  ghost.remove();
+}
+
+/** What `el` would be as a shared element leaving now. */
+const leftOf = (el: HTMLElement): Left => ({ el, box: el.getBoundingClientRect(), font: parseFloat(getComputedStyle(el).fontSize) });
+
+/**
+ * A copy above everything that carries shared element `from` to `el` (at
+ * box `to`): text as a copy of the new one, scaled evenly, anything else as
+ * a copy of the old. Returns it with its start and end transforms, both
+ * originals hidden; the caller animates it and hands over.
+ */
+function flight(from: Left, el: HTMLElement, to: DOMRect) {
   const text = !el.firstElementChild;
   const of = text ? el : from.el;
   const ghost = of.cloneNode(true) as HTMLElement;
+  // The original's lazy, async image would decode afresh and draw nothing for a frame.
+  for (const img of ghost.querySelectorAll('img')) Object.assign(img, { loading: 'eager', decoding: 'sync' });
   const look = getComputedStyle(of);
   for (const p of LOOK) ghost.style.setProperty(p, look.getPropertyValue(p));
   const start = text ? to : from.box;
@@ -190,6 +219,7 @@ function fly(from: Left, el: HTMLElement) {
       zIndex: '30',
       pointerEvents: 'none',
       transformOrigin: '0 0',
+      visibility: 'visible',
     });
   place(1);
   document.body.append(ghost);
@@ -198,15 +228,89 @@ function fly(from: Left, el: HTMLElement) {
   if (Math.abs(k - 1) > 0.01) place(k);
   const font = parseFloat(getComputedStyle(el).fontSize);
   const move = text ? flip(from.box, to, from.font / font) : flip(to, from.box);
-  const transform = `translate(${move.dx * k}px, ${move.dy * k}px) scale(${move.sx}, ${move.sy})`;
+  const away = `translate(${move.dx * k}px, ${move.dy * k}px) scale(${move.sx}, ${move.sy})`;
   from.el.style.visibility = el.style.visibility = 'hidden';
   // Text starts over the old place and travels home; a copy of the old element travels to the new one.
-  ghost.style.transform = text ? transform : '';
-  void ghost.offsetWidth;
-  ghost.style.transition = `transform ${DURATION}ms ${CURVE}`;
-  ghost.style.transform = text ? '' : transform;
-  setTimeout(() => {
-    el.style.visibility = '';
-    ghost.remove();
-  }, DURATION);
+  return { ghost, frames: text ? [{ transform: away }, { transform: 'none' }] : [{ transform: 'none' }, { transform: away }] };
+}
+
+function fly(from: Left, el: HTMLElement) {
+  const box = el.getBoundingClientRect();
+  // Where it will be once its screen has slid into place.
+  const screen = el.closest<HTMLElement>('.screen');
+  const shift = screen ? new DOMMatrix(getComputedStyle(screen).transform).m41 : 0;
+  const to = new DOMRect(box.x - shift, box.y, box.width, box.height);
+  if (!to.width || !from.el.isConnected) return;
+  const { ghost, frames } = flight(from, el, to);
+  ghost.animate(frames, { duration: DURATION, easing: CURVE, fill: 'forwards' });
+  setTimeout(() => handOver(el, ghost), DURATION);
+}
+
+/** Animations a drag scrubs (Web Animations): paused, moved by `seek`, then played on to the end or back to the start. */
+export class Scrub {
+  constructor(readonly animations: Animation[]) {
+    for (const a of animations) a.pause();
+  }
+
+  /** Puts each animation at `p` (0 to 1) of its length. */
+  seek(p: number) {
+    const at = Math.min(1, Math.max(0, p));
+    for (const a of this.animations) a.currentTime = at * Number(a.effect?.getComputedTiming().duration ?? 0);
+  }
+
+  /** Plays on to the end (`forward`) or back to the start, then calls `done` once, all finished. */
+  release(forward: boolean, done: () => void) {
+    for (const a of this.animations) {
+      if (forward) a.play();
+      else a.reverse();
+    }
+    // Cancelled ones (their element gone) count as finished.
+    void Promise.allSettled(this.animations.map((a) => a.finished)).then(done);
+  }
+}
+
+/** Whether the next screen change happens at once: a drag has already shown it (`backScrub`). */
+let quiet = false;
+/** Changes screens with `change` at once, as a scrubbed drag has already drawn the change. */
+export function quietly(change: () => void) {
+  quiet = true;
+  change();
+  requestAnimationFrame(() => requestAnimationFrame(() => (quiet = false)));
+}
+
+/**
+ * A swipe back's change from `screen` to `under` (the screen it goes back
+ * to, drawn beneath, still): the one on top slides off to the right, the one
+ * beneath comes in from the left, and their shared elements (an album's
+ * cover and title, tile ↔ page) travel between them, all as far as the
+ * finger has gone. `drop()` removes the copies once the change is over.
+ */
+export function backScrub(screen: HTMLElement, under: HTMLElement) {
+  const width = screen.offsetWidth;
+  const timing: KeyframeAnimationOptions = { duration: DURATION, fill: 'both', easing: 'linear' };
+  const ghosts: HTMLElement[] = [];
+  const hidden: HTMLElement[] = [];
+  const animations: Animation[] = [];
+  if (!still())
+    for (const el of screen.querySelectorAll<HTMLElement>('[data-shared]')) {
+      const to = under.querySelector<HTMLElement>(`[data-shared="${CSS.escape(el.dataset.shared!)}"]`);
+      if (!el.offsetWidth || !to?.offsetWidth) continue;
+      const { ghost, frames } = flight(leftOf(el), to, to.getBoundingClientRect());
+      ghosts.push(ghost);
+      hidden.push(el, to);
+      animations.push(ghost.animate(frames, timing));
+    }
+  animations.push(
+    screen.animate([{ transform: 'none' }, { transform: `translateX(${width}px)` }], timing),
+    under.animate([{ transform: `translateX(${-0.08 * width}px)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }], timing),
+  );
+  return {
+    scrub: new Scrub(animations),
+    /** Back to how things were (the swipe was cancelled), or done with the copies (it went back). */
+    drop(restore: boolean) {
+      for (const g of ghosts) g.remove();
+      if (restore) for (const el of hidden) el.style.visibility = '';
+      for (const a of animations) a.cancel();
+    },
+  };
 }

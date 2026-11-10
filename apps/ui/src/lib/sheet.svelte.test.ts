@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PlayerSheet, STEP, released } from './sheet.svelte';
+import { PlayerSheet, STEP, released, stepTo } from './sheet.svelte';
 
 function opened(step?: 'half' | 'full' | 'lyrics') {
   const sheet = new PlayerSheet();
@@ -83,5 +83,18 @@ describe('released', () => {
     expect(released(STEP + 20)).toBe('back');
     expect(released(STEP / 2)).toBeNull();
     expect(released(-STEP / 2)).toBeNull();
+  });
+});
+
+describe('stepTo', () => {
+  it('goes up towards the full queue and back towards now playing, then closed', () => {
+    expect(stepTo('now', 'up')).toBe('half');
+    expect(stepTo('half', 'up')).toBe('full');
+    expect(stepTo('full', 'up')).toBeNull();
+    expect(stepTo('lyrics', 'up')).toBeNull();
+    expect(stepTo('full', 'back')).toBe('half');
+    expect(stepTo('half', 'back')).toBe('now');
+    expect(stepTo('lyrics', 'back')).toBe('now');
+    expect(stepTo('now', 'back')).toBe('closed');
   });
 });

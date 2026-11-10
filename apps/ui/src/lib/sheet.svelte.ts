@@ -18,6 +18,12 @@ export function released(dy: number): 'tap' | 'up' | 'back' | null {
   return dy >= STEP ? 'back' : null;
 }
 
+/** The step a drag or a press goes to: up towards the full queue, or back towards now playing and then closed. */
+export function stepTo(step: SheetStep, way: 'up' | 'back'): SheetStep | 'closed' | null {
+  if (way === 'up') return step === 'now' ? 'half' : step === 'half' ? 'full' : null;
+  return step === 'now' ? 'closed' : step === 'full' ? 'half' : 'now';
+}
+
 /**
  * The expanded now-playing sheet, which grows out of the player bar.
  * `progress` runs from 0 (collapsed) to 1 (covering the screen); dragging
@@ -50,16 +56,16 @@ export class PlayerSheet {
 
   /** Towards the full queue: drag up, or the handle. */
   up() {
-    if (!this.open) return;
-    if (this.step === 'now') this.step = 'half';
-    else if (this.step === 'half') this.step = 'full';
+    const to = this.open && stepTo(this.step, 'up');
+    if (to && to !== 'closed') this.step = to;
   }
 
   /** One step back (swipe down, Android back): full → half → now playing → closed. */
   back() {
     if (!this.open) return;
-    if (this.step === 'now') this.collapse();
-    else this.step = this.step === 'full' ? 'half' : 'now';
+    const to = stepTo(this.step, 'back');
+    if (to === 'closed') this.collapse();
+    else if (to) this.step = to;
   }
 
   expand() {

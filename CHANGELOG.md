@@ -16,7 +16,11 @@ grouped by phase of the plan.
   it with your finger, and on Android the system back swipe moves the screen
   too. Dialogs, the changelog and the selection bar animate in and out, the
   player bar's song changes smoothly, and so do search results and the
-  Recently Played switch.
+  Recently Played switch. Swiping back shows the screen you return to
+  sliding in underneath, with the album's cover and title travelling as you
+  swipe; the queue's steps can be dragged the same way, with the cover,
+  title and controls moving between them. Album covers no longer flicker
+  after opening.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

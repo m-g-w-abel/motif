@@ -285,6 +285,13 @@ language for phone and desktop, not a separate mobile UI.
   now playing cycles the album's images, swipe down closes now playing;
   screen changes animate with shared elements (cover, title) moving into
   place.
+- **Motion (#180, 2026-11-10):** every screen change animates, elements on
+  both screens move to their new places, and **every transition that comes
+  with a motion follows the finger, then completes or springs back on
+  release** (swipe back with the screen it returns to drawn beneath, now
+  playing's drag down, the sheet's queue and lyrics steps, row swipes,
+  Android's predictive back). Closing mirrors opening; transform and opacity
+  only, short, nothing while idle, reduced motion respected (`lib/screens.ts`).
 
 ## Phase 0 checklist
 

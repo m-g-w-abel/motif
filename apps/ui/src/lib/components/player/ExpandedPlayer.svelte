@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { flushSync, tick, untrack } from 'svelte';
+  import { SLOP } from '../../gestures';
+  import { Scrub } from '../../screens';
+  import { released, stepTo, type SheetStep } from '../../sheet.svelte';
   import { getApp, setViewState } from '../../context';
   import { mapped } from '../../gestures';
   import Icon from '../Icon.svelte';
@@ -43,7 +46,7 @@
     ['.art', '.frame', 'box', 'move'],
     ['.label .title', '.info h1', 'text', 'cross'],
     ['.label .artist', '.info .hero-artist', 'text', 'cross'],
-    ['.label .album', '.album-title .marquee', 'text', 'cross'],
+    ['.label .album', '.album-title', 'text', 'cross'],
     ['.label .album', '.info .album-name', 'text', 'cross'],
     ['.seek .slider', '.controls .seek .slider', 'line', 'edge'],
     ['.transport [aria-label="Previous"]', '.controls [aria-label="Previous"]', 'box', 'stage'],
@@ -78,6 +81,7 @@
   const IN: Span = [0.85, 1];
   /** Text under the artwork (phones) waits until the growing artwork has risen past it. */
   const MOVE_UNDER: Span = [0.4, 0.85];
+  const ALBUM_MOVE: Span = [0.2, 0.85];
   /** Parts with no counterpart rise into place once the movers are nearly there. */
   const RISE: Span = [0.6, 1];
   /** The view buttons fall away while the background grows over the bar. */
@@ -145,6 +149,28 @@
     return { dx, dy, sx, sy };
   }
 
+  /** A copy of the sheet's own `b` in `colour`, laid exactly over it. */
+  function tinted(b: HTMLElement, colour: string, at: DOMRect) {
+    const r = b.getBoundingClientRect();
+    const look = getComputedStyle(b);
+    const el = b.cloneNode(true) as HTMLElement;
+    for (const p of ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'white-space', 'text-align', 'display', 'justify-content', 'overflow'])
+      el.style.setProperty(p, look.getPropertyValue(p));
+    Object.assign(el.style, {
+      position: 'absolute',
+      left: `${r.left - at.left}px`,
+      top: `${r.top - at.top}px`,
+      width: `${r.width}px`,
+      height: `${r.height}px`,
+      margin: '0',
+      color: colour,
+      transformOrigin: '0 0',
+    });
+    for (const n of el.querySelectorAll<HTMLElement>('*')) n.style.color = 'inherit';
+    ghosts?.append(el);
+    return el;
+  }
+
   /** A copy of the bar's `a`, laid over it here. */
   function copy(a: HTMLElement, selector: string, at: DOMRect) {
     const r = a.getBoundingClientRect();
@@ -173,7 +199,8 @@
     const rb = b.getBoundingClientRect();
     const [ga, gb] = mode === 'text' ? [glyph(a), glyph(b)] : [ra, rb];
     b.style.transformOrigin = '0 0';
-    const move = mode === 'text' ? textMove : moving;
+    // The album's line starts under the title in the bar and ends above it: it sets off first, to be past it before the title leaves.
+    const move = mode !== 'text' ? moving : b.matches('.album-title') && textMove === MOVE_UNDER ? ALBUM_MOVE : textMove;
     if (kind === 'cross' && mode === 'text') {
       const [ia, ib] = [ink(a), ink(b)];
       // Same text on one line in both: the sheet's travels alone, matched by width, since any
@@ -183,7 +210,12 @@
         const sy = ga.height / gb.height;
         const dx = ia.left - rb.left - (ib.left - rb.left) * sx;
         const dy = ga.top + ga.height / 2 - rb.top - (gb.top + gb.height / 2 - rb.top) * sy;
-        return [{ el: b, ghost: false, dx, dy, sx, sy, move }];
+        const travel = { ghost: false, dx, dy, sx, sy, move };
+        // In another colour (the bar's artist is muted, the sheet's coloured): a copy of the same
+        // words in the bar's colour lies on it and fades as they go, so the colour changes, not the drawing.
+        const from = getComputedStyle(a).color;
+        if (from === getComputedStyle(b).color) return [{ el: b, ...travel }];
+        return [{ el: b, ...travel }, { el: tinted(b, from, at), ...travel, hide: move }];
       }
     }
     const there = { el: b, ghost: false, ...fit(rb, gb, ga, mode), move };
@@ -300,6 +332,9 @@
       backdrop.style.transition = instant ? 'none' : `border-radius ${timing(growing, from, p).replace(' ', ` ${CURVE} `)}, ${backdrop.style.transition}`;
       backdrop.style.borderRadius = corner && t ? `${(corner.r * t) / corner.sx}px / ${(corner.r * t) / corner.sy}px` : '';
     }
+    // The whole sheet fades only without a morph; pinned at once, so a first morph after the fade's
+    // 0 doesn't fade the sheet in over the bar as well (the bar showed through it, doubled).
+    section.style.transition = instant ? 'none' : '';
     section.style.opacity = parts.length ? '' : String(p);
     tint.style.transition = instant ? 'none' : `opacity ${timing(growing, from, p)}`;
     tint.style.opacity = parts.length ? String(1 - ramp(p, growing)) : '0';
@@ -307,42 +342,68 @@
 
   /** The parts a phone's step (now playing, half or full queue, lyrics) shows or hides. */
   const STEPPED = ['.mini', '.now > .art:not(.lyrics)', '.now > .art.lyrics', '.cover-bg', '.details', '.queue-slot'];
+  /** Parts shown on more than one step, which travel between them: where each is on each step, and how it scales. */
+  const ROLES: [string, string[], Mode][] = [
+    ['cover', ['.now > .art:not(.lyrics) .frame', '.cover-bg', '.mini .art'], 'even'],
+    ['title', ['.info h1', '.mini-names b'], 'text'],
+    ['artist', ['.info .hero-artist', '.mini-names span'], 'text'],
+    ['play', ['.details .controls .play', '.mini .transport .play'], 'even'],
+  ];
   type Seen = { el: HTMLElement; box: DOMRect; copy: HTMLElement; display: string; frame?: DOMRect };
+  /** A role's element, its box and the box to match (its words, for text). */
+  type Role = { el: HTMLElement; box: DOMRect; inner: DOMRect };
+  type Step = { parts: Map<string, Seen>; roles: Map<string, Role> };
 
-  function seen(root: HTMLElement, copies: boolean) {
-    const found = new Map<string, Seen>();
+  const showing = (el: HTMLElement | null): el is HTMLElement => !!el?.offsetWidth && getComputedStyle(el).visibility !== 'hidden';
+
+  /** What the sheet shows now: its parts (with copies to stand in if they go) and where each role is. */
+  function seen(root: HTMLElement, copies: boolean): Step {
+    const roles = new Map<string, Role>();
+    for (const [name, where, mode] of ROLES) {
+      const el = where.map((w) => root.querySelector<HTMLElement>(w)).find(showing);
+      if (!el) continue;
+      // Marked, so a copy of its part can leave it out (`stepChange`).
+      el.dataset.role = name;
+      const box = el.getBoundingClientRect();
+      roles.set(name, { el, box, inner: mode === 'text' ? ink(el) : box });
+    }
+    const parts = new Map<string, Seen>();
     for (const selector of STEPPED) {
       const el = root.querySelector<HTMLElement>(selector);
-      const look = el && getComputedStyle(el);
-      if (!el?.offsetWidth || look!.visibility === 'hidden') continue;
+      if (!showing(el)) continue;
       const frame = el.querySelector('.frame')?.getBoundingClientRect();
       const copy = copies ? (el.cloneNode(true) as HTMLElement) : el;
-      found.set(selector, { el, box: el.getBoundingClientRect(), copy, display: look!.display, frame });
+      parts.set(selector, { el, box: el.getBoundingClientRect(), copy, display: getComputedStyle(el).display, frame });
     }
-    return found;
-  }
-
-  /** Puts `el` at `transform` at once, then lets it go home. */
-  function release(el: HTMLElement, transform: string) {
-    el.style.transition = 'none';
-    el.style.transformOrigin = '0 0';
-    el.style.transform = transform;
-    void el.offsetWidth;
-    el.style.transition = `transform ${DURATION}ms ${CURVE}`;
-    el.style.transform = '';
+    return { parts, roles };
   }
 
   /**
-   * Phones: a step change. Parts on both sides move to their new places; the
-   * cover and the half queue's cover background trade places; parts that
-   * appear rise from below the screen (riding the part under them, if that
-   * moves), and parts that go sink away (or ride) as fading copies behind
-   * the rest, as the layout drops them at once. Stepping back mirrors it.
+   * Phones: a step change, as Web Animations (`easing` linear when a drag
+   * scrubs them). Parts on both sides move to their new places; the cover
+   * and the half queue's cover background trade places; parts that appear
+   * rise from below the screen (riding the part under them, if that moves,
+   * and fading in over what they cross), and parts that go sink away (or
+   * ride) as fading copies behind the rest, as the layout drops them at once.
+   * The cover, title, artist and play button, shown on both steps, travel
+   * from their old places to their new ones (leaving their copies). Stepping
+   * back mirrors it. `distance` is how far the change moves things (px).
    */
-  function stepped(root: HTMLElement, before: Map<string, Seen>) {
-    if (sheet.progress !== 1 || !sinking) return;
-    const after = seen(root, false);
+  function stepChange(root: HTMLElement, was: Step, easing: string) {
+    const before = was.parts;
+    const { parts: after, roles } = seen(root, false);
     const at = root.getBoundingClientRect();
+    const timing: KeyframeAnimationOptions = { duration: DURATION, easing, fill: 'both' };
+    const animations: Animation[] = [];
+    /** Each moving part's starting lift, which its shared parts take off their own. */
+    const lifts = new Map<HTMLElement, number>();
+    let distance = 0;
+    const go = (el: HTMLElement, transform: string, lift: number, fade = false) => {
+      lifts.set(el, lift);
+      distance = Math.max(distance, Math.abs(lift));
+      el.style.transformOrigin = '0 0';
+      animations.push(el.animate([{ transform, ...(fade && { opacity: 0 }) }, { transform: 'none', ...(fade && { opacity: 1 }) }], timing));
+    };
     const dy = (k: string) => after.get(k)!.box.top - before.get(k)!.box.top;
     const kept = [...after.keys()].filter((k) => before.has(k) && after.get(k)!.el === before.get(k)!.el);
     const fresh = [...after.keys()].filter((k) => !kept.includes(k));
@@ -354,11 +415,11 @@
       const a = before.get(y);
       if (!fresh.includes(x) || !gone.includes(y) || !a || !b) continue;
       const m = fit(b.box, b.frame ?? b.box, a.frame ?? a.box, 'even');
-      release(b.el, `translate(${m.dx}px, ${m.dy}px) scale(${m.sx})`);
+      go(b.el, `translate(${m.dx}px, ${m.dy}px) scale(${m.sx})`, m.dy);
       fresh.splice(fresh.indexOf(x), 1);
       gone.splice(gone.indexOf(y), 1);
     }
-    for (const k of kept) if (Math.abs(dy(k)) >= 1) release(after.get(k)!.el, `translateY(${-dy(k)}px)`);
+    for (const k of kept) if (Math.abs(dy(k)) >= 1) go(after.get(k)!.el, `translateY(${-dy(k)}px)`, -dy(k));
     /** The kept part right under a box, which it rides along with. */
     const under = (box: DOMRect, side: Map<string, Seen>) =>
       kept.filter((k) => side.get(k)!.box.top >= box.bottom - 1).sort((a, b) => side.get(a)!.box.top - side.get(b)!.box.top)[0];
@@ -366,11 +427,28 @@
     const rise = at.bottom - rest(fresh, after);
     for (const k of fresh) {
       const ride = under(after.get(k)!.box, after);
-      release(after.get(k)!.el, `translateY(${ride ? -dy(ride) : rise}px)`);
+      if (ride) go(after.get(k)!.el, `translateY(${-dy(ride)}px)`, -dy(ride), true);
+      else go(after.get(k)!.el, `translateY(${rise}px)`, rise);
+    }
+    // Shared parts: each from its old place, less what the part it is in already carries.
+    const travelled = new Set<string>();
+    for (const [name, a] of was.roles) {
+      const b = roles.get(name);
+      if (!b || b.el === a.el || lifts.has(b.el)) continue;
+      travelled.add(name);
+      const lift = [...lifts].find(([part]) => part.contains(b.el))?.[1] ?? 0;
+      const mode = ROLES.find(([n]) => n === name)![2];
+      const m = fit(b.box, b.inner, a.inner, mode);
+      b.el.style.transformOrigin = '0 0';
+      animations.push(b.el.animate([{ transform: `translate(${m.dx}px, ${m.dy - lift}px) scale(${m.sx}, ${m.sy})` }, { transform: 'none' }], timing));
     }
     const sink = at.bottom - rest(gone, before);
+    const copies: HTMLElement[] = [];
     for (const k of gone) {
       const { copy, box, display } = before.get(k)!;
+      // A part that is itself a shared one (the half queue's cover) has travelled already.
+      if (travelled.has(copy.dataset.role ?? '')) continue;
+      for (const name of travelled) for (const n of copy.querySelectorAll<HTMLElement>(`[data-role="${name}"]`)) n.style.visibility = 'hidden';
       const ride = under(box, before);
       Object.assign(copy.style, {
         position: 'absolute',
@@ -383,23 +461,97 @@
         display,
         visibility: 'visible',
       });
-      sinking.append(copy);
-      void copy.offsetWidth;
-      copy.style.transition = `transform ${DURATION}ms ${CURVE}, opacity ${DURATION}ms linear`;
-      copy.style.transform = `translateY(${ride ? dy(ride) : sink}px)`;
-      copy.style.opacity = '0';
-      setTimeout(() => copy.remove(), DURATION);
+      sinking?.append(copy);
+      copies.push(copy);
+      const to = ride ? dy(ride) : sink;
+      distance = Math.max(distance, Math.abs(to));
+      animations.push(copy.animate([{ transform: 'none', opacity: 1 }, { transform: `translateY(${to}px)`, opacity: 0 }], timing));
     }
+    return {
+      animations,
+      distance: Math.max(distance, 100),
+      /** Done (either way): the animations and copies go, leaving the layout as it is. */
+      finish() {
+        for (const a of animations) a.cancel();
+        for (const c of copies) c.remove();
+      },
+    };
   }
 
   let sinking = $state<HTMLElement>();
+  /** A drag on a handle is scrubbing a step change, which it animates itself. */
+  let scrubbing = false;
+  const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   $effect.pre(() => {
     void sheet.step;
     const root = untrack(() => section);
-    if (!root || !views.phone || untrack(() => sheet.progress) !== 1 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (scrubbing || !root || !views.phone || untrack(() => sheet.progress) !== 1 || still()) return;
     const before = seen(root, true);
-    tick().then(() => stepped(root, before));
+    void tick().then(() => {
+      if (sheet.progress !== 1) return;
+      const change = stepChange(root, before, CURVE);
+      void Promise.allSettled(change.animations.map((a) => a.finished)).then(change.finish);
+    });
   });
+
+  /**
+   * Phones: a drag on one of the sheet's handles. Once it moves, the step
+   * change it heads for (up towards the queue, back towards now playing)
+   * follows the finger, then finishes or springs back on letting go, as
+   * `released` decides. A tap calls `onTap`; closing the sheet is the
+   * sheet's own drag.
+   */
+  function stepDrag(e: PointerEvent, onTap: () => void) {
+    if (e.button !== 0) return;
+    if (!views.phone || !section || still()) return sheet.handle(e, onTap);
+    const root = section;
+    const y0 = e.clientY;
+    const from = sheet.step;
+    let way: 'up' | 'back' | null = null;
+    let change: ReturnType<typeof stepChange> | undefined;
+    let scrub: Scrub | undefined;
+    const set = (step: SheetStep) => {
+      scrubbing = true;
+      sheet.step = step;
+      flushSync();
+      scrubbing = false;
+    };
+    const move = (ev: PointerEvent) => {
+      const dy = ev.clientY - y0;
+      if (!way) {
+        if (Math.abs(dy) < SLOP) return;
+        way = dy < 0 ? 'up' : 'back';
+        const to = stepTo(from, way);
+        if (!to || to === 'closed') return;
+        const before = seen(root, true);
+        set(to);
+        change = stepChange(root, before, 'linear');
+        scrub = new Scrub(change.animations);
+      }
+      if (change) scrub?.seek((way === 'up' ? -dy : dy) / change.distance);
+    };
+    const end = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      const what = ev.type === 'pointercancel' ? null : released(ev.clientY - y0);
+      if (!scrub || !change) {
+        if (what === 'tap') onTap();
+        else if (what === 'up') sheet.up();
+        else if (what === 'back') sheet.back();
+        return;
+      }
+      const goes = what === way;
+      const c = change;
+      scrub.release(goes, () => {
+        c.finish();
+        if (!goes) set(from);
+      });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  }
 
   sheet.measure = measure;
   // Writes styles only; reads no state it writes.
@@ -465,7 +617,7 @@
 
   <!-- Phones, full queue and lyrics: the playing track in a strip whose drag or tap steps back. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="mini" onpointerdown={(e) => !(e.target as Element).closest('.transport') && sheet.handle(e, () => sheet.back())}>
+  <div class="mini" onpointerdown={(e) => !(e.target as Element).closest('.transport') && stepDrag(e, () => sheet.back())}>
     <div class="mini-row">
       <Artwork track={engine.current?.track} size={48} />
       <span class="mini-names">
@@ -501,7 +653,7 @@
         <Controls />
         <!-- Phones: the handle at the bottom; a tap or drag up shows the queue. -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="more" onpointerdown={(e) => sheet.handle(e, () => sheet.up())}>
+        <div class="more" onpointerdown={(e) => stepDrag(e, () => sheet.up())}>
           <button class="step" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
         </div>
       </div>
@@ -510,7 +662,7 @@
       <button
         class="step"
         aria-label="Show all of the queue"
-        onpointerdown={(e) => sheet.handle(e, () => sheet.up())}
+        onpointerdown={(e) => stepDrag(e, () => sheet.up())}
         onclick={(e) => keyed(e, () => sheet.up())}
       ></button>
       <Queue collapsible={!views.phone} nowPlaying={views.phone} />

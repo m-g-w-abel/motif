@@ -104,7 +104,8 @@
             mapped(settings.current.gestures, 'queued'),
             // Once the row has slid out: removing it sooner drops it mid-slide.
             { remove: () => setTimeout(() => engine.run({ type: 'remove_item', item_id: item.id }), OUT) },
-            swipeRow(e.currentTarget as HTMLElement, 'remove'),
+            // The whole row goes, its drag handle too.
+            swipeRow((e.currentTarget as HTMLElement).closest('li') ?? (e.currentTarget as HTMLElement), 'remove'),
           )
       : undefined}
     class:failed={item.error} class:current={nowPlaying && item.id === engine.current?.id}>

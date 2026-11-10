@@ -175,6 +175,8 @@ export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Slide {
         strip.className = `swipe-strip ${does}`;
         strip.textContent = does === 'queue' ? '+' : '×';
         strip.ariaHidden = 'true';
+        // Level with the row, which needn't fill its parent (a queue's row among the others).
+        Object.assign(strip.style, { top: `${el.offsetTop}px`, bottom: 'auto', height: `${el.offsetHeight}px` });
         box.append(strip);
       }
       to(Math.min(0, dx), 0);
