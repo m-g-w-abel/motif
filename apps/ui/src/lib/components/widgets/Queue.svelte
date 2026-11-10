@@ -2,6 +2,7 @@
   import { getApp } from '../../context';
   import { menu } from '../../contextMenu.svelte';
   import { formatTime, trackTitle } from '../../format';
+  import { gesture, mapped } from '../../gestures';
   import { queueMenu } from '../../menus';
   import type { QueueItem } from '../../protocol/QueueItem';
   import { moveItem } from '../../reorder';
@@ -20,7 +21,7 @@
   /** A list context shows this many upcoming tracks until Show all; an album shows all of its own. */
   const PREVIEW = 10;
 
-  const { engine } = getApp();
+  const { engine, settings } = getApp();
   const queue = $derived(engine.queue);
   const context = $derived(engine.player?.context ?? null);
   // shortcut: a context longer than the engine's window (200) only shows what the window holds; ask for more when someone needs it.
@@ -79,7 +80,14 @@
 </script>
 
 {#snippet entry(item: QueueItem, queued: boolean)}
-  <div class="entry" class:failed={item.error} class:current={nowPlaying && item.id === engine.current?.id}>
+  <!-- Touch swipes only; keys have Delete on the row's button. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="entry"
+    onpointerdown={queued && engine.can('queue')
+      ? (e) => gesture(e, mapped(settings.current.gestures, 'queued'), { remove: () => engine.run({ type: 'remove_item', item_id: item.id }) })
+      : undefined}
+    class:failed={item.error} class:current={nowPlaying && item.id === engine.current?.id}>
     <button
       class="play"
       title={item.error ?? undefined}
@@ -265,6 +273,8 @@
 
   .entry {
     flex: 1;
+    /* A sideways swipe removes a queued row. */
+    touch-action: pan-y;
     min-width: 0;
     display: flex;
     align-items: center;

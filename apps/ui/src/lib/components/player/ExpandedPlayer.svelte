@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApp, setViewState } from '../../context';
+  import { mapped } from '../../gestures';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
   import Transport from './Transport.svelte';
@@ -12,7 +13,7 @@
   import { trackTitle } from '../../format';
   import { marquee } from '../../marquee';
 
-  const { engine, layout, sheet, views } = getApp();
+  const { engine, layout, settings, sheet, views } = getApp();
   let body = $state<HTMLElement>();
   let section = $state<HTMLElement>();
   let backdrop = $state<HTMLElement>();
@@ -267,10 +268,11 @@
     if (e.key === 'Escape' && sheet.progress === 1) sheet.collapse();
   }
 
-  /** Phones: a drag on now playing closes it (down) or shows the queue (up); the artwork and seek bar keep theirs. */
+  /** Phones: a drag on now playing closes it (down) or shows the queue (up); the seek bar keeps its own, and the artwork unless its drag is remapped away from this. */
   function dragNow(e: PointerEvent) {
     if (!views.phone || sheet.step !== 'now') return;
-    if ((e.target as Element).closest('.art, [role="slider"], .more')) return;
+    const own = mapped(settings.current.gestures, 'artwork')['drag-vertical'] !== 'close';
+    if ((e.target as Element).closest(own ? '.art, [role="slider"], .more' : '[role="slider"], .more')) return;
     sheet.drag(e, 'sheet', undefined, true);
   }
 

@@ -132,7 +132,7 @@
     { key: 'seekBar', label: 'Seek bar', options: [['waveform', 'Waveform'], ['plain', 'Plain']] },
   ] as [Choice<'density'>, Choice<'player'>, Choice<'seekBar'>];
 
-  const SURFACES: Record<Surface, string> = { bar: 'the player bar', artwork: 'the artwork', row: 'a track or album' };
+  const SURFACES: Record<Surface, string> = { bar: 'the player bar', artwork: 'the artwork', row: 'a track or album', queued: 'a queued track', view: 'a view' };
   const GESTURE_NAMES: Record<Gesture, string> = {
     'swipe-left': 'Swipe left on',
     'swipe-right': 'Swipe right on',
@@ -146,6 +146,9 @@
     'play-next': 'Queue next',
     volume: 'Volume',
     seek: 'Seek',
+    remove: 'Remove from queue',
+    back: 'Go back',
+    close: 'Close or show the queue',
     none: 'None',
   };
   const gestureRows = (Object.keys(CHOICES) as Surface[]).flatMap((surface) =>

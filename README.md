@@ -70,7 +70,8 @@ control isn't an add-on: it's the normal code path.
   the in-app [changelog](CHANGELOG.md) and Help, also in the desktop left panel),
   a full-screen now-playing sheet that steps by drag or handle between now
   playing, a half and a full reorderable queue, and lyrics, and touch
-  gestures, each remappable in Settings, which on a phone is a list of groups
+  gestures (swipe right to go back, swipe a song left to queue it or out of
+  the queue, swipe now playing down to close it), each remappable in Settings, which on a phone is a list of groups
   with a search.
 
 **Remote control and integrations**
