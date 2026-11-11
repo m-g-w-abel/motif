@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PlayerSheet, STEP, released, stepTo } from './sheet.svelte';
+import { PlayerSheet, STEP, released, settling, stepTo } from './sheet.svelte';
 
 function opened(step?: 'half' | 'full' | 'lyrics') {
   const sheet = new PlayerSheet();
@@ -96,5 +96,18 @@ describe('stepTo', () => {
     expect(stepTo('half', 'back')).toBe('now');
     expect(stepTo('lyrics', 'back')).toBe('now');
     expect(stepTo('now', 'back')).toBe('closed');
+  });
+});
+
+describe('settling', () => {
+  it('is where a settle has got to: from its start to its end over the settle, quickly at first', () => {
+    expect(settling(0, 1, 0)).toBe(0);
+    expect(settling(1, 0, 0)).toBe(1);
+    expect(settling(0, 1, 1)).toBe(1);
+    expect(settling(0, 1, 5)).toBe(1);
+    const half = settling(0, 1, 0.5);
+    expect(half).toBeGreaterThan(0.5);
+    expect(half).toBeLessThan(1);
+    expect(settling(1, 0, 0.5)).toBeCloseTo(1 - half);
   });
 });

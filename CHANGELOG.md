@@ -20,7 +20,9 @@ grouped by phase of the plan.
   sliding in underneath, with the album's cover and title travelling as you
   swipe; the queue's steps can be dragged the same way, with the cover,
   title and controls moving between them. Album covers no longer flicker
-  after opening.
+  after opening. The Albums view keeps its place when you come back to it,
+  and the cover flies back to its tile however far down it is. Letters like
+  g are no longer cut off in now playing.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

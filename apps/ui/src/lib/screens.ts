@@ -252,10 +252,23 @@ export class Scrub {
     for (const a of animations) a.pause();
   }
 
+  #at = 0;
+
   /** Puts each animation at `p` (0 to 1) of its length. */
   seek(p: number) {
-    const at = Math.min(1, Math.max(0, p));
-    for (const a of this.animations) a.currentTime = at * Number(a.effect?.getComputedTiming().duration ?? 0);
+    this.#at = Math.min(1, Math.max(0, p));
+    for (const a of this.animations) this.#put(a);
+  }
+
+  /** Joins `a` to the others, where they are now. */
+  add(a: Animation) {
+    a.pause();
+    this.animations.push(a);
+    this.#put(a);
+  }
+
+  #put(a: Animation) {
+    a.currentTime = this.#at * Number(a.effect?.getComputedTiming().duration ?? 0);
   }
 
   /** Plays on to the end (`forward`) or back to the start, then calls `done` once, all finished. */
@@ -291,21 +304,36 @@ export function backScrub(screen: HTMLElement, under: HTMLElement) {
   const ghosts: HTMLElement[] = [];
   const hidden: HTMLElement[] = [];
   const animations: Animation[] = [];
-  if (!still())
-    for (const el of screen.querySelectorAll<HTMLElement>('[data-shared]')) {
-      const to = under.querySelector<HTMLElement>(`[data-shared="${CSS.escape(el.dataset.shared!)}"]`);
-      if (!el.offsetWidth || !to?.offsetWidth) continue;
-      const { ghost, frames } = flight(leftOf(el), to, to.getBoundingClientRect());
+  /** Shared elements still waiting for their counterpart (a card that comes once the grid has scrolled back to it). */
+  let waiting = still() ? [] : [...screen.querySelectorAll<HTMLElement>('[data-shared]')].filter((el) => el.offsetWidth).map(leftOf);
+  const slide = under.animate([{ transform: `translateX(${-0.08 * width}px)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }], timing);
+  const scrub = new Scrub([screen.animate([{ transform: 'none' }, { transform: `translateX(${width}px)` }], timing), slide]);
+  animations.push(...scrub.animations);
+  /** Pairs what has come: measured where it will be, without the slide it is in. */
+  const pair = () => {
+    waiting = waiting.filter((from) => {
+      const to = under.querySelector<HTMLElement>(`[data-shared="${CSS.escape(from.el.dataset.shared!)}"]`);
+      if (!to?.offsetWidth) return true;
+      const box = to.getBoundingClientRect();
+      const shift = new DOMMatrix(getComputedStyle(under).transform).m41;
+      const { ghost, frames } = flight(from, to, new DOMRect(box.x - shift, box.y, box.width, box.height));
       ghosts.push(ghost);
-      hidden.push(el, to);
-      animations.push(ghost.animate(frames, timing));
-    }
-  animations.push(
-    screen.animate([{ transform: 'none' }, { transform: `translateX(${width}px)` }], timing),
-    under.animate([{ transform: `translateX(${-0.08 * width}px)`, opacity: 0.5 }, { transform: 'none', opacity: 1 }], timing),
-  );
+      hidden.push(from.el, to);
+      const a = ghost.animate(frames, timing);
+      animations.push(a);
+      scrub.add(a);
+      return false;
+    });
+  };
+  pair();
   return {
-    scrub: new Scrub(animations),
+    scrub: {
+      seek(p: number) {
+        if (waiting.length) pair();
+        scrub.seek(p);
+      },
+      release: (forward: boolean, done: () => void) => scrub.release(forward, done),
+    },
     /** Back to how things were (the swipe was cancelled), or done with the copies (it went back). */
     drop(restore: boolean) {
       for (const g of ghosts) g.remove();

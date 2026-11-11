@@ -18,6 +18,15 @@ export function released(dy: number): 'tap' | 'up' | 'back' | null {
   return dy >= STEP ? 'back' : null;
 }
 
+/** How long a settle takes (`ExpandedPlayer`'s morph). */
+export const SETTLE_MS = 260;
+
+/** Where a settle from `from` to `to` has got to after `t` (0 to 1) of its time, eased out like the morph's curve. */
+export function settling(from: number, to: number, t: number) {
+  const done = Math.min(1, Math.max(0, t));
+  return from + (to - from) * (1 - (1 - done) ** 3);
+}
+
 /** The step a drag or a press goes to: up towards the full queue, or back towards now playing and then closed. */
 export function stepTo(step: SheetStep, way: 'up' | 'back'): SheetStep | 'closed' | null {
   if (way === 'up') return step === 'now' ? 'half' : step === 'half' ? 'full' : null;
@@ -85,9 +94,19 @@ export class PlayerSheet {
     this.settle(0);
   }
 
+  /** The last settle, to tell where it has got to when a drag interrupts it. */
+  #settle = { from: 0, to: 0, at: 0 };
+
   private settle(progress: number) {
+    this.#settle = { from: this.progress, to: progress, at: performance.now() };
     this.dragging = false;
     this.progress = progress;
+  }
+
+  /** Where the sheet is drawn now: the progress, or part-way through a settle still running. */
+  get shown() {
+    const { from, to, at } = this.#settle;
+    return to === this.progress ? settling(from, to, (performance.now() - at) / SETTLE_MS) : this.progress;
   }
 
   /**
@@ -102,7 +121,8 @@ export class PlayerSheet {
     const startX = e.clientX;
     const startY = e.clientY;
     const touch = e.pointerType !== 'mouse';
-    const startProgress = this.progress;
+    // From where it is drawn, so a drag that catches a settle carries on from there instead of jumping to its end.
+    const startProgress = this.shown;
     const height = window.innerHeight;
     let lastY = startY;
     let lastT = performance.now();
@@ -118,13 +138,15 @@ export class PlayerSheet {
         return end();
       }
       if (!moved && Math.abs(dy) < 8) return;
+      const next = Math.min(1, Math.max(0, startProgress - dy / height));
       if (!moved) {
         this.scrub = from === 'sheet';
+        this.progress = next;
         this.measure?.();
       }
       moved = true;
       this.dragging = true;
-      this.progress = Math.min(1, Math.max(0, startProgress - dy / height));
+      this.progress = next;
       const now = performance.now();
       velocity = (ev.clientY - lastY) / Math.max(1, now - lastT);
       lastY = ev.clientY;

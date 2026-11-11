@@ -316,6 +316,7 @@
         bind:this={grid}
         bind:shownColumns
         cardSize={150}
+        at="view"
         items={view.kind === 'playlists' ? 'playlists' : view.kind === 'played' ? 'played' : 'albums'}
         sort={order}
         mode={options.mode}

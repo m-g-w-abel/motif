@@ -39,4 +39,13 @@
     font-size: 0.92em;
     color: var(--text-muted);
   }
+
+  /* Now playing's weights, so the morph's moving words keep their shape (#180). */
+  .artist {
+    font-weight: 600;
+  }
+
+  .album {
+    font-weight: 700;
+  }
 </style>

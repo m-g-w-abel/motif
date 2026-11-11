@@ -342,40 +342,80 @@
 
   /** The parts a phone's step (now playing, half or full queue, lyrics) shows or hides. */
   const STEPPED = ['.mini', '.now > .art:not(.lyrics)', '.now > .art.lyrics', '.cover-bg', '.details', '.queue-slot'];
-  /** Parts shown on more than one step, which travel between them: where each is on each step, and how it scales. */
+  /**
+   * Parts shown on more than one step, which travel between them: where each
+   * is on each step, and how it scales. Listed outside in: one inside
+   * another (the play button in the controls) travels relative to it.
+   */
   const ROLES: [string, string[], Mode][] = [
     ['cover', ['.now > .art:not(.lyrics) .frame', '.cover-bg', '.mini .art'], 'even'],
+    ['controls', ['.details > .controls'], 'box'],
     ['title', ['.info h1', '.mini-names b'], 'text'],
     ['artist', ['.info .hero-artist', '.mini-names span'], 'text'],
     ['play', ['.details .controls .play', '.mini .transport .play'], 'even'],
   ];
+  /** Parts of the details some steps leave out (the half queue): they fade where they are. */
+  const FADING = ['.album-title', '.details .hero-album', '.more'];
   type Seen = { el: HTMLElement; box: DOMRect; copy: HTMLElement; display: string; frame?: DOMRect };
   /** A role's element, its box and the box to match (its words, for text). */
   type Role = { el: HTMLElement; box: DOMRect; inner: DOMRect };
-  type Step = { parts: Map<string, Seen>; roles: Map<string, Role> };
+  type Faded = { el: HTMLElement; box: DOMRect };
+  type Step = { parts: Map<string, Seen>; roles: Map<string, Role>; faded: Map<string, Faded> };
 
-  const showing = (el: HTMLElement | null): el is HTMLElement => !!el?.offsetWidth && getComputedStyle(el).visibility !== 'hidden';
+  const showing = (el: HTMLElement | null | undefined): el is HTMLElement => !!el?.offsetWidth && getComputedStyle(el).visibility !== 'hidden';
+  /** The sheet's own `selector`, not a copy standing in for it. */
+  const own = (root: HTMLElement, selector: string) =>
+    [...root.querySelectorAll<HTMLElement>(selector)].find((el) => !el.closest('.sinking, .ghosts')) ?? null;
 
-  /** What the sheet shows now: its parts (with copies to stand in if they go) and where each role is. */
+  /** What the sheet shows now: its parts (with copies to stand in if they go), where each role is, and the details' fading parts. */
   function seen(root: HTMLElement, copies: boolean): Step {
     const roles = new Map<string, Role>();
     for (const [name, where, mode] of ROLES) {
-      const el = where.map((w) => root.querySelector<HTMLElement>(w)).find(showing);
+      const el = where.map((w) => own(root, w)).find(showing);
       if (!el) continue;
       // Marked, so a copy of its part can leave it out (`stepChange`).
       el.dataset.role = name;
       const box = el.getBoundingClientRect();
       roles.set(name, { el, box, inner: mode === 'text' ? ink(el) : box });
     }
+    const faded = new Map<string, Faded>();
+    for (const selector of FADING) {
+      const el = own(root, selector);
+      if (showing(el)) faded.set(selector, { el, box: el.getBoundingClientRect() });
+    }
     const parts = new Map<string, Seen>();
     for (const selector of STEPPED) {
-      const el = root.querySelector<HTMLElement>(selector);
+      const el = own(root, selector);
       if (!showing(el)) continue;
       const frame = el.querySelector('.frame')?.getBoundingClientRect();
       const copy = copies ? (el.cloneNode(true) as HTMLElement) : el;
       parts.set(selector, { el, box: el.getBoundingClientRect(), copy, display: getComputedStyle(el).display, frame });
     }
-    return { parts, roles };
+    return { parts, roles, faded };
+  }
+
+  /** The loaded image's width inside `el` (0: none yet). */
+  const resolution = (el: HTMLElement) => {
+    const img = el.querySelector('img');
+    return img?.complete ? img.naturalWidth : 0;
+  };
+
+  /** A copy of `el` laid at `box` in the sheet's ghost layer, its image drawn at once. */
+  function ghostOf(el: HTMLElement, box: DOMRect, at: DOMRect) {
+    const g = el.cloneNode(true) as HTMLElement;
+    for (const img of g.querySelectorAll('img')) Object.assign(img, { loading: 'eager', decoding: 'sync' });
+    Object.assign(g.style, {
+      position: 'absolute',
+      left: `${box.left - at.left}px`,
+      top: `${box.top - at.top}px`,
+      width: `${box.width}px`,
+      height: `${box.height}px`,
+      margin: '0',
+      transformOrigin: '0 0',
+      visibility: 'visible',
+    });
+    ghosts?.append(g);
+    return g;
   }
 
   /**
@@ -385,18 +425,27 @@
    * rise from below the screen (riding the part under them, if that moves,
    * and fading in over what they cross), and parts that go sink away (or
    * ride) as fading copies behind the rest, as the layout drops them at once.
-   * The cover, title, artist and play button, shown on both steps, travel
-   * from their old places to their new ones (leaving their copies). Stepping
-   * back mirrors it. `distance` is how far the change moves things (px).
+   * The cover, controls, title, artist and play button travel from their
+   * old places to their new ones (leaving their copies); the cover as a copy
+   * of whichever drawing is sharper, already loaded. The details' parts a
+   * step leaves out fade where they are. Stepping back mirrors it.
+   * `distance` is how far the change moves things (px).
    */
   function stepChange(root: HTMLElement, was: Step, easing: string) {
     const before = was.parts;
-    const { parts: after, roles } = seen(root, false);
+    const { parts: after, roles, faded } = seen(root, false);
     const at = root.getBoundingClientRect();
     const timing: KeyframeAnimationOptions = { duration: DURATION, easing, fill: 'both' };
     const animations: Animation[] = [];
-    /** Each moving part's starting lift, which its shared parts take off their own. */
+    /** Each moving thing's starting offset on screen, which what is inside it takes off its own. */
     const lifts = new Map<HTMLElement, number>();
+    const liftOf = (el: HTMLElement) => {
+      let best: HTMLElement | undefined;
+      for (const part of lifts.keys()) if (part !== el && part.contains(el) && (!best || best.contains(part))) best = part;
+      return best ? lifts.get(best)! : 0;
+    };
+    const copies: HTMLElement[] = [];
+    const shown: HTMLElement[] = [];
     let distance = 0;
     const go = (el: HTMLElement, transform: string, lift: number, fade = false) => {
       lifts.set(el, lift);
@@ -408,7 +457,27 @@
     const kept = [...after.keys()].filter((k) => before.has(k) && after.get(k)!.el === before.get(k)!.el);
     const fresh = [...after.keys()].filter((k) => !kept.includes(k));
     const gone = [...before.keys()].filter((k) => !kept.includes(k));
-    // The cover and the half queue's background stand for each other.
+    /** A copy standing in for a part that went, fading (and moving by `to`) behind the rest. */
+    const leaving = (k: string, to: number) => {
+      const { copy, box, display } = before.get(k)!;
+      Object.assign(copy.style, {
+        position: 'absolute',
+        left: `${box.left - at.left}px`,
+        top: `${box.top - at.top}px`,
+        width: `${box.width}px`,
+        height: `${box.height}px`,
+        margin: '0',
+        // The new step's rules would hide it.
+        display,
+        visibility: 'visible',
+      });
+      sinking?.append(copy);
+      copies.push(copy);
+      distance = Math.max(distance, Math.abs(to));
+      animations.push(copy.animate([{ transform: 'none', opacity: 1 }, { transform: `translateY(${to}px)`, opacity: 0 }], timing));
+      return copy;
+    };
+    // The cover and the half queue's background stand for each other; the one going fades where it was.
     const cover = '.now > .art:not(.lyrics)';
     for (const [x, y] of [['.cover-bg', cover], [cover, '.cover-bg']]) {
       const b = after.get(x);
@@ -416,6 +485,9 @@
       if (!fresh.includes(x) || !gone.includes(y) || !a || !b) continue;
       const m = fit(b.box, b.frame ?? b.box, a.frame ?? a.box, 'even');
       go(b.el, `translate(${m.dx}px, ${m.dy}px) scale(${m.sx})`, m.dy);
+      const shade = b.el.querySelector<HTMLElement>('.shade');
+      if (shade) animations.push(shade.animate([{ opacity: 0 }, { opacity: 1 }], timing));
+      if (y === '.cover-bg') leaving(y, 0);
       fresh.splice(fresh.indexOf(x), 1);
       gone.splice(gone.indexOf(y), 1);
     }
@@ -430,42 +502,46 @@
       if (ride) go(after.get(k)!.el, `translateY(${-dy(ride)}px)`, -dy(ride), true);
       else go(after.get(k)!.el, `translateY(${rise}px)`, rise);
     }
-    // Shared parts: each from its old place, less what the part it is in already carries.
+    // Shared parts: each from its old place, less what the thing it is in already carries.
     const travelled = new Set<string>();
-    for (const [name, a] of was.roles) {
+    for (const [name, , mode] of ROLES) {
+      const a = was.roles.get(name);
       const b = roles.get(name);
-      if (!b || b.el === a.el || lifts.has(b.el)) continue;
-      travelled.add(name);
-      const lift = [...lifts].find(([part]) => part.contains(b.el))?.[1] ?? 0;
-      const mode = ROLES.find(([n]) => n === name)![2];
+      if (!a || !b || (lifts.has(b.el) && b.el !== a.el)) continue;
+      const lift = liftOf(b.el);
       const m = fit(b.box, b.inner, a.inner, mode);
+      if (Math.abs(m.dy - lift) < 1 && Math.abs(m.dx) < 1 && Math.abs(m.sx - 1) < 0.01) continue;
+      if (b.el !== a.el) travelled.add(name);
+      // The cover as a copy of the sharper drawing already loaded (the strip's is small), the real one hidden till it lands.
+      if (name === 'cover' && b.el !== a.el && resolution(a.el) >= resolution(b.el) && resolution(a.el)) {
+        const g = ghostOf(a.el, a.box, at);
+        const n = fit(a.box, a.box, b.box, mode);
+        b.el.style.visibility = 'hidden';
+        shown.push(b.el);
+        copies.push(g);
+        animations.push(g.animate([{ transform: 'none' }, { transform: `translate(${n.dx}px, ${n.dy}px) scale(${n.sx}, ${n.sy})` }], timing));
+        continue;
+      }
+      lifts.set(b.el, m.dy);
       b.el.style.transformOrigin = '0 0';
       animations.push(b.el.animate([{ transform: `translate(${m.dx}px, ${m.dy - lift}px) scale(${m.sx}, ${m.sy})` }, { transform: 'none' }], timing));
     }
+    // The details' parts that come or go with a step: those that came fade in where they are, those that went fade out as copies.
+    for (const [selector, a] of was.faded)
+      if (!faded.has(selector)) {
+        const g = ghostOf(a.el, a.box, at);
+        copies.push(g);
+        animations.push(g.animate([{ opacity: 1 }, { opacity: 0 }], timing));
+      }
+    for (const [selector, b] of faded) if (!was.faded.has(selector)) animations.push(b.el.animate([{ opacity: 0 }, { opacity: 1 }], timing));
     const sink = at.bottom - rest(gone, before);
-    const copies: HTMLElement[] = [];
     for (const k of gone) {
-      const { copy, box, display } = before.get(k)!;
+      const { copy, box } = before.get(k)!;
       // A part that is itself a shared one (the half queue's cover) has travelled already.
       if (travelled.has(copy.dataset.role ?? '')) continue;
       for (const name of travelled) for (const n of copy.querySelectorAll<HTMLElement>(`[data-role="${name}"]`)) n.style.visibility = 'hidden';
       const ride = under(box, before);
-      Object.assign(copy.style, {
-        position: 'absolute',
-        left: `${box.left - at.left}px`,
-        top: `${box.top - at.top}px`,
-        width: `${box.width}px`,
-        height: `${box.height}px`,
-        margin: '0',
-        // The new step's rules would hide it.
-        display,
-        visibility: 'visible',
-      });
-      sinking?.append(copy);
-      copies.push(copy);
-      const to = ride ? dy(ride) : sink;
-      distance = Math.max(distance, Math.abs(to));
-      animations.push(copy.animate([{ transform: 'none', opacity: 1 }, { transform: `translateY(${to}px)`, opacity: 0 }], timing));
+      leaving(k, ride ? dy(ride) : sink);
     }
     return {
       animations,
@@ -474,6 +550,7 @@
       finish() {
         for (const a of animations) a.cancel();
         for (const c of copies) c.remove();
+        for (const el of shown) el.style.visibility = '';
       },
     };
   }
@@ -481,6 +558,8 @@
   let sinking = $state<HTMLElement>();
   /** A drag on a handle is scrubbing a step change, which it animates itself. */
   let scrubbing = false;
+  /** A step change is still playing out; a new drag waits for it rather than starting it over. */
+  let busy = false;
   const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   $effect.pre(() => {
     void sheet.step;
@@ -490,7 +569,11 @@
     void tick().then(() => {
       if (sheet.progress !== 1) return;
       const change = stepChange(root, before, CURVE);
-      void Promise.allSettled(change.animations.map((a) => a.finished)).then(change.finish);
+      busy = true;
+      void Promise.allSettled(change.animations.map((a) => a.finished)).then(() => {
+        change.finish();
+        busy = false;
+      });
     });
   });
 
@@ -498,12 +581,12 @@
    * Phones: a drag on one of the sheet's handles. Once it moves, the step
    * change it heads for (up towards the queue, back towards now playing)
    * follows the finger, then finishes or springs back on letting go, as
-   * `released` decides. A tap calls `onTap`; closing the sheet is the
-   * sheet's own drag.
+   * `released` decides. A tap calls `onTap`; a drag that would close the
+   * sheet is the sheet's own (`closing`, else on letting go).
    */
-  function stepDrag(e: PointerEvent, onTap: () => void) {
-    if (e.button !== 0) return;
-    if (!views.phone || !section || still()) return sheet.handle(e, onTap);
+  function stepDrag(e: PointerEvent, onTap: () => void, closing?: () => void) {
+    if (e.button !== 0 || busy) return;
+    if (!views.phone || !section || still()) return closing ? closing() : sheet.handle(e, onTap);
     const root = section;
     const y0 = e.clientY;
     const from = sheet.step;
@@ -522,6 +605,10 @@
         if (Math.abs(dy) < SLOP) return;
         way = dy < 0 ? 'up' : 'back';
         const to = stepTo(from, way);
+        if (to === 'closed' && closing) {
+          stop();
+          return closing();
+        }
         if (!to || to === 'closed') return;
         const before = seen(root, true);
         set(to);
@@ -530,10 +617,13 @@
       }
       if (change) scrub?.seek((way === 'up' ? -dy : dy) / change.distance);
     };
-    const end = (ev: PointerEvent) => {
+    const stop = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
+    };
+    const end = (ev: PointerEvent) => {
+      stop();
       const what = ev.type === 'pointercancel' ? null : released(ev.clientY - y0);
       if (!scrub || !change) {
         if (what === 'tap') onTap();
@@ -543,9 +633,12 @@
       }
       const goes = what === way;
       const c = change;
+      busy = true;
+      // On from where the finger left it, either way.
       scrub.release(goes, () => {
         c.finish();
         if (!goes) set(from);
+        busy = false;
       });
     };
     window.addEventListener('pointermove', move);
@@ -561,12 +654,16 @@
     if (e.key === 'Escape' && sheet.progress === 1) sheet.collapse();
   }
 
-  /** Phones: a drag on now playing closes it (down) or shows the queue (up); the seek bar keeps its own, and the artwork unless its drag is remapped away from this. */
+  /**
+   * Phones: a drag on now playing closes it (down, the sheet's drag) or
+   * brings up the queue (up, following the finger like the handle); the seek
+   * bar keeps its own, and the artwork unless its drag is remapped away from this.
+   */
   function dragNow(e: PointerEvent) {
     if (!views.phone || sheet.step !== 'now') return;
     const own = mapped(settings.current.gestures, 'artwork')['drag-vertical'] !== 'close';
     if ((e.target as Element).closest(own ? '.art, [role="slider"], .more' : '[role="slider"], .more')) return;
-    sheet.drag(e, 'sheet', undefined, true);
+    stepDrag(e, () => {}, () => sheet.drag(e, 'sheet', undefined, true));
   }
 
   /** The keyboard's press on a handle; pointers go through `sheet.handle`. */
@@ -636,10 +733,14 @@
       {#if views.phone && sheet.step === 'half'}
         <div class="cover-bg" aria-hidden="true" bind:clientWidth={coverWidth}>
           {#if coverWidth}<Artwork track={engine.current?.track} size={coverWidth} />{/if}
+          <span class="shade"></span>
         </div>
       {/if}
       <div class="art" class:lyrics={sheet.lyrics}>
-        {#if sheet.lyrics}<Lyrics />{:else}<ArtworkWidget expands={false} playing />{/if}
+        {#if sheet.lyrics}<Lyrics />{/if}
+        <!-- Kept laid out, unseen, while the lyrics show: drawn afresh (rebuilt, or from display: none),
+             the carousel's cards fade in (its @starting-style), which blinked the cover on closing them. -->
+        <div class="keep" hidden={sheet.lyrics}><ArtworkWidget expands={false} playing /></div>
       </div>
       <div class="details">
         <p class="album-title" use:marquee={sheet.progress === 1 ? (engine.current?.track.id ?? null) : null}><span class="marquee">{album}</span></p>
@@ -799,6 +900,23 @@
     align-self: stretch;
   }
 
+  /* Lays the artwork out as if it were the art's own child. */
+  .keep {
+    display: contents;
+  }
+
+  .art.lyrics {
+    position: relative;
+  }
+
+  .keep[hidden] {
+    display: block;
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
   .art.lyrics :global(.lyrics) {
     background: none;
   }
@@ -899,13 +1017,16 @@
     /* One line each, so the controls never move between tracks; what doesn't fit scrolls (`marquee.ts`). */
     .album-title {
       display: flex;
-      height: 1.3em;
+      height: calc(1.3em + 0.4em);
       margin: 0;
       font-size: 1.5em;
       font-weight: 700;
       line-height: 1.3;
       overflow: hidden;
       white-space: nowrap;
+      /* Room in the clipping box for ascenders and descenders, taken back outside it. */
+      padding-block: 0.2em;
+      margin-block: -0.2em;
     }
 
     /* Centred while it fits; auto margins drop to 0 when it overflows, so it starts at the left. */
@@ -914,9 +1035,19 @@
       margin-inline: auto;
     }
 
+    /* Clipping one-line boxes (`marquee.ts`), with room for ascenders and descenders (a 'g') taken back outside them. */
     .details :global(.hero :is(h1, .hero-artist)) {
       overflow: hidden;
       white-space: nowrap;
+      padding-block: 0.2em;
+    }
+
+    .details :global(.hero h1) {
+      margin-block: -0.2em;
+    }
+
+    .details :global(.hero .hero-artist) {
+      margin-block: calc(var(--space-1) - 0.2em) -0.2em;
     }
 
     .details :global(.marquee) {
@@ -1023,8 +1154,7 @@
       border-radius: 0;
     }
 
-    .cover-bg::after {
-      content: '';
+    .cover-bg .shade {
       position: absolute;
       inset: 0;
       background: linear-gradient(transparent 45%, var(--bg));

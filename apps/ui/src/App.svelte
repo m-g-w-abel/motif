@@ -322,9 +322,11 @@
    * finger (`backScrub`), then finishes or is undone. Otherwise (Settings,
    * desktop's All Songs, which is the layout's) the screen alone follows.
    */
+  /** A swipe back is still finishing or springing back; another waits for it rather than starting over. */
+  let backSettling = false;
   function backDrag(): Slide | undefined {
     const screen = shownScreen();
-    if (!screen || (!settingsView.group && !views.parent)) return undefined;
+    if (backSettling || !screen || (!settingsView.group && !views.parent)) return undefined;
     const parent = settingsView.group ? null : views.parent;
     if (!parent || (!views.phone && (parent.kind === 'home' || parent.kind === 'songs'))) return follow(screen);
     let change: ReturnType<typeof backScrub> | undefined;
@@ -359,7 +361,9 @@
           if (swipe) goBack();
           return;
         }
+        backSettling = true;
         c.scrub.release(!!swipe, () => {
+          backSettling = false;
           if (!swipe) {
             c.drop(true);
             Object.assign(screen.style, { zIndex: '', background: '' });
