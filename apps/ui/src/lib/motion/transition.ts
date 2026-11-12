@@ -134,6 +134,12 @@ export class Transition implements Drive {
       return this.#done;
     }
     this.#to = to;
+    // Already there (a swipe let go at the end): playing would rewind it and run it again.
+    const time = this.#time();
+    if (to ? time >= this.#length - 0.5 : time <= 0.5) {
+      this.#done = Promise.resolve().then(() => this.#finish(to));
+      return this.#done;
+    }
     for (const a of this.#animations) {
       a.playbackRate = to ? 1 : -1;
       a.play();

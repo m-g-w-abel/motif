@@ -96,6 +96,8 @@ export class Scrub {
 
   /** Plays on to the end (`forward`) or back to the start, then calls `done` once, all finished. */
   release(forward: boolean, done: () => void) {
+    // Already there (dragged all the way): playing would rewind and run it again.
+    if (this.#at === (forward ? 1 : 0)) return void Promise.resolve().then(done);
     for (const a of this.animations) {
       if (forward) a.play();
       else a.reverse();

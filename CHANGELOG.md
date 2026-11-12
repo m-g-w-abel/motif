@@ -30,6 +30,9 @@ grouped by phase of the plan.
   Recently Played and Added remember whether they showed songs or albums,
   song lists remember how far down you were, and phones lose the thin bar at
   the top of each view (the back button sits above the title instead).
+  Swiping back works on phones again, titles land in place with a larger
+  system font size, a swipe taken all the way no longer plays again, and
+  covers no longer blink empty when you change pages.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

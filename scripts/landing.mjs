@@ -9,26 +9,43 @@
 // base-url is a dev server (`npm run dev`; default http://localhost:5173)
 // whose engine has a library with albums. Use a muted test engine of your
 // own (CLAUDE.md), not one playing. Needs Chromium (CHROME overrides it).
-import { spawn } from "node:child_process";
+//
+// On the phone: CDP=http://127.0.0.1:9333 drives the app's own WebView (a
+// debug build, its DevTools forwarded as in CLAUDE.md, the app in front)
+// instead, at the phone's real size, font scale and pixel ratio. base-url is
+// then the dev server as the phone reaches it (`adb reverse tcp:5182
+// tcp:5182`); the WebView goes back to the app's own page at the end.
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const base = process.argv[2] ?? "http://localhost:5173";
 const chrome = process.env.CHROME ?? "chromium";
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), "motif-landing-"));
-const browser = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--disable-features=OverscrollHistoryNavigation", "about:blank"], { stdio: "ignore" });
-
+const phone = process.env.CDP;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let port;
-for (let i = 0; i < 100 && !port; i++) {
-  await sleep(100);
-  try {
-    port = fs.readFileSync(path.join(profile, "DevToolsActivePort"), "utf8").split("\n")[0];
-  } catch {}
+let browser;
+let profile;
+let target;
+if (phone) {
+  target = (await (await fetch(`${phone}/json/list`)).json()).find((t) => t.type === "page");
+  if (!target) throw new Error(`no page at ${phone}`);
+} else {
+  profile = fs.mkdtempSync(path.join(os.tmpdir(), "motif-landing-"));
+  browser = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--disable-features=OverscrollHistoryNavigation", "about:blank"], { stdio: "ignore" });
+  let port;
+  for (let i = 0; i < 100 && !port; i++) {
+    await sleep(100);
+    try {
+      port = fs.readFileSync(path.join(profile, "DevToolsActivePort"), "utf8").split("\n")[0];
+    } catch {}
+  }
+  if (!port) throw new Error(`${chrome} didn't start`);
+  target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json();
 }
-if (!port) throw new Error(`${chrome} didn't start`);
-const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json();
+// Where the phone's WebView goes back to (the app's own page, even if a failed run left it on ours).
+const home = target.url.startsWith(base) ? "http://tauri.localhost/" : target.url;
+
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((r) => (ws.onopen = r));
 let next = 0;
@@ -61,29 +78,52 @@ const until = async (expression, ms = 5000) => {
   throw new Error(`timed out waiting for ${expression}`);
 };
 
+let forget = async () => {};
+if (phone) {
+  // The app's WebView refuses its Tauri bridge (and so the embedded engine) to the dev server's
+  // page; that page (its own storage, apart from the app's) uses the dev server's engine instead.
+  await send("Page.enable");
+  // Only there: never the app's own page, whose storage holds the user's engines and their tokens.
+  const origin = JSON.stringify(new URL(base).origin);
+  const { identifier } = await send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `if (location.origin === ${origin}) localStorage.setItem("engines", JSON.stringify({ engines: [{ id: "landing", name: "Landing check", addresses: [location.host], token: null }], current: "landing" }))`,
+  });
+  forget = () => send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+}
+
 async function open(query, width, height) {
-  await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width <= 700 });
+  if (phone && width > 700) return false;
+  if (!phone) {
+    await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width <= 700 });
+    await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+  }
   await send("Page.navigate", { url: `${base}/?${query}` });
-  await until("!!window.motifLandings && document.querySelectorAll('main > .screen').length === 1");
+  await until("!!window.motifLandings && document.querySelectorAll('main > .screen').length === 1", 20000);
+  return true;
 }
 
 /**
- * A finger from (x0, y) to (x1, y), in steps, as the UI's gestures see it:
- * touch pointer events made in the page, since headless Chromium cancels its
- * own touches as soon as they move.
+ * A real finger from (x0, y) to (x1, y), x from the music area's left edge
+ * (desktop has the left panel before it): touch events through the browser,
+ * or on the phone through Android's input, so a browser that takes the touch
+ * for its own pan (and cancels it) fails the check as it would fail the user.
  */
 async function swipe(dx0, dx1, y) {
-  // From the music area's left edge (desktop has the left panel before it).
   const left = await run("document.querySelector('main').getBoundingClientRect().left");
   const [x0, x1] = [left + dx0, left + dx1];
-  const fire = (type, x) =>
-    run(`(document.elementFromPoint(${x0}, ${y}) ?? document.body).dispatchEvent(new PointerEvent('${type}', { pointerType: 'touch', pointerId: 7, isPrimary: true, button: 0, clientX: ${x}, clientY: ${y}, bubbles: true, composed: true }))`);
-  await fire("pointerdown", x0);
+  if (phone) {
+    // Screen pixels; the WebView sits under the status bar, which a sideways swipe can ignore.
+    const k = await run("devicePixelRatio");
+    execFileSync("adb", ["shell", "input", "swipe", ...[x0, y, x1, y].map((v) => String(Math.round(v * k))), "300"]);
+    return sleep(100);
+  }
+  const at = (x) => [{ x, y, id: 1 }];
+  await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(x0) });
   for (let i = 1; i <= 12; i++) {
     await sleep(16);
-    await fire("pointermove", x0 + ((x1 - x0) * i) / 12);
+    await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(x0 + ((x1 - x0) * i) / 12) });
   }
-  await fire("pointerup", x1);
+  await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 }
 
 const settled = "document.querySelectorAll('main > .screen').length === 1 && !document.querySelector('.motion-layer')?.children.length";
@@ -112,49 +152,57 @@ async function check(name, act, least = 1) {
 const card = "document.querySelector('main .card:not(.loading)')";
 const tap = (selector) => () => run(`${selector}.click()`);
 
-// Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
-if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, sleep, settled, card });
-else {
-  // Phone: a category from the Library home and back by its back button; desktop has no home screen.
-  await open("dev-view=home", 384, 820);
-  await check("phone: open a category", tap("document.querySelectorAll('main .categories button')[1]"), 2);
-  await check("phone: back by the button", tap("document.querySelector('main .back')"), 2);
-  // Search: an album found, and back to the results.
-  await open("dev-view=search", 384, 820);
-  await run("const i = document.querySelector('main input[type=search]'); i.value = 'Short'; i.dispatchEvent(new Event('input', { bubbles: true }))");
-  await until("!!document.querySelector('main button.album img')?.complete");
-  await check("phone: open an album from Search", tap("document.querySelector('main button.album')"), 2);
-  await check("phone: swipe back to Search", () => swipe(20, 300, 410), 2);
-  for (const [label, w, h] of [
-    ["phone", 384, 820],
-    ["desktop", 1200, 800],
-  ]) {
-    await open("dev-view=albums", w, h);
-    await until(`!!${card}?.querySelector('img')?.complete`);
-    await check(`${label}: open an album`, tap(card), 2);
-    if (label === "desktop") {
-      await check(`${label}: back by the button`, tap("document.querySelector('main .back')"), 2);
-      await check(`${label}: open it again`, tap(card), 2);
+try {
+  // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
+  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, sleep, settled, card });
+  else {
+    // Phone: a category from the Library home and back by its back button; desktop has no home screen.
+    await open("dev-view=home", 384, 820);
+    await check("phone: open a category", tap("document.querySelectorAll('main .categories button')[1]"), 2);
+    await check("phone: back by the button", tap("document.querySelector('main .back')"), 2);
+    // Search: an album found, and back to the results.
+    await open("dev-view=search", 384, 820);
+    await run("const i = document.querySelector('main input[type=search]'); i.value = 'Short'; i.dispatchEvent(new Event('input', { bubbles: true }))");
+    await until("!!document.querySelector('main button.album img')?.complete");
+    await check("phone: open an album from Search", tap("document.querySelector('main button.album')"), 2);
+    await check("phone: swipe back to Search", () => swipe(20, 300, 410), 2);
+    for (const [label, w, h] of [
+      ["phone", 384, 820],
+      ["desktop", 1200, 800],
+    ]) {
+      if (!(await open("dev-view=albums", w, h))) continue;
+      await until(`!!${card}?.querySelector('img')?.complete`);
+      await check(`${label}: open an album`, tap(card), 2);
+      if (label === "desktop") {
+        await check(`${label}: back by the button`, tap("document.querySelector('main .back')"), 2);
+        await check(`${label}: open it again`, tap(card), 2);
+      }
+      await check(`${label}: swipe back`, () => swipe(20, w * 0.8, h / 2), 2);
+      await check(`${label}: swipe back cancelled`, async () => {
+        await run(`${card}.click()`);
+        await until(settled);
+        await run("window.motifLandings.length = 0");
+        await swipe(20, 40, h / 2);
+      }, 0);
     }
-    await check(`${label}: swipe back`, () => swipe(20, w * 0.8, h / 2), 2);
-    await check(`${label}: swipe back cancelled`, async () => {
-      await run(`${card}.click()`);
-      await until(settled);
-      await run("window.motifLandings.length = 0");
-      await swipe(20, 40, h / 2);
-    }, 0);
+  }
+  if (!process.env.STEPS) {
+    await open("dev-settings=interface", 384, 820);
+    await check("phone: Settings section back to the list", () => swipe(20, 300, 400), 0);
+    await check("phone: Settings list to a section", tap("document.querySelector('main .phone-list button')"), 0);
+  }
+} finally {
+  if (phone) {
+    await forget();
+    await send("Page.navigate", { url: home });
   }
 }
-if (!process.env.STEPS) {
-  await open("dev-settings=interface", 384, 820);
-  await check("phone: Settings section back to the list", () => swipe(20, 300, 400), 0);
-  await check("phone: Settings list to a section", tap("document.querySelector('main .phone-list button')"), 0);
-}
-
 ws.close();
-browser.kill();
-await new Promise((r) => browser.once("exit", r));
-fs.rmSync(profile, { recursive: true, force: true });
+if (browser) {
+  browser.kill();
+  await new Promise((r) => browser.once("exit", r));
+  fs.rmSync(profile, { recursive: true, force: true });
+}
 if (failures.length) {
   console.log(`\n${failures.length} failed:\n${failures.join("\n")}`);
   process.exit(1);

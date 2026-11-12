@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { motion } from './stage.svelte';
 import { CURVE, DURATION, Transition, type Track } from './transition';
 
 describe('CURVE', () => {
@@ -85,6 +86,20 @@ describe('Transition', () => {
     expect(done).toBe(1);
   });
 
+  it('finishes at once when let go already at its end (a swipe all the way), instead of playing again', async () => {
+    let cleaned = 0;
+    const t = new Transition([track()], () => cleaned++);
+    t.seek(1);
+    await t.release(true);
+    expect(made[0].log).not.toContain('play 1');
+    expect(cleaned).toBe(1);
+    expect(t.progress).toBe(1);
+    const u = new Transition([track()]);
+    u.seek(0);
+    await u.release(false);
+    expect(made[1].log).not.toContain('play -1');
+  });
+
   it('is safe to release twice: the second does nothing', async () => {
     let cleaned = 0;
     const t = new Transition([track()], () => cleaned++);
@@ -132,8 +147,7 @@ describe('Transition', () => {
 });
 
 describe('motion', () => {
-  it('goes forward into a deeper screen, back out of one, and swaps between screens at the same depth', async () => {
-    const { motion } = await import('./stage.svelte');
+  it('goes forward into a deeper screen, back out of one, and swaps between screens at the same depth', () => {
     expect(motion(1, 2)).toBe('forward');
     expect(motion(3, 2)).toBe('back');
     expect(motion(2, 2)).toBe('swap');

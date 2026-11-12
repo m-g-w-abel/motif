@@ -30,6 +30,7 @@ describe('Scrub', () => {
   it('plays on to the end, or back to the start, then says so once all have finished', async () => {
     const [a, b] = [new Fake(300), new Fake(300)];
     const scrub = new Scrub([a, b] as unknown as Animation[]);
+    scrub.seek(0.5);
     let done = 0;
     scrub.release(false, () => done++);
     expect([a.log, b.log]).toEqual([['pause', 'reverse'], ['pause', 'reverse']]);
@@ -42,5 +43,16 @@ describe('Scrub', () => {
     const on = new Fake(300);
     new Scrub([on] as unknown as Animation[]).release(true, () => {});
     expect(on.log).toEqual(['pause', 'play']);
+  });
+
+  it('finishes at once when let go already at the end it heads for, instead of playing it again', async () => {
+    const a = new Fake(300);
+    const scrub = new Scrub([a] as unknown as Animation[]);
+    scrub.seek(1);
+    let done = 0;
+    scrub.release(true, () => done++);
+    await new Promise((r) => setTimeout(r));
+    expect(a.log).toEqual(['pause']);
+    expect(done).toBe(1);
   });
 });

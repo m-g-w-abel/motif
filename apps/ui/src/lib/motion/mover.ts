@@ -92,13 +92,32 @@ function motionLayer() {
   return layer;
 }
 
+let zoom: number | undefined;
+/**
+ * The text zoom a phone's WebView applies to any font size set (Android's
+ * font scale, e.g. 1.1): computed sizes already include it, so a copy given
+ * them would be zoomed twice. Measured once.
+ */
+function textZoom() {
+  if (zoom === undefined) {
+    const probe = document.createElement('div');
+    probe.style.fontSize = '100px';
+    document.body.append(probe);
+    zoom = parseFloat(getComputedStyle(probe).fontSize) / 100 || 1;
+    probe.remove();
+  }
+  return zoom;
+}
+/** The value to set for `p` so it computes to `v` again (font size and line height are zoomed). */
+const unzoomed = (p: string, v: string) => (p !== 'font-size' && p !== 'line-height') || !v.endsWith('px') ? v : `${parseFloat(v) / textZoom()}px`;
+
 /** A copy of `s.el`, looking as it does there, at `at` (absolute in `parent`, or fixed on screen). */
 function copyOf(s: Seen, at: Box, fixed: boolean) {
   const c = s.el.cloneNode(true) as HTMLElement;
   c.removeAttribute('data-move');
   // The original's lazy, async image would decode afresh and draw nothing for a frame.
   for (const img of c.querySelectorAll('img')) Object.assign(img, { loading: 'eager', decoding: 'sync' });
-  for (const [p, v] of Object.entries(s.look)) c.style.setProperty(p, v);
+  for (const [p, v] of Object.entries(s.look)) c.style.setProperty(p, unzoomed(p, v));
   Object.assign(c.style, {
     position: fixed ? 'fixed' : 'absolute',
     left: `${at.left}px`,

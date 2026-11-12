@@ -99,7 +99,9 @@ hidden phone pauses it.
 `node scripts/landing.mjs [dev-server-url]` checks in headless Chromium that
 every shared element of a screen change lands exactly on its real element
 (docs/ANIMATION.md, Checking); run it after animation changes, against a muted
-test engine with a library (not the user's).
+test engine with a library (not the user's). With `CDP=http://127.0.0.1:9333`
+it runs in the phone's WebView instead (forwarded as below, plus
+`adb reverse tcp:5182 tcp:5182` to the dev server).
 `node scripts/soak.mjs [mode] [seconds]` soak-tests engine memory (see the
 script). Run all of these before saying work is done; GitHub CI is disabled
 for now, so these local runs are the only check. If no Rust changed (no

@@ -229,9 +229,16 @@ progress.
 - *Hand-over.* At the end the clip box is the destination's box and the
   copy is its drawing, so removing the copy and showing the real element in
   the same frame changes nothing.
+- *Text zoom.* A phone's WebView scales every font size set by the system
+  font scale (1.1 on the user's phone), computed sizes included, so a copy
+  given its original's computed size would be scaled twice. The mover
+  measures the factor once and divides font size and line height by it.
 
-**Images.** The traveller is whichever end's image is already decoded at the
-higher resolution (the grid's or the page's, the strip's or the cover's).
+**Images.** Every cover draws already decoded: `Artwork` remembers the
+covers decoded this session (`DecodedArt`), shows one at once on a screen
+that mounts, and its `<img>` decodes synchronously (an asynchronous decode
+lets the WebView paint a frame without it). The traveller is whichever end's
+image is already decoded at the higher resolution (the grid's or the page's, the strip's or the cover's).
 Copies of images are made eager and synchronous, and the copy is only shown
 once `img.decode()` has resolved (within a frame for a cached image), so a
 copy never draws empty. The destination stays hidden until its own image has
@@ -261,7 +268,14 @@ of a `{#key}` block with Svelte transitions:
   follows the finger like any other screen.
 
 Each screen restores its own scroll position on mount (albums grid, song
-lists), so a swipe back can fly a cover to its row further down. While two
+lists), so a swipe back can fly a cover to its row further down.
+
+**Touches.** Inside views and Settings, every element has `touch-action:
+pan-y` (zero specificity, so components keep their own): the browser never
+takes a sideways touch for a pan of its own, which sends `pointercancel` and
+ends the swipe after its first move. `main`'s `pan-y` alone isn't enough, as
+`touch-action` stops at the nearest scroll container. Search's chips scroll
+sideways, and desktop's layouts keep wide tables' panning. While two
 screens are up, the one that isn't the state's is `inert`; the stage never
 sets `pointer-events: none`, which would cancel the finger driving it.
 
@@ -346,13 +360,21 @@ before the rest (Checking).
   of the same words stay over the same words all the way. A move that
   doesn't land, or text that changes style at once, fails here.
 - **Landing check, in a browser** (`node scripts/landing.mjs [url]`):
-  headless Chromium drives taps and swipes (phone and desktop, Search,
-  Settings) and fails if any copy ended off its real element by more than a
+  headless Chromium drives taps and real touch swipes (phone and desktop,
+  Search, Settings) and fails if any copy ended off its real element by more than a
   pixel or with a different colour, weight or size, or if a change left a
   second screen, copies or hidden elements behind. Dev builds record each
   landing in `window.motifLandings` for it. Run it against a muted test
   engine with a library (CLAUDE.md). `STEPS=file.mjs` runs your own steps
   with its helpers, for debugging. The sheet joins it with steps 5–6.
+- **The same check on the phone** (`CDP=http://127.0.0.1:9333 node
+  scripts/landing.mjs http://localhost:5182`): drives the app's own WebView
+  (a debug build, its DevTools forwarded, `adb reverse` to a dev server on a
+  muted test engine) at the phone's real size, pixel ratio and font scale,
+  swiping through Android's input. It caught what desktop didn't: titles
+  landing off under the font scale, and swipes the WebView cancelled. The
+  WebView goes back to the app's own page at the end; the test page's
+  setup never touches the app's storage.
 - **A frozen frame** (`?dev-scrub=0.3`, dev builds): the next transition
   stops at that progress instead of playing, to inspect on the phone or in
   WebKitGTK; the next change ends it.

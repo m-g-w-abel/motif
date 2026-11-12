@@ -526,6 +526,18 @@
     min-height: 0;
   }
 
+  /* A sideways touch in a view or Settings is a swipe (back, queue a row), never the browser's pan,
+     which cancels the finger. touch-action stops at the nearest scroller, so main's pan-y doesn't reach
+     the lists; zero specificity, so a component's own value wins. Search's chips scroll sideways, and
+     desktop's layouts (All Songs) keep theirs for wide tables. */
+  :global(:where(main .view *, main .screen > .screen *)) {
+    touch-action: pan-y;
+  }
+
+  :global(:where(main .view .chips, main .view .chips *)) {
+    touch-action: auto;
+  }
+
   .screen.over {
     position: fixed;
     inset: 0;
