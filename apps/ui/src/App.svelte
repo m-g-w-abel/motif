@@ -35,7 +35,9 @@
   import ContentArea from './lib/components/shell/ContentArea.svelte';
   import ViewScreen from './lib/components/shell/ViewScreen.svelte';
   import { devViews, parseViewLink, Views, type View } from './lib/views.svelte';
-  import { arrive, backScrub, follow, leave, motion, quietly, type Motion } from './lib/screens';
+  import { Stage } from './lib/motion/stage.svelte';
+  import { Transition, type Drive } from './lib/motion/transition';
+  import { landings } from './lib/motion/mover';
   import type { Slide } from './lib/gestures';
   import PlaylistPrompt from './lib/components/playlists/PlaylistPrompt.svelte';
   import { Playlists } from './lib/playlists.svelte';
@@ -262,6 +264,10 @@
     // A second engine to switch to, e.g. ?dev-engine=127.0.0.1:7711&dev-token=…
     const devEngine = params.get('dev-engine');
     if (devEngine) engines.update((list) => addEngine(list, { id: devEngine, name: devEngine, addresses: [devEngine], token: params.get('dev-token') }));
+    // Holds the next transition at this progress, to inspect a frame (?dev-scrub=0.3).
+    const devScrub = params.get('dev-scrub');
+    if (devScrub !== null) Transition.hold = Math.min(1, Math.max(0, Number(devScrub) || 0));
+    (globalThis as { motifLandings?: typeof landings }).motifLandings = landings;
     if (params.has('dev-stress')) import('./lib/components/StressTest.svelte').then((m) => (StressTest = m.default));
     const devPlay = params.get('dev-play');
     if (devPlay !== null) {
@@ -307,83 +313,74 @@
 
   // Android back closes the topmost layer. Menus and dialogs close through
   // their own Esc handling (the pair dialog also cancels its code there).
-  /** The screen showing in the music area, which a swipe back moves (not one already leaving). */
-  const shownScreen = () => document.querySelector<HTMLElement>('main > .screen:not([data-leaving], .peek)');
-  /** The view a swipe back is going to, drawn beneath the screen while the finger decides. */
-  let peek = $state.raw<View | null>(null);
-  let peekEl = $state<HTMLElement>();
-  /** The swipe back under way that scrubs the change, which finishing the swipe hands to. */
-  let backing: Slide | null = null;
-  const goBack = () => (settingsView.group ? settingsView.back() : views.back());
-
   /**
-   * What a swipe back (touch, or Android's predictive back) moves. Back to a
-   * view: that view is drawn beneath and the change between them follows the
-   * finger (`backScrub`), then finishes or is undone. Otherwise (Settings,
-   * desktop's All Songs, which is the layout's) the screen alone follows.
+   * The music area's screens (`lib/motion/stage.svelte.ts`): a view, desktop's
+   * All Songs (the layout's), or Settings (phones: its list and each group
+   * are screens of their own). Each has a key; the same key is the same screen.
    */
-  /** A swipe back is still finishing or springing back; another waits for it rather than starting over. */
-  let backSettling = false;
+  type Shown = { key: string; depth: number; over: boolean } & (
+    | { kind: 'view'; view: View }
+    | { kind: 'songs' }
+    | { kind: 'settings'; page?: 'list' | SettingsGroup }
+  );
+  /** The screen for the views' stack `stack`. */
+  function viewScreen(stack: View[]): Shown {
+    const top = stack.at(-1)!;
+    if (!views.phone && (top.kind === 'songs' || top.kind === 'home')) return { key: 'songs', depth: stack.length, over: false, kind: 'songs' };
+    return { key: `view:${JSON.stringify(top)}`, depth: stack.length, over: false, kind: 'view', view: top };
+  }
+  /** Phones' Settings covers the bar too, so its screens sit over it. */
+  function settingsScreen(page?: 'list' | SettingsGroup): Shown {
+    const deep = page !== undefined && page !== 'list' ? 2 : 1;
+    return { key: `settings:${page ?? ''}`, depth: views.stack.length + deep, over: views.phone, kind: 'settings', page };
+  }
+  const phonePage = () => (settingsView.list ? 'list' : settingsView.group!);
+  const current = $derived(settingsView.group ? settingsScreen(settingsView.phone ? phonePage() : undefined) : viewScreen(views.stack));
+  /** Where back goes, drawn beneath while a swipe back decides. */
+  const under = $derived.by((): Shown | null => {
+    if (settingsView.group) return settingsView.phone && !settingsView.list ? settingsScreen('list') : viewScreen(views.stack);
+    if (!views.parent) return null;
+    return viewScreen(views.stack.length > 1 ? views.stack.slice(0, -1) : [views.parent]);
+  });
+  let stageEl = $state<HTMLElement>();
+  const stage = new Stage<Shown>(untrack(() => current), () => stageEl);
+  $effect(() => {
+    const next = current;
+    untrack(() => stage.go(next));
+  });
+
+  const goBack = () => (settingsView.group ? settingsView.back() : views.back());
+  /** The swipe back under way, which finishing the swipe (or Android's back) releases. */
+  let backing: Drive | null = null;
+  /**
+   * What a swipe back (touch, or Android's predictive back) moves: once the
+   * finger moves, the screen it goes back to is mounted beneath and the
+   * change follows the finger, then finishes or springs back.
+   */
   function backDrag(): Slide | undefined {
-    const screen = shownScreen();
-    if (backSettling || !screen || (!settingsView.group && !views.parent)) return undefined;
-    const parent = settingsView.group ? null : views.parent;
-    if (!parent || (!views.phone && (parent.kind === 'home' || parent.kind === 'songs'))) return follow(screen);
-    let change: ReturnType<typeof backScrub> | undefined;
-    let ended = false;
-    let progress = 0;
-    const drag: Slide = {
+    const to = under;
+    if (!to) return undefined;
+    let drive: Drive | undefined;
+    const width = () => stageEl?.offsetWidth || innerWidth;
+    return {
       move(dx) {
-        progress = Math.max(0, dx) / screen.offsetWidth;
-        if (!backing) {
-          backing = drag;
-          peek = parent;
-          // A frame for the view beneath to lay out: its cards, its scroll.
-          void tick().then(() =>
-            requestAnimationFrame(() => {
-              if (ended || !peekEl) return;
-              // Opaque and on top, so the view beneath shows only where this has moved off it.
-              Object.assign(screen.style, { zIndex: '1', background: 'var(--bg)' });
-              change = backScrub(screen, peekEl);
-              change.scrub.seek(progress);
-            }),
-          );
-        }
-        change?.scrub.seek(progress);
+        if (!drive && dx <= 0) return;
+        drive ??= backing = stage.drag(to, goBack);
+        drive.seek(Math.max(0, dx) / width());
       },
       end(swipe) {
-        if (ended) return;
-        ended = true;
-        backing = null;
-        const c = change;
-        if (!c) {
-          peek = null;
-          if (swipe) goBack();
-          return;
-        }
-        backSettling = true;
-        c.scrub.release(!!swipe, () => {
-          backSettling = false;
-          if (!swipe) {
-            c.drop(true);
-            Object.assign(screen.style, { zIndex: '', background: '' });
-            peek = null;
-            return;
-          }
-          // The view beneath stays on top until the real one has drawn under it.
-          if (peekEl) peekEl.style.zIndex = '2';
-          quietly(() => views.back());
-          requestAnimationFrame(() =>
-            requestAnimationFrame(() => {
-              c.drop(false);
-              peek = null;
-            }),
-          );
-        });
+        if (backing === drive) backing = null;
+        drive?.release(!!swipe);
       },
     };
-    return drag;
   }
+  /** Back by a swipe that is driving the change (it lets go), or at once. */
+  const back = () => {
+    const b = backing;
+    backing = null;
+    if (b) b.release(true);
+    else goBack();
+  };
   const escape = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   $effect(() =>
     routeBack(() => [
@@ -395,28 +392,13 @@
       { open: helpOpen || views.changelog || settingsView.pairing || settingsView.addingEngine, close: escape },
       { open: editing, close: () => (editing = false) },
       { open: layout.arranging, close: () => (layout.arranging = false) },
-      { open: !!settingsView.group, close: () => settingsView.back(), follow: backDrag },
+      { open: !!settingsView.group, close: back, follow: backDrag },
       { open: sheet.open, close: () => sheet.back() },
       { open: !!views.menu, close: () => (views.menu = null) },
-      { open: !!views.parent, close: () => (backing ? backing.end('swipe-right') : views.back()), follow: backDrag },
+      { open: !!views.parent, close: back, follow: backDrag },
     ]),
   );
   const player = $derived(settings.current.player);
-  // A new screen in the music area animates in; phones' Settings list and each group are screens of their own.
-  const phoneSettings = $derived(settingsView.phone && (settingsView.list ? 'list' : settingsView.group));
-  const screen = $derived(settingsView.group ? `settings:${phoneSettings || ''}` : allSongs ? 'songs' : views.top);
-  // How deep the screen is, so leaving it goes forward or back: Settings sits above the views.
-  const depth = $derived(views.stack.length + (settingsView.group ? (phoneSettings && phoneSettings !== 'list' ? 2 : 1) : 0));
-  let shownDepth = untrack(() => depth);
-  /** The last change's way, for the arriving screen too. */
-  let lastMotion: Motion = 'swap';
-  function leaving(node: HTMLElement) {
-    lastMotion = motion(shownDepth, depth);
-    shownDepth = depth;
-    return leave(node, lastMotion);
-  }
-  // Phones' Settings covers the bar too, so its screen sits over it while it comes and goes (not only once there).
-  const over = $derived(!!settingsView.group && views.phone);
   /** Touch: swiping right on a view or Settings goes back, unless the press drags a control or scrolls a row (Search's chips) sideways. */
   function swipeBack(e: PointerEvent) {
     if ((e.target as Element).closest('[role="slider"], input, textarea, .resize, .divider, .grip, .chips')) return;
@@ -424,7 +406,7 @@
     gesture(
       e,
       mapped(settings.current.gestures, 'view'),
-      { back: () => (backing ? backing.end('swipe-right') : goBack()) },
+      { back },
       backDrag(),
     );
   }
@@ -454,21 +436,20 @@
       </div>
     {/if}
 
-    <main onpointerdown={swipeBack}>
-      {#if peek}<div class="screen peek" bind:this={peekEl} inert><ViewScreen view={peek} /></div>{/if}
-      {#key screen}
-        <div class="screen" class:over in:arrive={() => lastMotion} out:leaving>
-          {#if settingsView.group}
-            <SettingsScreen />
-          {:else if allSongs}
+    <main onpointerdown={swipeBack} bind:this={stageEl}>
+      {#each stage.shown as s (s.key)}
+        <div class="screen" class:over={s.over} data-screen={s.key} inert={s.key !== current.key}>
+          {#if s.kind === 'settings'}
+            <SettingsScreen page={s.page} />
+          {:else if s.kind === 'songs'}
             {#key `${layout.source}/${layout.activeId}`}
               <ContentArea onEditLayout={() => (editing = true)} />
             {/key}
           {:else}
-            <ViewScreen />
+            <ViewScreen view={s.view} />
           {/if}
         </div>
-      {/key}
+      {/each}
     </main>
 
     <!-- Phones always have the bar: it holds the view buttons and the menu. -->

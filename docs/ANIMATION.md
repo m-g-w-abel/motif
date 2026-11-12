@@ -4,9 +4,10 @@ How Motif animates. The reference for any UI work that moves something: new
 pages and features get their animations by declaring them with the tools
 below, not by writing animation code.
 
-Status: **design, approved before the refactor (#180).** Code lives in
-`apps/ui/src/lib/motion/` once it is built; until then the old code listed
-under Migration still runs.
+Status (#180): migration steps 1–4 are built (`apps/ui/src/lib/motion/`:
+`transition.ts`, `fit.ts`, `mover.ts`, `stage.svelte.ts`, `swap.ts`); the
+sheet, rows and surfaces still run the old code in `lib/screens.ts` and
+`ExpandedPlayer.svelte` until steps 5–8.
 
 ## Rules
 
@@ -206,26 +207,28 @@ progress.
 
 **Text.** Text is the case that kept breaking:
 
-- *One drawing.* The words travel as one drawing, scaled evenly (`text` fit:
-  matched by the box of the words, not the element, so padding and alignment
-  don't throw it off). Two drawings of the same words never crossfade at
-  different positions (#109).
+- *One drawing.* The words travel as the new element's drawing, scaled
+  evenly and matched by their first letter (not the element's box, so
+  padding and alignment don't throw it off). Two drawings of the same words
+  never crossfade at different positions (#109).
 - *No clipping.* A long title is clipped differently at each end (ellipsis
   in the bar, full width or a marquee in the sheet). The travelling copy sits
   in a **clip box** that moves from the old element's visible box to the new
   one's, and the text inside is counter-scaled so it is never squashed. The
   clip box's scale and the text's counter-scale are sampled into keyframes
   (8 steps), since the inverse of a linear scale isn't linear. Transform only.
-  The copy draws the text without its ellipsis inside that box, so the cut
-  slides open rather than jumping.
-- *Colour and weight.* If the two ends differ in colour or weight, a second
-  copy of the words in the old look lies over the travelling one, fitted to
-  the same words, and fades across the whole move. The look changes
-  gradually instead of at the handover. Same look: one copy only.
+  The copy is the new element at its own size (its own ellipsis or
+  wrapping), so the cut slides open rather than jumping.
+- *Colour, weight, cut.* If the two ends differ in colour, weight or font, or
+  one is cut off or wrapped and the other isn't, the old drawing travels
+  too, locked onto the new words, and the two crossfade across the whole
+  move: each end is exactly one drawing and the look changes gradually.
+  When both are whole single lines, the two also stretch a little across so
+  their words span the same width all the way (bold is wider than regular,
+  and would otherwise ghost). Same look: one drawing only.
 - *Hand-over.* At the end the clip box is the destination's box and the
   copy is its drawing, so removing the copy and showing the real element in
-  the same frame changes nothing. Where the destination shows an ellipsis,
-  the copy's ellipsis fades in over the last span instead of appearing.
+  the same frame changes nothing.
 
 **Images.** The traveller is whichever end's image is already decoded at the
 higher resolution (the grid's or the page's, the strip's or the cover's).
@@ -242,8 +245,9 @@ keyed list of screens, at most the current one and the one under it, instead
 of a `{#key}` block with Svelte transitions:
 
 - *Forward* (open an album): the new screen is added on top and slides in
-  from the right, opaque; the old one moves 8 % left and dims beneath it.
-  Shared elements travel between them.
+  from the right, opaque; the old one moves 8 % left beneath it (no dimming:
+  it would let the player bar under Settings show through). Shared elements
+  travel between them.
 - *Back* is the exact reverse. A tap back plays it; a swipe back (touch or
   Android's predictive back) drives it. The screen beneath is the real one,
   mounted at the start of the swipe; when the swipe commits it simply
@@ -257,7 +261,9 @@ of a `{#key}` block with Svelte transitions:
   follows the finger like any other screen.
 
 Each screen restores its own scroll position on mount (albums grid, song
-lists), so a swipe back can fly a cover to its row further down.
+lists), so a swipe back can fly a cover to its row further down. While two
+screens are up, the one that isn't the state's is `inert`; the stage never
+sets `pointer-events: none`, which would cancel the finger driving it.
 
 **The now-playing sheet.** Open/close is one transition between the bar and
 the sheet snapshots, with the sheet's spans. Dragging the sheet seeks it;
@@ -301,22 +307,23 @@ uses `use:swap`.
 Each step leaves the app working, with the checks passing, and deletes what
 it replaces.
 
-1. **Core** (`lib/motion/`): `Transition` with the clock domain, `Drive`,
-   the fits (`flip`, `fit`, glyph and ink boxes, moved from `screens.ts` and
-   `ExpandedPlayer.svelte`), and the pure planner. Test-first: span to
-   timing, seek and release, interrupting, repeat-safety, pairing, enter and
-   leave, nested lift. No callers yet.
-2. **The mover**: copies, the motion layer, the text clip box and look
-   crossfade, image decoding and hand-over. Tests for the clip keyframes and
-   the choice of traveller.
-3. **Screens**: the screen stage and its keyed list; `data-move` on the
-   tiles, pages and category headers; App's back and Settings go through it.
-   Deletes `leave`, `arrive`, `follow`, `shared`, `flight`, `fly`,
-   `handOver`, `backScrub`, `quietly`, `peek` and `backSettling`.
-4. **Content swaps**: `use:swap` in Search, the recents switch and the bar.
-   Deletes `refresh`.
-5. **Sheet steps**: attributes on the sheet, `change()` per step, handles as
-   drives. Deletes `ROLES`, `STEPPED`, `FADING`, `seen`, `stepChange`,
+1. **Core** ✓ (`transition.ts`, `fit.ts`): `Transition` with the clock
+   domain, `Drive`, the maps between boxes and the text flight. Tested:
+   span to timing, seek and release, interrupting, repeat-safety, the dev
+   scrubber, and that every flight lands exactly.
+2. **The mover** ✓ (`mover.ts`): copies, the motion layer, the text clip box
+   and look crossfade, image decoding and hand-over.
+3. **Screens** ✓ (`stage.svelte.ts`): the screen stage and its keyed list;
+   `data-move` on the tiles, pages, category headers and song rows; App's
+   back and Settings go through it. Deleted `leave`, `arrive`, `follow`,
+   `shared`, `flight`, `fly`, `handOver`, `backScrub`, `quietly`, `peek`
+   and `backSettling`.
+4. **Content swaps** ✓ (`swap.ts`): `use:swap` in Search and the recents
+   switch. The bar's song change keeps `refresh` until step 7, as it is tied
+   to the bar's swipe.
+5. **Sheet steps**: the pure planner (pairing, enter and leave, nested lift;
+   test-first) and `change()`, its first user; attributes on the sheet,
+   `change()` per step, handles as drives. Deletes `ROLES`, `STEPPED`, `FADING`, `seen`, `stepChange`,
    `stepDrag`, `busy`, `scrubbing`.
 6. **Sheet open/close**: bar and sheet snapshots, the sheet's spans, drags
    as drives. Deletes `MORPH`, `FADE`, `LEAVE`, `pair`, `copy`, `tinted`,
@@ -328,18 +335,40 @@ it replaces.
    selection bar. Deletes `rise`, `pop`, `dim`; `screens.ts` is gone.
 
 Steps 1–3 come first because they fix the most of the issues below; 5 and 6
-fix the sheet's.
+fix the sheet's. After step 3 the user tests a debug build on the phone
+before the rest (Checking).
+
+## Checking
+
+- **Landing tests, in vitest** (`lib/motion/*.test.ts`): every flight's
+  last keyframe puts the copy exactly on the new element's box; text starts
+  exactly as the old drawing and is never squashed on the way; two drawings
+  of the same words stay over the same words all the way. A move that
+  doesn't land, or text that changes style at once, fails here.
+- **Landing check, in a browser** (`node scripts/landing.mjs [url]`):
+  headless Chromium drives taps and swipes (phone and desktop, Search,
+  Settings) and fails if any copy ended off its real element by more than a
+  pixel or with a different colour, weight or size, or if a change left a
+  second screen, copies or hidden elements behind. Dev builds record each
+  landing in `window.motifLandings` for it. Run it against a muted test
+  engine with a library (CLAUDE.md). `STEPS=file.mjs` runs your own steps
+  with its helpers, for debugging. The sheet joins it with steps 5–6.
+- **A frozen frame** (`?dev-scrub=0.3`, dev builds): the next transition
+  stops at that progress instead of playing, to inspect on the phone or in
+  WebKitGTK; the next change ends it.
+- **The phone**: after steps 3, 6 and 8, a debug build on the phone before
+  going on.
 
 ## Open issues (fab0560) and what fixes them
 
 | # | Issue | Fixed by |
 |---|---|---|
-| 1 | Back from an album to Search makes Search jitter | **Foundation**: the screen beneath stays mounted (no second mount after the swipe) and `use:swap` doesn't fire when results arrive. Search's results run an effect on every piece of data that arrives (`refresh` in `SearchView.svelte`), which a remount sets off. |
-| 2 | Opening an album from Search flashes its cover | **Foundation**, likely: the mover waits for the copy's image to decode and keeps the page's hidden until its own has. To confirm once moved over; if Search's cover uses a different image size than the page, it may need the traveller rule tuned. |
-| 3 | Search's animations restart | **Foundation**: same cause as 1; `use:swap` animates only on a new search or filter. |
-| 4 | Recently Added forgets it was showing Albums | **Own fix**: `show` is local state in `ViewScreen.svelte`, lost when the screen unmounts; it belongs in the view's saved state. |
-| 5 | An old bar at the top of the phone screen | **Own fix**. To identify on the phone before removing: most likely the view's `header.toolbar` (back button, title, window buttons) in `ViewScreen.svelte`, which the phone design no longer needs. Confirm with the user first. |
-| 6 | Settings sections flash the player bar; the move plays only after the gesture | **Foundation**: Settings screens move on the screen stage, driven by the finger like any back; an across change keeps the old screen opaque beneath, so the bar can't show through (both screens currently fade at once over it). |
+| 1 | Back from an album to Search makes Search jitter | ✓ **Foundation** (the landing check caught it: covers landed 12 px off): the screen beneath stays mounted (no second mount after the swipe) and `use:swap` doesn't fire when results arrive. Search's results run an effect on every piece of data that arrives (`refresh` in `SearchView.svelte`), which a remount sets off. |
+| 2 | Opening an album from Search flashes its cover | ✓ in Chromium (no frame without a drawn cover); the phone to confirm. **Foundation**: the mover waits for the copy's image to decode and keeps the page's hidden until its own has. To confirm once moved over; if Search's cover uses a different image size than the page, it may need the traveller rule tuned. |
+| 3 | Search's animations restart | ✓ **Foundation**: same cause as 1; `use:swap` animates only on a new search or filter. |
+| 4 | Recently Added forgets it was showing Albums | ✓ **Own fix**: `show` is local state in `ViewScreen.svelte`, lost when the screen unmounts; it belongs in the view's saved state. |
+| 5 | An old bar at the top of the phone screen | ✓ **Own fix**: the view's `header.toolbar`, gone on phones; the back button sits above a category's title, the home has a title with its ⋮, Playlists' + sits by its title (a playlist being edited keeps the bar for Done). |
+| 6 | Settings sections flash the player bar; the move plays only after the gesture | ✓ **Foundation**: Settings screens move on the screen stage, driven by the finger like any back; an across change keeps the old screen opaque beneath, so the bar can't show through (both screens currently fade at once over it). |
 | 7 | Long titles clip on the now-playing screen; colour and weight change abruptly | **Foundation**: the mover's clip box and look crossfade. |
 | 8 | The seek bar doesn't animate to the right place | **Foundation, plus a check**: the bar's strip and the sheet's seek bar become one `data-move` pair with `line` fit. Also to check: the sheet's slider may show a stale position when it opens (bars update on a timer while shown), which would be its own small fix. |
-| — | Song lists don't remember their scroll | **Own fix** (needed by the foundation's back to a row's cover): `SongList` gets `scrollMemory` like the albums grid and `TrackList`. |
+| — | Song lists don't remember their scroll | ✓ **Own fix** (needed by the foundation's back to a row's cover): `SongList` gets `scrollMemory` like the albums grid and `TrackList`. |

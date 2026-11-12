@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { refresh, shared } from '../../screens';
+  import { swap } from '../../motion/swap';
   import { untrack } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
@@ -142,22 +142,14 @@
     if (items.length) contextMenu.show(items, box.right - 200, box.bottom + 4, button);
   }
   const songsHere = $derived(filter === 'All' || filter === 'Songs');
-  // New results (another search or filter, or what it found arriving) rise into place instead of swapping.
-  let results = $state<HTMLElement>();
-  let firstResults = true;
-  $effect(() => {
-    void [searched, filter, best, others, artists, folders];
-    if (firstResults) firstResults = false;
-    else if (results) refresh(results);
-  });
 </script>
 
 {#snippet albumRow(album: LibraryAlbum)}
   <li>
     <button class="album" onclick={() => openAlbum(album.key, album.title, album.art)}>
-      <span class="cover" use:shared={`cover:album:${album.key}`}><Artwork track={undefined} art={album.art} title={album.title} /></span>
+      <span class="cover" data-move={`cover:album:${album.key}`}><Artwork track={undefined} art={album.art} title={album.title} /></span>
       <span class="lines">
-        <span class="title" use:shared={`title:album:${album.key}`}>{album.title || 'Unknown album'}</span>
+        <span class="title" data-move={`title:album:${album.key}`}>{album.title || 'Unknown album'}</span>
         <span class="artist">{album.artist || 'Unknown artist'}</span>
         <span class="meta">
           {album.tracks}
@@ -262,7 +254,8 @@
     </div>
   </div>
 
-  <div class="results" bind:this={results}>
+  <!-- A new search or filter rises into place; what it finds arriving doesn't. -->
+  <div class="results" use:swap={`${searched}|${filter}`}>
     {#if !searched}
       <p class="empty">Search songs, albums, artists, folders and playlists.</p>
     {:else if songsHere}

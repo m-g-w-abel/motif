@@ -22,7 +22,14 @@ grouped by phase of the plan.
   title and controls moving between them. Album covers no longer flicker
   after opening. The Albums view keeps its place when you come back to it,
   and the cover flies back to its tile however far down it is. Letters like
-  g are no longer cut off in now playing.
+  g are no longer cut off in now playing. A new screen now slides in over
+  the one you leave, and going back is the same move in reverse, by tap or
+  by swipe; Settings pages follow your finger too, without the player bar
+  showing through. Titles keep their shape and change colour and weight
+  smoothly as they fly, and Search no longer shakes when you come back to it.
+  Recently Played and Added remember whether they showed songs or albums,
+  song lists remember how far down you were, and phones lose the thin bar at
+  the top of each view (the back button sits above the title instead).
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

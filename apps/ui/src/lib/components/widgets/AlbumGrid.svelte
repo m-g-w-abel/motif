@@ -19,8 +19,7 @@
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import { scrollMemory } from '../../scrollMemory';
-  import { shared } from '../../screens';
-
+  
   let {
     cardSize,
     columns: layoutColumns,
@@ -512,16 +511,16 @@
               ondblclick={() => play(album)}
             >
               {#if mode !== 'list'}
-                <span class="cover" use:shared={`cover:${kind}:${album.key}`}>
+                <span class="cover" data-move={`cover:${kind}:${album.key}`}>
                   <Artwork track={album.track} art={album.art} title={album.title} size={grid ? undefined : 40} />
                 </span>
               {/if}
               {#if grid}
-                {#if titles}<span class="title" use:shared={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>{/if}
+                {#if titles}<span class="title" data-move={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>{/if}
                 {#if artists}<span class="artist">{album.artist || 'Unknown artist'}</span>{/if}
               {:else}
                 <span class="text">
-                  <span class="title" use:shared={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>
+                  <span class="title" data-move={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>
                   <span class="artist">{album.artist || 'Unknown artist'}</span>
                 </span>
               {/if}

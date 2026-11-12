@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** The row whose cover last flew to an album's page, per list, so it flies back there. */
+  const wentFrom = new Map<string, { index: number; name: string }>();
+</script>
+
 <script lang="ts">
   import { rise } from '../../screens';
   import { tick, untrack, type Snippet } from 'svelte';
@@ -11,6 +16,7 @@
   import type { TrackRef } from '../../protocol/TrackRef';
   import { ordered, span, toggle, type ItemAt } from '../../selection';
   import { songInfo, songNumber } from '../../songs';
+  import { scrollMemory } from '../../scrollMemory';
   import type { SongListData } from '../../sources.svelte';
   import type { ViewMode } from '../../viewOptions';
   import Icon from '../Icon.svelte';
@@ -33,6 +39,7 @@
     header,
     openAlbum,
     onremove,
+    memory,
   }: {
     data: SongListData;
     mode?: ViewMode;
@@ -52,6 +59,8 @@
     openAlbum?: (key: string, title: string) => void;
     /** Select mode's Delete: takes the picked rows' keys out of the list (a playlist's entries). */
     onremove?: (keys: string[]) => void;
+    /** Where to keep its scroll position (and the row a cover flew from), for coming back to it. */
+    memory?: string;
   } = $props();
 
   const { engine, settings, playlists } = getApp();
@@ -132,11 +141,28 @@
     };
     gesture(e, mapped(settings.current.gestures, 'row'), { queue: () => queue(), 'play-next': () => queue(true) }, swipeRow(e.currentTarget as HTMLElement, 'queue'));
   }
-  /** Go to album: the row's cover flies to the album's page (`screens.ts`). */
+  /** Go to album: the row's cover flies to the album's page (`lib/motion`), and back to it. */
   function goToAlbum(i: number, key: string, title: string) {
-    list?.querySelector<HTMLElement>(`[data-index="${i}"] .art`)?.setAttribute('data-shared', `cover:album:${key}`);
+    const name = `cover:album:${key}`;
+    list?.querySelector<HTMLElement>(`[data-index="${i}"] .art`)?.setAttribute('data-move', name);
+    if (memory) wentFrom.set(memory, { index: i, name });
     openAlbum?.(key, title);
   }
+  // Back on this list: that row's cover is where the album page's flies to.
+  $effect(() => {
+    void visible;
+    const from = memory && wentFrom.get(memory);
+    if (from) list?.querySelector<HTMLElement>(`[data-index="${from.index}"] .art`)?.setAttribute('data-move', from.name);
+  });
+
+  // Back where it was left (`scrollMemory`), once the songs are counted.
+  let arrived = false;
+  $effect(() => {
+    if (arrived || !scroller || !count) return;
+    arrived = true;
+    const saved = memory ? scrollMemory.get(memory) : undefined;
+    if (saved !== undefined) void tick().then(() => scroller && (scroller.scrollTop = scrollTop = saved));
+  });
   function activate(i: number) {
     if (selecting) view.browse.picked = toggle(picked, itemAt, i);
     else if (engine.can('playback')) data.play(i);
@@ -192,7 +218,10 @@
     class="scroll"
     bind:this={scroller}
     bind:clientHeight={viewHeight}
-    onscroll={(e) => (scrollTop = (e.currentTarget as HTMLElement).scrollTop)}
+    onscroll={(e) => {
+      scrollTop = (e.currentTarget as HTMLElement).scrollTop;
+      if (memory && arrived) scrollMemory.set(memory, scrollTop);
+    }}
   >
     {@render header?.()}
     <ul
