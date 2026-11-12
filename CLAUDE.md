@@ -3,7 +3,8 @@
 A music player for collectors: plays anything, desktop (Linux/Windows/macOS) and
 Android, remote control, no central server. Architecture and roadmap:
 [docs/PLAN.md](docs/PLAN.md). Layout file format: [docs/LAYOUT.md](docs/LAYOUT.md). Theme file format:
-[docs/THEMES.md](docs/THEMES.md).
+[docs/THEMES.md](docs/THEMES.md). How things move (animations, gestures):
+[docs/ANIMATION.md](docs/ANIMATION.md).
 
 Status: phases 1 (desktop player), 2 (looks great), 3 (cheap wins) and 4 (remote control:
 pairing, LAN, MPD) are done; see the notes and measurements in `docs/PLAN.md`. Phase 5
