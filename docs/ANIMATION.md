@@ -229,6 +229,12 @@ progress.
 - *Hand-over.* At the end the clip box is the destination's box and the
   copy is its drawing, so removing the copy and showing the real element in
   the same frame changes nothing.
+- *Inline text.* A copy is a block the size of its element. An inline
+  element's box is its font's own height, while its line height can be
+  taller (the category title's `<h1><span>`: 30 px of Roboto in a 32.76 px
+  line), so the copy's line height is set to that box's height; otherwise
+  its words sit centred in the taller line, lower, and hop up at the
+  hand-over.
 - *Zoom.* Copies sit in CSS pixels under the root's `zoom` (the Scale
   setting, and on Android the system font size: `MainActivity.kt` turns the
   WebView's own text zoom off and the page applies the font scale as part of
@@ -375,15 +381,18 @@ before the rest (Checking).
   doesn't land, or text that changes style at once, fails here.
 - **Landing check, in a browser** (`node scripts/landing.mjs [url]`):
   headless Chromium drives taps and real touch swipes (phone and desktop,
-  Search, Settings) and fails if any copy ended off its real element by more than a
-  pixel or with a different colour, weight or size, or if a change left a
+  Search, Settings) and fails if any copy ended off its real element (for
+  text, where its words are drawn: a `Range` over them, not the element's
+  box) by more than a quarter pixel or with a different colour, weight or size, or if a change left a
   second screen, copies or hidden elements behind. Dev builds record each
   landing in `window.motifLandings` for it. Run it against a muted test
   engine with a library (CLAUDE.md). `STEPS=file.mjs` runs your own steps
   with its helpers, for debugging. The sheet joins it with steps 5–6.
-- **At another zoom:** the phone scenarios run again at Scale 125%
-  (`?dev-scale=125`), which caught boxes measured on screen but placed in
-  CSS pixels.
+- **At another zoom and font:** the phone scenarios run again at Scale
+  125% (`?dev-scale=125`), which caught boxes measured on screen but placed
+  in CSS pixels, and in DejaVu Sans (`?dev-font=`), whose glyphs, like
+  Roboto's on phones, sit in their line differently from the default font's
+  (headless Chromium's default hid the inline text bug).
 - **The same check on the phone** (`CDP=http://127.0.0.1:9333 node
   scripts/landing.mjs http://localhost:5182`): drives the app's own WebView
   (a debug build, its DevTools forwarded, `adb reverse` to a dev server on a

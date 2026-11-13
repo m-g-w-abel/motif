@@ -256,6 +256,8 @@
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
     const devScale = Number(params.get('dev-scale'));
     if (devScale) settings.current.scale = devScale;
+    const devFont = params.get('dev-font');
+    if (devFont !== null) settings.current.font = devFont;
     if (params.has('dev-sheet')) sheet.expand();
     const step = params.get('dev-sheet');
     if (step === 'half' || step === 'full') sheet.step = step;

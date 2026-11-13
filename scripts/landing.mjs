@@ -91,8 +91,9 @@ if (phone) {
   forget = () => send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
 }
 
-/** The Scale setting the test page uses (`dev-scale`), in percent. */
+/** The Scale setting the test page uses (`dev-scale`), in percent, and its font (`dev-font`, empty: the theme's). */
 let scale = 100;
+let font = "";
 
 async function open(query, width, height) {
   if (phone && width > 700) return false;
@@ -100,7 +101,7 @@ async function open(query, width, height) {
     await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width <= 700 });
     await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
   }
-  await send("Page.navigate", { url: `${base}/?${query}&dev-scale=${scale}` });
+  await send("Page.navigate", { url: `${base}/?${query}&dev-scale=${scale}&dev-font=${encodeURIComponent(font)}` });
   await until(`!!window.motifLandings && ${settled}`, 20000);
   return true;
 }
@@ -152,7 +153,8 @@ async function check(name, act, least = 1) {
   }
   const landings = await run("JSON.stringify(window.motifLandings)").then(JSON.parse);
   const hidden = await run("[...document.querySelectorAll('main > .screen:not([inert]) [style*=\"visibility: hidden\"]')].map((e) => e.dataset.move ?? e.className)");
-  const bad = landings.filter((l) => l.box > 1 || l.look.length);
+  // A quarter pixel: words a fraction of a pixel off still hop visibly at the hand-over.
+  const bad = landings.filter((l) => l.box > 0.25 || l.look.length);
   for (const l of bad) failures.push(`${name}: ${l.name} landed ${l.box.toFixed(1)}px off${l.look.length ? `, ${l.look.join(", ")} differ` : ""}`);
   if (landings.length < least) failures.push(`${name}: ${landings.length} shared elements flew, expected at least ${least}`);
   if (hidden.length) failures.push(`${name}: left hidden: ${hidden.join(", ")}`);
@@ -167,9 +169,14 @@ try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
   if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, sleep, settled, card });
   else {
-    // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size).
-    for (scale of [100, 125]) {
-      const phone_ = scale === 100 ? "phone" : `phone ${scale}%`;
+    // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size),
+    // and in a font whose glyphs sit differently in their line than the default's (Roboto's on phones do).
+    for ([scale, font] of [
+      [100, ""],
+      [125, ""],
+      [100, "DejaVu Sans"],
+    ]) {
+      const phone_ = `phone${scale === 100 ? "" : ` ${scale}%`}${font ? ` ${font}` : ""}`;
       // Phone: a category from the Library home and back by its back button; desktop has no home screen.
       await open("dev-view=home", 384, 820);
       await check(`${phone_}: open a category`, tap("document.querySelectorAll('main > .screen:not([inert]) .categories button')[1]"), 2);
@@ -184,7 +191,7 @@ try {
         [phone_, 384, 820],
         ["desktop", 1200, 800],
       ]) {
-        if (label === "desktop" && scale !== 100) continue;
+        if (label === "desktop" && (scale !== 100 || font)) continue;
         if (!(await open("dev-view=albums", w, h))) continue;
         await until(`!!${card}?.querySelector('img')?.complete`);
         await check(`${label}: open an album`, tap(card), 2);
@@ -203,7 +210,7 @@ try {
     }
   }
   if (!process.env.STEPS) {
-    scale = 100;
+    [scale, font] = [100, ""];
     await open("dev-settings=interface", 384, 820);
     await check("phone: Settings section back to the list", () => swipe(20, 300, 400), 0);
     await check("phone: Settings list to a section", tap("document.querySelector('main > .screen:not([inert]) .phone-list button')"), 0);

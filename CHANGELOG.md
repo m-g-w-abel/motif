@@ -35,7 +35,7 @@ grouped by phase of the plan.
   covers no longer blink empty when you change pages. A swipe back starts
   exactly under your finger and you can tap again as soon as it lands; on
   Android, the system font size now scales the whole app evenly, so titles
-  and their icons land in place.
+  and their icons land in place, without a last hop.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

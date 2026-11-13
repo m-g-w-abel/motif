@@ -69,7 +69,12 @@ export function see(el: HTMLElement, box = el.getBoundingClientRect()): Seen {
   const style = getComputedStyle(el);
   const look: Record<string, string> = {};
   for (const p of LOOK) look[p] = style.getPropertyValue(p);
-  look.display = style.display === 'inline' ? 'block' : style.display;
+  // A copy is a box of the element's size. An inline element's box is its font's own height, while its line
+  // height may be taller: as a block, the words would sit centred in that taller line, lower than the original's.
+  if (style.display === 'inline') {
+    look.display = 'block';
+    look['line-height'] = 'inline';
+  } else look.display = style.display;
   const g = text ? glyph(el) : box;
   // Measured where it will rest: shift the glyph with the box when the box was corrected for a moving screen.
   const raw = el.getBoundingClientRect();
@@ -113,6 +118,8 @@ function copyOf(s: Seen, at: Box, fixed: boolean) {
   // The original's lazy, async image would decode afresh and draw nothing for a frame.
   for (const img of c.querySelectorAll('img')) Object.assign(img, { loading: 'eager', decoding: 'sync' });
   for (const [p, v] of Object.entries(s.look)) c.style.setProperty(p, v);
+  // Its line exactly as tall as the inline box (see `see`), so the words sit where they did.
+  if (s.look['line-height'] === 'inline') c.style.lineHeight = `${at.height}px`;
   Object.assign(c.style, {
     position: fixed ? 'fixed' : 'absolute',
     left: `${at.left}px`,
@@ -224,11 +231,18 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
         if (opacity !== undefined) t.el.style.opacity = String(opacity);
       }
       if (landed && landings && to.isConnected) {
-        const a = lands.getBoundingClientRect();
-        const b = to.getBoundingClientRect();
+        // Text: where its words are drawn, not its element's box (the two can sit differently inside their boxes).
+        const drawnAt = (el: HTMLElement) => {
+          if (!dest.text) return el.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          return range.getBoundingClientRect();
+        };
+        const a = drawnAt(lands);
+        const b = drawnAt(to);
         const [la, lb] = [getComputedStyle(lands), getComputedStyle(to)];
         // The copy is drawn at its own size and scaled; compare what shows.
-        const scale = a.height / ((lands.offsetHeight || 1) * rootZoom());
+        const scale = lands.getBoundingClientRect().height / ((lands.offsetHeight || 1) * rootZoom());
         landings.push({
           name,
           box: Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.width - b.width), Math.abs(a.height - b.height)),

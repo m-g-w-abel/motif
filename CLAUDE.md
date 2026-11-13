@@ -126,7 +126,7 @@ run it in the background and wait for its notification.
 - Dev builds read URL parameters to set up a state without clicking, e.g.
   `?dev-layout=builtin:details.kdl&dev-theme=paper&dev-play=5&dev-sheet=1`
   (`dev-sheet=half|full` opens the phone sheet on that queue step)
-  (also `dev-art=accent|tint|full`, `dev-lyrics` (the sheet's lyrics view), `dev-view=albums|songs|playlists|played|added|search|album:<key>|playlist:<id>` (opens a view), `dev-arrange`, `dev-settings=interface|library|playback|keyboard|gestures|integrations|devices|technical|about` (with `dev-pair`, the Pair a device dialog), `dev-player=floating`, `dev-scale=125` (the Scale setting), `dev-scrub=0.3` (holds the next transition at that progress, to inspect a frozen frame), `dev-engine=host:port&dev-token=…` (adds an engine to switch to)). See `App.svelte`.
+  (also `dev-art=accent|tint|full`, `dev-lyrics` (the sheet's lyrics view), `dev-view=albums|songs|playlists|played|added|search|album:<key>|playlist:<id>` (opens a view), `dev-arrange`, `dev-settings=interface|library|playback|keyboard|gestures|integrations|devices|technical|about` (with `dev-pair`, the Pair a device dialog), `dev-player=floating`, `dev-scale=125` (the Scale setting), `dev-font=DejaVu Sans` (the font setting; empty for the theme's), `dev-scrub=0.3` (holds the next transition at that progress, to inspect a frozen frame), `dev-engine=host:port&dev-token=…` (adds an engine to switch to)). See `App.svelte`.
   `?dev-library` shows the generated demo library instead of the real one
   (`dev-play` plays it); `?dev-stress&dev-library=50000` runs the webview
   stress test (results in `docs/PLAN.md`); `dev-stress=scroll` measures plain
