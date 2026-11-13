@@ -1,5 +1,5 @@
 import { tick } from 'svelte';
-import { fly, see, type Flight, type Seen } from './mover';
+import { fly, rootZoom, see, type Flight, type Seen } from './mover';
 import { Transition, type Drive, type Track } from './transition';
 
 /** Into a deeper screen, back out of one, or across to another at the same depth. */
@@ -24,12 +24,13 @@ const frame = () => new Promise((r) => requestAnimationFrame(r));
 
 /**
  * The screens of an area (docs/ANIMATION.md, Screens): a keyed list of at
- * most the screen showing and the one it is changing to or from. Forward,
- * the new screen slides in from the right over the old, which moves a
- * little left; back is the same played backwards, by a clock (`go`) or a
- * finger (`drag`, with the screen it goes back to mounted beneath, which then
- * simply stays). Across, the new one fades in over the old. Shared elements
- * (`data-move`) travel between them.
+ * most the screen showing and the one it is changing to or from, or, at
+ * rest, the one it came forward from, kept hidden beneath (so going back
+ * starts at once, with nothing to render). Forward, the new screen slides in
+ * from the right over the old, which moves a little left; back is the same
+ * played backwards, by a clock (`go`) or a finger (`drag`, with the screen
+ * it goes back to beneath, which then simply stays). Across, the new one
+ * fades in over the old. Shared elements (`data-move`) travel between them.
  */
 export class Stage<S extends Screen> {
   shown = $state.raw<S[]>([]);
@@ -72,7 +73,11 @@ export class Stage<S extends Screen> {
     let p = 0;
     let released: boolean | null = null;
     let t: Transition | null = null;
-    void this.#begin(from, under, 'back', true).then((built) => {
+    // Moves with the finger from its first move, while the screen beneath is still being laid out
+    // (a frame or two); the transition takes over from there.
+    const fromEl = this.#el(from.key);
+    const early = (q: number) => fromEl && (fromEl.style.transform = q ? `translateX(${q * 100}%)` : '');
+    void this.#begin(from, under, 'back', true, () => early(0)).then((built) => {
       t = built;
       if (!t) return;
       t.seek(p);
@@ -81,7 +86,8 @@ export class Stage<S extends Screen> {
     return {
       seek: (q) => {
         p = q;
-        t?.seek(q);
+        if (t) t.seek(q);
+        else if (released === null) early(q);
       },
       release: (yes) => {
         if (released !== null) return;
@@ -90,7 +96,10 @@ export class Stage<S extends Screen> {
         if (yes && this.#change?.from === from) this.#change.drag = false;
         if (yes) commit();
         if (t) void t.release(yes);
-        else if (!yes) this.#settle();
+        else if (!yes) {
+          early(0);
+          this.#settle();
+        }
       },
     };
   }
@@ -106,18 +115,21 @@ export class Stage<S extends Screen> {
       const end = c.drag ? c.from : c.to;
       this.shown = [end];
       const el = this.#el(end.key);
-      if (el) el.style.visibility = '';
+      // Unseen while it was laid out, or moved by a finger ahead of the transition.
+      if (el) Object.assign(el.style, { visibility: '', transform: '' });
     }
     this.#token++;
     this.#t = null;
     this.#change = null;
   }
 
-  async #begin(from: S, to: S, how: 'forward' | 'back' | 'swap', drag: boolean): Promise<Transition | null> {
+  async #begin(from: S, to: S, how: 'forward' | 'back' | 'swap', drag: boolean, ready?: () => void): Promise<Transition | null> {
     const token = ++this.#token;
     this.#change = { from, to, drag };
+    // Back to the screen kept beneath: laid out already, so the change starts now.
+    const kept = how === 'back' && this.shown.length === 2 && this.shown[0].key === to.key;
     this.shown = how === 'back' ? [to, from] : [from, to];
-    await tick();
+    if (!kept) await tick();
     const toEl = this.#el(to.key);
     const fromEl = this.#el(from.key);
     if (token !== this.#token) return null;
@@ -126,18 +138,24 @@ export class Stage<S extends Screen> {
       this.#change = null;
       return null;
     }
-    // Laid out, unseen, for a frame: its cards, its scroll position.
-    toEl.style.visibility = 'hidden';
-    await frame();
-    if (token !== this.#token) return null;
+    if (!kept) {
+      // Laid out, unseen, for a frame: its cards, its scroll position.
+      toEl.style.visibility = 'hidden';
+      await frame();
+      if (token !== this.#token) return null;
+    }
     // Shown in the same task as its first frame is set (no paint between).
+    ready?.();
     toEl.style.visibility = '';
     const t = this.#build(fromEl, toEl, how, (landed) => {
-      if (token === this.#token) {
-        this.shown = [landed ? to : from];
-        this.#t = null;
-        this.#change = null;
-      }
+      if (token !== this.#token) return;
+      // The shallower of the two stays beneath, hidden, when it is the one back goes to.
+      const [end, other, otherEl] = landed ? [to, from, fromEl] : [from, to, toEl];
+      const keep = other.depth < end.depth;
+      if (keep) otherEl.style.visibility = 'hidden';
+      this.shown = keep ? [other, end] : [end];
+      this.#t = null;
+      this.#change = null;
     });
     this.#t = t;
     return t;
@@ -159,7 +177,6 @@ export class Stage<S extends Screen> {
     // Shared elements, measured at rest; those whose counterpart hasn't come yet are looked for as it goes.
     let waiting: Seen[] = [...fromEl.querySelectorAll<HTMLElement>('[data-move]')].filter((el) => el.offsetWidth).map((el) => see(el));
     const flights: Flight[] = [];
-    const started = performance.now();
     let t: Transition | null = null;
     const pair = () => {
       waiting = waiting.filter((from) => {
@@ -167,7 +184,8 @@ export class Stage<S extends Screen> {
         if (!to?.offsetWidth) return true;
         // Where it will rest: without the slide its screen is in.
         const box = to.getBoundingClientRect();
-        const shift = new DOMMatrix(getComputedStyle(toEl).transform).m41;
+        // Its transform is in CSS pixels, the box on screen: the root's zoom between them.
+        const shift = new DOMMatrix(getComputedStyle(toEl).transform).m41 * rootZoom();
         const f = fly(from, to, new DOMRect(box.x - shift, box.y, box.width, box.height));
         flights.push(f);
         if (t) for (const track of f.tracks) t.add(track);
@@ -176,29 +194,25 @@ export class Stage<S extends Screen> {
       });
     };
     pair();
+    // Not on every pointer move (seeking only sets times): once a frame, while a finger holds it and a little after.
+    let over = false;
+    /** When it was released (or started playing). */
+    let since: number | undefined;
     const look = () => {
-      if (!waiting.length || !t || t.heading === null || performance.now() - started > WAIT) return;
+      if (t && t.heading !== null) since ??= performance.now();
+      if (over || !waiting.length || (since !== undefined && performance.now() - since > WAIT)) return;
       pair();
       requestAnimationFrame(look);
     };
+    requestAnimationFrame(look);
     t = new Transition(tracks, () => {
+      over = true;
       const landed = t!.heading === 1;
       for (const f of flights) f.done(landed);
       fromEl.style.cssText = kept[0];
       toEl.style.cssText = kept[1];
       ended(landed);
     });
-    const seek = t.seek.bind(t);
-    t.seek = (p) => {
-      if (waiting.length) pair();
-      seek(p);
-    };
-    const play = t.play.bind(t);
-    t.play = (to) => {
-      const done = play(to);
-      look();
-      return done;
-    };
     return t;
   }
 }

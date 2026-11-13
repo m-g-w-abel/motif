@@ -131,6 +131,9 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
+    // The page applies the system font scale itself (`fontScale()`), as part of its zoom: the
+    // WebView's own text zoom grows text alone, so what the page measures isn't what it draws.
+    webView.settings.textZoom = 100
     webView.addJavascriptInterface(Storage(webView), "MotifAndroid")
   }
 
@@ -192,6 +195,10 @@ class MainActivity : TauriActivity() {
     fun followBack() = runOnUiThread {
       if (backSwipe == null) backSwipe = BackSwipe().also { onBackPressedDispatcher.addCallback(this@MainActivity, it) }
     }
+
+    /** Android's font size setting (1 is the default), which the page's zoom includes. */
+    @JavascriptInterface
+    fun fontScale(): Float = resources.configuration.fontScale
 
     @JavascriptInterface
     fun setVolumeKeys(on: Boolean) {

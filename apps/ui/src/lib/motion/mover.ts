@@ -92,24 +92,19 @@ function motionLayer() {
   return layer;
 }
 
-let zoom: number | undefined;
-/**
- * The text zoom a phone's WebView applies to any font size set (Android's
- * font scale, e.g. 1.1): computed sizes already include it, so a copy given
- * them would be zoomed twice. Measured once.
- */
-function textZoom() {
-  if (zoom === undefined) {
+/** The root's zoom (the Scale setting, and Android's font size): measured once per value. */
+let zoom = { key: '', value: 1 };
+export function rootZoom() {
+  const key = document.documentElement.style.zoom;
+  if (key !== zoom.key) {
     const probe = document.createElement('div');
-    probe.style.fontSize = '100px';
-    document.body.append(probe);
-    zoom = parseFloat(getComputedStyle(probe).fontSize) / 100 || 1;
+    probe.style.width = '100px';
+    motionLayer().append(probe);
+    zoom = { key, value: probe.getBoundingClientRect().width / 100 || 1 };
     probe.remove();
   }
-  return zoom;
+  return zoom.value;
 }
-/** The value to set for `p` so it computes to `v` again (font size and line height are zoomed). */
-const unzoomed = (p: string, v: string) => (p !== 'font-size' && p !== 'line-height') || !v.endsWith('px') ? v : `${parseFloat(v) / textZoom()}px`;
 
 /** A copy of `s.el`, looking as it does there, at `at` (absolute in `parent`, or fixed on screen). */
 function copyOf(s: Seen, at: Box, fixed: boolean) {
@@ -117,7 +112,7 @@ function copyOf(s: Seen, at: Box, fixed: boolean) {
   c.removeAttribute('data-move');
   // The original's lazy, async image would decode afresh and draw nothing for a frame.
   for (const img of c.querySelectorAll('img')) Object.assign(img, { loading: 'eager', decoding: 'sync' });
-  for (const [p, v] of Object.entries(s.look)) c.style.setProperty(p, unzoomed(p, v));
+  for (const [p, v] of Object.entries(s.look)) c.style.setProperty(p, v);
   Object.assign(c.style, {
     position: fixed ? 'fixed' : 'absolute',
     left: `${at.left}px`,
@@ -157,6 +152,10 @@ export const landings: { name: string; box: number; look: string[] }[] | null = 
  */
 export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
   const dest = see(to, toBox);
+  // Copies are placed in CSS pixels, which the root's zoom scales; boxes are measured on screen.
+  const z = rootZoom();
+  const px = (b: DOMRect) => new DOMRect(b.x / z, b.y / z, b.width / z, b.height / z);
+  const [fb, fg, tb, tg] = [px(from.box), px(from.glyph), px(toBox), px(dest.glyph)];
   const root = motionLayer();
   const tracks: Track[] = [];
   const copies: HTMLElement[] = [];
@@ -165,26 +164,26 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
   if (from.text && dest.text) {
     // Whole words at both ends (one line, not cut off): their widths, so another weight doesn't ghost.
     const whole = (x: Seen) => !x.cut && x.box.height < 2 * x.glyph.height;
-    const ink = whole(from) && whole(dest) ? { from: from.ink, to: dest.ink } : undefined;
-    const f = textFlight({ from: from.box, fromGlyph: from.glyph, to: toBox, toGlyph: dest.glyph, steps: STEPS, ink });
+    const ink = whole(from) && whole(dest) ? { from: from.ink / z, to: dest.ink / z } : undefined;
+    const f = textFlight({ from: fb, fromGlyph: fg, to: tb, toGlyph: tg, steps: STEPS, ink });
     const clip = document.createElement('div');
     Object.assign(clip.style, {
       position: 'fixed',
-      left: `${toBox.left}px`,
-      top: `${toBox.top}px`,
-      width: `${toBox.width}px`,
-      height: `${toBox.height}px`,
+      left: `${tb.left}px`,
+      top: `${tb.top}px`,
+      width: `${tb.width}px`,
+      height: `${tb.height}px`,
       overflow: 'hidden',
       transformOrigin: '0 0',
     });
-    const words = copyOf(dest, { left: 0, top: 0, width: toBox.width, height: toBox.height }, false);
+    const words = copyOf(dest, { left: 0, top: 0, width: tb.width, height: tb.height }, false);
     clip.append(words);
     // Another colour or weight, or cut off or wrapped differently: the old drawing travels locked onto
     // the words and they crossfade all the way, so each end is exactly one drawing and the look changes gradually.
-    const differ = from.cut !== dest.cut || STYLE.some((p) => from.look[p] !== dest.look[p]) || Math.abs(from.box.height / from.glyph.height - toBox.height / dest.glyph.height) > 0.5;
+    const differ = from.cut !== dest.cut || STYLE.some((p) => from.look[p] !== dest.look[p]) || Math.abs(fb.height / fg.height - tb.height / tg.height) > 0.5;
     tracks.push({ el: clip, frames: f.clip.map((m) => ({ transform: css(m) })) }, { el: words, frames: f.dest.map((m, k) => ({ transform: css(m), ...(differ && { opacity: k / STEPS }) })) });
     if (differ) {
-      const old = copyOf(from, { left: from.box.left - toBox.left, top: from.box.top - toBox.top, width: from.box.width, height: from.box.height }, false);
+      const old = copyOf(from, { left: fb.left - tb.left, top: fb.top - tb.top, width: fb.width, height: fb.height }, false);
       clip.append(old);
       tracks.push({ el: old, frames: f.source.map((m, k) => ({ transform: css(m), opacity: 1 - k / STEPS })) });
     }
@@ -194,8 +193,8 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
     // The sharper drawing already loaded travels (the grid's or the page's).
     const own = from.res > 0 && from.res >= dest.res ? 'from' : 'to';
     const s = own === 'from' ? from : dest;
-    const c = copyOf(s, s.box, true);
-    tracks.push({ el: c, frames: boxFlight(from.box, toBox, own).frames.map((m) => ({ transform: css(m) })) });
+    const c = copyOf(s, own === 'from' ? fb : tb, true);
+    tracks.push({ el: c, frames: boxFlight(fb, tb, own).frames.map((m) => ({ transform: css(m) })) });
     copies.push(c);
     lands = c;
   }
@@ -229,7 +228,7 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
         const b = to.getBoundingClientRect();
         const [la, lb] = [getComputedStyle(lands), getComputedStyle(to)];
         // The copy is drawn at its own size and scaled; compare what shows.
-        const scale = a.height / (lands.offsetHeight || 1);
+        const scale = a.height / ((lands.offsetHeight || 1) * rootZoom());
         landings.push({
           name,
           box: Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.width - b.width), Math.abs(a.height - b.height)),

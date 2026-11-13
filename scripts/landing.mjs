@@ -91,14 +91,17 @@ if (phone) {
   forget = () => send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
 }
 
+/** The Scale setting the test page uses (`dev-scale`), in percent. */
+let scale = 100;
+
 async function open(query, width, height) {
   if (phone && width > 700) return false;
   if (!phone) {
     await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width <= 700 });
     await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
   }
-  await send("Page.navigate", { url: `${base}/?${query}` });
-  await until("!!window.motifLandings && document.querySelectorAll('main > .screen').length === 1", 20000);
+  await send("Page.navigate", { url: `${base}/?${query}&dev-scale=${scale}` });
+  await until(`!!window.motifLandings && ${settled}`, 20000);
   return true;
 }
 
@@ -126,13 +129,21 @@ async function swipe(dx0, dx1, y) {
   await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 }
 
-const settled = "document.querySelectorAll('main > .screen').length === 1 && !document.querySelector('.motion-layer')?.children.length";
+/** One screen showing (another may be kept hidden beneath), none about to show or moving, no copies left. */
+const settled = `(() => {
+  const screens = [...document.querySelectorAll('main > .screen')];
+  return screens.filter((s) => getComputedStyle(s).visibility !== 'hidden').length === 1
+    && !screens.some((s) => (!s.inert && getComputedStyle(s).visibility === 'hidden') || s.getAnimations().length)
+    && !document.querySelector('.motion-layer')?.children.length;
+})()`;
 const failures = [];
 
 /** Runs `act`, waits for the change to settle, then checks its landings (at least `least` of them). */
 async function check(name, act, least = 1) {
   await run("window.motifLandings.length = 0");
   await act();
+  // The change begins a frame or two later (the new screen is laid out first).
+  await sleep(150);
   try {
     await until(settled);
   } catch {
@@ -140,7 +151,7 @@ async function check(name, act, least = 1) {
     return;
   }
   const landings = await run("JSON.stringify(window.motifLandings)").then(JSON.parse);
-  const hidden = await run("[...document.querySelectorAll('main [style*=\"visibility: hidden\"]')].map((e) => e.dataset.move ?? e.className)");
+  const hidden = await run("[...document.querySelectorAll('main > .screen:not([inert]) [style*=\"visibility: hidden\"]')].map((e) => e.dataset.move ?? e.className)");
   const bad = landings.filter((l) => l.box > 1 || l.look.length);
   for (const l of bad) failures.push(`${name}: ${l.name} landed ${l.box.toFixed(1)}px off${l.look.length ? `, ${l.look.join(", ")} differ` : ""}`);
   if (landings.length < least) failures.push(`${name}: ${landings.length} shared elements flew, expected at least ${least}`);
@@ -149,47 +160,53 @@ async function check(name, act, least = 1) {
   console.log(`${mine.length ? "FAIL" : "ok  "} ${name} (${landings.length} landed)${mine.map((f) => `\n       ${f.slice(name.length + 2)}`).join("")}`);
 }
 
-const card = "document.querySelector('main .card:not(.loading)')";
+const card = "document.querySelector('main > .screen:not([inert]) .card:not(.loading)')";
 const tap = (selector) => () => run(`${selector}.click()`);
 
 try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
   if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, sleep, settled, card });
   else {
-    // Phone: a category from the Library home and back by its back button; desktop has no home screen.
-    await open("dev-view=home", 384, 820);
-    await check("phone: open a category", tap("document.querySelectorAll('main .categories button')[1]"), 2);
-    await check("phone: back by the button", tap("document.querySelector('main .back')"), 2);
-    // Search: an album found, and back to the results.
-    await open("dev-view=search", 384, 820);
-    await run("const i = document.querySelector('main input[type=search]'); i.value = 'Short'; i.dispatchEvent(new Event('input', { bubbles: true }))");
-    await until("!!document.querySelector('main button.album img')?.complete");
-    await check("phone: open an album from Search", tap("document.querySelector('main button.album')"), 2);
-    await check("phone: swipe back to Search", () => swipe(20, 300, 410), 2);
-    for (const [label, w, h] of [
-      ["phone", 384, 820],
-      ["desktop", 1200, 800],
-    ]) {
-      if (!(await open("dev-view=albums", w, h))) continue;
-      await until(`!!${card}?.querySelector('img')?.complete`);
-      await check(`${label}: open an album`, tap(card), 2);
-      if (label === "desktop") {
-        await check(`${label}: back by the button`, tap("document.querySelector('main .back')"), 2);
-        await check(`${label}: open it again`, tap(card), 2);
+    // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size).
+    for (scale of [100, 125]) {
+      const phone_ = scale === 100 ? "phone" : `phone ${scale}%`;
+      // Phone: a category from the Library home and back by its back button; desktop has no home screen.
+      await open("dev-view=home", 384, 820);
+      await check(`${phone_}: open a category`, tap("document.querySelectorAll('main > .screen:not([inert]) .categories button')[1]"), 2);
+      await check(`${phone_}: back by the button`, tap("document.querySelector('main > .screen:not([inert]) .back')"), 2);
+      // Search: an album found, and back to the results.
+      await open("dev-view=search", 384, 820);
+      await run("const i = document.querySelector('main > .screen:not([inert]) input[type=search]'); i.value = 'Short'; i.dispatchEvent(new Event('input', { bubbles: true }))");
+      await until("!!document.querySelector('main > .screen:not([inert]) button.album img')?.complete");
+      await check(`${phone_}: open an album from Search`, tap("document.querySelector('main > .screen:not([inert]) button.album')"), 2);
+      await check(`${phone_}: swipe back to Search`, () => swipe(20, 300, 410), 2);
+      for (const [label, w, h] of [
+        [phone_, 384, 820],
+        ["desktop", 1200, 800],
+      ]) {
+        if (label === "desktop" && scale !== 100) continue;
+        if (!(await open("dev-view=albums", w, h))) continue;
+        await until(`!!${card}?.querySelector('img')?.complete`);
+        await check(`${label}: open an album`, tap(card), 2);
+        if (label === "desktop") {
+          await check(`${label}: back by the button`, tap("document.querySelector('main > .screen:not([inert]) .back')"), 2);
+          await check(`${label}: open it again`, tap(card), 2);
+        }
+        await check(`${label}: swipe back`, () => swipe(20, w * 0.8, h / 2), 2);
+        await check(`${label}: swipe back cancelled`, async () => {
+          await run(`${card}.click()`);
+          await until(settled);
+          await run("window.motifLandings.length = 0");
+          await swipe(20, 40, h / 2);
+        }, 0);
       }
-      await check(`${label}: swipe back`, () => swipe(20, w * 0.8, h / 2), 2);
-      await check(`${label}: swipe back cancelled`, async () => {
-        await run(`${card}.click()`);
-        await until(settled);
-        await run("window.motifLandings.length = 0");
-        await swipe(20, 40, h / 2);
-      }, 0);
     }
   }
   if (!process.env.STEPS) {
+    scale = 100;
     await open("dev-settings=interface", 384, 820);
     await check("phone: Settings section back to the list", () => swipe(20, 300, 400), 0);
-    await check("phone: Settings list to a section", tap("document.querySelector('main .phone-list button')"), 0);
+    await check("phone: Settings list to a section", tap("document.querySelector('main > .screen:not([inert]) .phone-list button')"), 0);
   }
 } finally {
   if (phone) {

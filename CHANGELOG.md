@@ -32,7 +32,10 @@ grouped by phase of the plan.
   the top of each view (the back button sits above the title instead).
   Swiping back works on phones again, titles land in place with a larger
   system font size, a swipe taken all the way no longer plays again, and
-  covers no longer blink empty when you change pages.
+  covers no longer blink empty when you change pages. A swipe back starts
+  exactly under your finger and you can tap again as soon as it lands; on
+  Android, the system font size now scales the whole app evenly, so titles
+  and their icons land in place.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

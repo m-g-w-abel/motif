@@ -63,6 +63,8 @@ export function mapped(overrides: unknown, surface: Surface): GestureMap {
 /** One press, from where (px) and when (ms) it started. */
 export class Press {
   axis: 'x' | 'y' | null = null;
+  /** Where the finger was when the press became a drag. */
+  #from = 0;
 
   constructor(
     readonly x: number,
@@ -74,7 +76,10 @@ export class Press {
   move(x: number, y: number) {
     const dx = x - this.x;
     const dy = y - this.y;
-    if (this.axis === null && Math.hypot(dx, dy) >= SLOP) this.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    if (this.axis === null && Math.hypot(dx, dy) >= SLOP) {
+      this.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      this.#from = x;
+    }
     return this.axis;
   }
 
@@ -83,9 +88,9 @@ export class Press {
     return this.axis === null && t - this.t >= HOLD;
   }
 
-  /** How far content follows the finger sideways at `x`: only once the press is a horizontal drag. */
+  /** How far content follows the finger sideways at `x`: only once the press is a horizontal drag, from where it became one (it starts where it is, never jumping by the slop). */
   offset(x: number) {
-    return this.axis === 'x' ? x - this.x : 0;
+    return this.axis === 'x' ? x - this.#from : 0;
   }
 
   /** The swipe a release at `x` completes, if any. */
@@ -227,6 +232,9 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
       }, HOLD)
     : undefined;
 
+  // A sideways drag that is a swipe is ours alone: the browser's own handling of the touch would end in a
+  // fling, and Chromium drops the next tap while one runs (nothing could be tapped for half a second).
+  const own = (ev: TouchEvent) => press.axis === 'x' && swipes && ev.cancelable && ev.preventDefault();
   const move = (ev: PointerEvent) => {
     if (ev.pointerId !== e.pointerId) return;
     const axis = press.move(ev.clientX, ev.clientY);
@@ -253,6 +261,7 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
     window.removeEventListener('pointercancel', end);
+    window.removeEventListener('touchmove', own);
     if (!holds) return;
     // The click (after a long-press) and context menu arrive after the release.
     if (longPressed) window.addEventListener('click', swallow, true);
@@ -264,6 +273,7 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
 
   if (holds) window.addEventListener('contextmenu', swallow, true);
   window.addEventListener('pointermove', move);
+  window.addEventListener('touchmove', own, { passive: false });
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', end);
 }

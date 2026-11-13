@@ -229,10 +229,12 @@ progress.
 - *Hand-over.* At the end the clip box is the destination's box and the
   copy is its drawing, so removing the copy and showing the real element in
   the same frame changes nothing.
-- *Text zoom.* A phone's WebView scales every font size set by the system
-  font scale (1.1 on the user's phone), computed sizes included, so a copy
-  given its original's computed size would be scaled twice. The mover
-  measures the factor once and divides font size and line height by it.
+- *Zoom.* Copies sit in CSS pixels under the root's `zoom` (the Scale
+  setting, and on Android the system font size: `MainActivity.kt` turns the
+  WebView's own text zoom off and the page applies the font scale as part of
+  its zoom, so what is measured is what is drawn). The mover measures the
+  zoom once per value and converts every measured box; the stage does the
+  same for a sliding screen's offset.
 
 **Images.** Every cover draws already decoded: `Artwork` remembers the
 covers decoded this session (`DecodedArt`), shows one at once on a screen
@@ -270,12 +272,24 @@ of a `{#key}` block with Svelte transitions:
 Each screen restores its own scroll position on mount (albums grid, song
 lists), so a swipe back can fly a cover to its row further down.
 
+**Kept beneath.** After a change forward, the screen it came from stays
+mounted, hidden and inert, beneath the new one; back (tap or swipe) to it
+starts at once, with nothing to render (rendering it at the swipe's start
+cost a 50 ms frame on the phone). A swipe moves the screen on top with the
+finger from its first move, even before the transition is built; the
+gesture measures from where it became a swipe, not from the press, so
+nothing jumps by the slop. Pointer moves only set animation time: shared
+elements that haven't come yet are looked for once a frame instead.
+
 **Touches.** Inside views and Settings, every element has `touch-action:
 pan-y` (zero specificity, so components keep their own): the browser never
 takes a sideways touch for a pan of its own, which sends `pointercancel` and
 ends the swipe after its first move. `main`'s `pan-y` alone isn't enough, as
 `touch-action` stops at the nearest scroll container. Search's chips scroll
-sideways, and desktop's layouts keep wide tables' panning. While two
+sideways, and desktop's layouts keep wide tables' panning. Once a press is
+a sideways swipe, `gesture()` also cancels the browser's own handling of
+the touch (`touchmove`), or it ends in a fling and Chromium drops the next
+tap while that runs (nothing could be tapped for half a second). While two
 screens are up, the one that isn't the state's is `inert`; the stage never
 sets `pointer-events: none`, which would cancel the finger driving it.
 
@@ -367,6 +381,9 @@ before the rest (Checking).
   landing in `window.motifLandings` for it. Run it against a muted test
   engine with a library (CLAUDE.md). `STEPS=file.mjs` runs your own steps
   with its helpers, for debugging. The sheet joins it with steps 5–6.
+- **At another zoom:** the phone scenarios run again at Scale 125%
+  (`?dev-scale=125`), which caught boxes measured on screen but placed in
+  CSS pixels.
 - **The same check on the phone** (`CDP=http://127.0.0.1:9333 node
   scripts/landing.mjs http://localhost:5182`): drives the app's own WebView
   (a debug build, its DevTools forwarded, `adb reverse` to a dev server on a
@@ -374,7 +391,12 @@ before the rest (Checking).
   swiping through Android's input. It caught what desktop didn't: titles
   landing off under the font scale, and swipes the WebView cancelled. The
   WebView goes back to the app's own page at the end; the test page's
-  setup never touches the app's storage.
+  setup never touches the app's storage. Scripts over the phone's DevTools
+  act only on the separate test page, never on the app's own page.
+- **Frame rates** (2026-11-13, the phone, 150 albums, rAF intervals over
+  four rounds): tap open and swipe back run at 60 fps with at most one
+  dropped frame; the swipe back's 50 ms first frame (rendering the screen
+  beneath) is gone.
 - **A frozen frame** (`?dev-scrub=0.3`, dev builds): the next transition
   stops at that progress instead of playing, to inspect on the phone or in
   WebKitGTK; the next change ends it.

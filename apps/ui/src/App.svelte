@@ -71,6 +71,8 @@
   // Apply appearance settings to the document: the theme's colour tokens,
   // the accent and the density.
   const prefersDark = new MediaQuery('(prefers-color-scheme: dark)');
+  /** Android's font size setting, which the page applies as part of its zoom (1 elsewhere). */
+  const fontScale = (globalThis as { MotifAndroid?: { fontScale?(): number } }).MotifAndroid?.fontScale?.() ?? 1;
   const themeId = $derived(
     settings.current.theme === 'system'
       ? SYSTEM_THEMES[prefersDark.current ? 'dark' : 'light']
@@ -92,10 +94,13 @@
       else root.style.removeProperty(prop);
     }
     // Zoom on the root scales everything, but media queries (the 700px phone
-    // breakpoint) still see real pixels.
+    // breakpoint) still see real pixels. On Android it includes the system font
+    // size, which the WebView leaves to the page (`MainActivity.kt`), so text
+    // grows with the rest and what is measured is what is drawn.
     // The shell is sized in viewport units, so it divides the zoom back out to fit the window.
-    root.style.zoom = scale === 100 ? '' : `${scale}%`;
-    root.style.setProperty('--scale', String(scale / 100));
+    const zoom = (scale / 100) * fontScale;
+    root.style.zoom = zoom === 1 ? '' : String(zoom);
+    root.style.setProperty('--scale', String(zoom));
     root.dataset.density = density;
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--accent-contrast', contrastFor(accent));
@@ -249,6 +254,8 @@
     const devArt = params.get('dev-art');
     if (devArt) settings.current.artColours = devArt as typeof settings.current.artColours;
     if (params.get('dev-player') === 'floating') settings.current.player = 'floating';
+    const devScale = Number(params.get('dev-scale'));
+    if (devScale) settings.current.scale = devScale;
     if (params.has('dev-sheet')) sheet.expand();
     const step = params.get('dev-sheet');
     if (step === 'half' || step === 'full') sheet.step = step;

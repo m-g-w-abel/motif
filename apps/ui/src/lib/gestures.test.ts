@@ -50,12 +50,13 @@ describe('Press', () => {
 });
 
 describe('Press.offset', () => {
-  it('follows the finger sideways only once the press is a horizontal drag', () => {
+  it('follows the finger sideways only once the press is a horizontal drag, from where it became one (no jump by the slop)', () => {
     const p = new Press(200, 100, 0);
     expect(p.offset(205)).toBe(0);
     p.move(170, 104);
-    expect(p.offset(170)).toBe(-30);
-    expect(p.offset(260)).toBe(60);
+    expect(p.offset(170)).toBe(0);
+    expect(p.offset(150)).toBe(-20);
+    expect(p.offset(260)).toBe(90);
     const v = new Press(200, 100, 0);
     v.move(204, 60);
     expect(v.offset(260)).toBe(0);
