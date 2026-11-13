@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** What Recently Played and Added last showed, songs or albums, so going back finds it as it was (this session). */
+  const lastShown = new Map<string, 'songs' | 'albums'>();
+</script>
+
 <script lang="ts">
   import { untrack } from 'svelte';
   import { albumKey } from '../../albums';
@@ -13,7 +18,8 @@
   import { DEFAULT_RULES, sortRules, viewSort } from '../../sort.svelte';
   import { fixedData, playedData, trackListData } from '../../sources.svelte';
   import { viewOptions, type OptionsKey } from '../../viewOptions';
-  import { CATEGORIES, viewTitle } from '../../views.svelte';
+  import { CATEGORIES, viewTitle, type View } from '../../views.svelte';
+  import { swap } from '../../motion/swap';
   import { canDecorate } from '../../windowChrome';
   import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
@@ -28,8 +34,10 @@
 
   // Every view but desktop's All Songs, which the layouts arrange (ContentArea).
   // The parent re-creates this component for each view.
+  // `view`: another than the top one (the view a swipe back is going to, drawn beneath).
+  const { view: given }: { view?: View } = $props();
   const { engine, library, layout, settings, views, playlists } = getApp();
-  const view = untrack(() => views.top);
+  const view = untrack(() => given ?? views.top);
 
   // The Albums view's grid keeps its own search and selection, apart from All Songs'.
   const area: ViewState = $state({ source: 'library', layoutId: `view:${view.kind}`, browse: layout.browseState(`view:${view.kind}`) });
@@ -65,7 +73,7 @@
   // A category's header: its round icon and title, then the toolbar.
   const category = CATEGORIES.find((c) => c.kind === view.kind);
   // Recently Played and Added show their songs or their albums.
-  let show = $state<'songs' | 'albums'>('songs');
+  let show = $state(lastShown.get(view.kind) ?? 'songs');
   const recents = view.kind === 'played' || view.kind === 'added';
   const collection = $derived(view.kind === 'albums' || view.kind === 'playlists' || (recents && show === 'albums'));
   const page = view.kind === 'album' || view.kind === 'playlist';
@@ -156,6 +164,8 @@
       : undefined,
   );
   const first = $derived(rows[0]);
+  /** The page's cover and title fly from and to its card (`AlbumGrid`). */
+  const card = view.kind === 'album' ? `album:${view.key}` : view.kind === 'playlist' ? `playlist:${view.id}` : '';
 </script>
 
 {#snippet toolbar()}
@@ -225,10 +235,15 @@
 
 {#snippet hero()}
   <div class="hero">
-    <div class="cover">
-      <Artwork track={first?.track} art={playlist ? playlist.art : first?.details ? first.details.art : undefined} {title} />
+    <div class="cover" data-move={`cover:${card}`}>
+      <!-- The card's artwork until the songs arrive, so the cover it flew from never blinks out. -->
+      <Artwork
+        track={first?.track}
+        art={playlist ? playlist.art : first?.details ? first.details.art : view.kind === 'album' && view.art ? view.art : undefined}
+        {title}
+      />
     </div>
-    <h2>{title}</h2>
+    <h2 data-move={`title:${card}`}>{title}</h2>
     <p class="line">
       {#if view.kind === 'album'}{first ? albumLine(first.track, first.details) : ''}{:else}{rows.length}
         {rows.length === 1 ? 'song' : 'songs'}{/if}
@@ -238,6 +253,8 @@
 {/snippet}
 
 <section class="view" aria-label={title}>
+  <!-- Phones have no bar here: back is in a category's head (or a swipe), the home's menu by its title. -->
+  {#if !views.phone || (playlist && editing)}
   <header class="toolbar" {...drag}>
     <NavButton />
     {#if category}<span class="grow" {...drag}></span>{:else}<h1 {...drag}>{title}</h1>{/if}
@@ -255,12 +272,30 @@
     {/if}
     <WindowButtons />
   </header>
+  {/if}
+
+  {#if views.phone && view.kind === 'home'}
+    <div class="head">
+      <div class="title-row">
+        <h1>{title}</h1>
+        <button class="tool" aria-label="More" title="More" aria-haspopup="menu" onclick={(e) => openBelow(e, libraryMenu(engine))}>
+          <Icon name="more" size={18} />
+        </button>
+      </div>
+    </div>
+  {/if}
 
   {#if category}
     <div class="head">
+      {#if views.phone}<div class="back-row"><NavButton /></div>{/if}
       <div class="title-row">
-        <span class="dot" style:--c={category.colour}><Icon name={category.icon} size={22} /></span>
-        <h1>{category.label}</h1>
+        <span class="dot" style:--c={category.colour} data-move={`dot:${category.kind}`}><Icon name={category.icon} size={22} /></span>
+        <h1><span data-move={`category:${category.kind}`}>{category.label}</span></h1>
+        {#if views.phone && view.kind === 'playlists' && engine.can('library')}
+          <button class="tool" aria-label="New playlist" title="New playlist" onclick={() => playlists.create()}>
+            <Icon name="plus" size={18} />
+          </button>
+        {/if}
       </div>
     {#if recents}
       <div class="segmented switch" role="radiogroup" aria-label="Show">
@@ -271,6 +306,7 @@
             class:active={show === value}
             onclick={() => {
               show = value;
+              lastShown.set(view.kind, value);
               selecting = false;
             }}>{label}</button
           >
@@ -281,14 +317,15 @@
     </div>
   {/if}
 
-  <div class="body">
+  <!-- The recents' Songs / Albums switch: the other list rises into place. -->
+  <div class="body" use:swap={show}>
     {#if view.kind === 'home'}
       <ul class="categories">
         {#each CATEGORIES as category (category.kind)}
           <li>
             <button onclick={() => views.open({ kind: category.kind })}>
-              <span class="dot" style:--c={category.colour}><Icon name={category.icon} size={18} /></span>
-              {category.label}
+              <span class="dot" style:--c={category.colour} data-move={`dot:${category.kind}`}><Icon name={category.icon} size={18} /></span>
+              <span data-move={`category:${category.kind}`}>{category.label}</span>
             </button>
           </li>
         {/each}
@@ -298,6 +335,7 @@
         bind:this={grid}
         bind:shownColumns
         cardSize={150}
+        at="view"
         items={view.kind === 'playlists' ? 'playlists' : view.kind === 'played' ? 'played' : 'albums'}
         sort={order}
         mode={options.mode}
@@ -326,6 +364,7 @@
         header={page ? hero : undefined}
         openAlbum={view.kind === 'album' ? undefined : openAlbum}
         onremove={removeEntries}
+        memory={`view:${JSON.stringify(view)}`}
       />
     {:else}
       <p class="placeholder">{viewTitle(view)} shows here soon.</p>
@@ -412,6 +451,11 @@
   .head {
     padding: var(--space-3) var(--space-3) var(--space-2);
     flex: none;
+  }
+
+  .back-row {
+    display: flex;
+    margin-bottom: var(--space-3);
   }
 
   .title-row {
@@ -540,7 +584,10 @@
   }
 
   .hero h2 {
-    margin: 0;
+    /* As wide as its words, so its cover-to-card flight lines up with the card's title. */
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
     font-size: 1.4em;
   }
 

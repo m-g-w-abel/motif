@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dim, pop } from '../../screens';
   import ShortcutList from './ShortcutList.svelte';
 
   let { onClose }: { onClose: () => void } = $props();
@@ -18,8 +19,8 @@
 <svelte:window onkeydowncapture={onKey} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={(e) => e.target === e.currentTarget && onClose()}>
-  <div class="sheet" role="dialog" aria-label="Keyboard shortcuts" tabindex="-1" use:focus>
+<div class="backdrop" transition:dim onclick={(e) => e.target === e.currentTarget && onClose()}>
+  <div in:pop out:pop class="sheet" role="dialog" aria-label="Keyboard shortcuts" tabindex="-1" use:focus>
     <h2>Keyboard shortcuts</h2>
     <ShortcutList />
   </div>

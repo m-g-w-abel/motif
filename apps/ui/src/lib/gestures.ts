@@ -63,6 +63,8 @@ export function mapped(overrides: unknown, surface: Surface): GestureMap {
 /** One press, from where (px) and when (ms) it started. */
 export class Press {
   axis: 'x' | 'y' | null = null;
+  /** Where the finger was when the press became a drag. */
+  #from = 0;
 
   constructor(
     readonly x: number,
@@ -74,7 +76,10 @@ export class Press {
   move(x: number, y: number) {
     const dx = x - this.x;
     const dy = y - this.y;
-    if (this.axis === null && Math.hypot(dx, dy) >= SLOP) this.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    if (this.axis === null && Math.hypot(dx, dy) >= SLOP) {
+      this.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      this.#from = x;
+    }
     return this.axis;
   }
 
@@ -83,9 +88,9 @@ export class Press {
     return this.axis === null && t - this.t >= HOLD;
   }
 
-  /** How far content follows the finger sideways at `x`: only once the press is a horizontal drag. */
+  /** How far content follows the finger sideways at `x`: only once the press is a horizontal drag, from where it became one (it starts where it is, never jumping by the slop). */
   offset(x: number) {
-    return this.axis === 'x' ? x - this.x : 0;
+    return this.axis === 'x' ? x - this.#from : 0;
   }
 
   /** The swipe a release at `x` completes, if any. */
@@ -112,6 +117,9 @@ export interface Slide {
   end(swipe: Gesture | null): void;
 }
 
+/** How long a swiped element takes to slide out. */
+export const OUT = 150;
+
 /**
  * Moves `el` with a swipe by `transform` alone, in short transitions: it
  * follows the finger, then slides out the swipe's way and back in from the
@@ -127,12 +135,69 @@ export function slide(el: HTMLElement): Slide {
     end(swipe) {
       if (!swipe) return to(0, 200);
       const out = swipe === 'swipe-left' ? -el.offsetWidth : el.offsetWidth;
-      to(out, 150);
+      to(out, OUT);
       setTimeout(() => {
         to(-out, 0);
         void el.offsetWidth; // lays out the jump, so the slide in starts from it
         to(0, 200);
-      }, 150);
+      }, OUT);
+    },
+  };
+}
+
+/**
+ * Moves a list row with a left swipe over a strip that shows what the swipe
+ * does: a green + (`queue`) or a red × (`remove`), uncovered as the row
+ * goes. A queued row slides out to the left and comes back the same way; a
+ * removed one stays out, coming back only if still shown a while later (the
+ * engine refused). The row's parent clips both while it moves; a table row
+ * has none to spare and slides without the strip.
+ */
+export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Slide {
+  const box = el instanceof HTMLTableRowElement ? null : el.parentElement;
+  let strip: HTMLElement | undefined;
+  let kept = '';
+  const to = (x: number, ms: number) => {
+    const transition = ms ? `transform ${ms}ms ease-out` : 'none';
+    el.style.transition = transition;
+    el.style.transform = x ? `translateX(${x}px)` : '';
+    if (!strip) return;
+    strip.style.transition = transition;
+    strip.style.transform = `translateX(calc(100% + ${x}px))`;
+  };
+  const done = () => {
+    strip?.remove();
+    strip = undefined;
+    if (box) box.style.cssText = kept;
+  };
+  return {
+    move(dx) {
+      if (box && !strip) {
+        kept = box.style.cssText;
+        box.style.overflow = 'hidden';
+        if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
+        strip = document.createElement('span');
+        strip.className = `swipe-strip ${does}`;
+        strip.textContent = does === 'queue' ? '+' : '×';
+        strip.ariaHidden = 'true';
+        // Level with the row, which needn't fill its parent (a queue's row among the others).
+        Object.assign(strip.style, { top: `${el.offsetTop}px`, bottom: 'auto', height: `${el.offsetHeight}px` });
+        box.append(strip);
+      }
+      to(Math.min(0, dx), 0);
+    },
+    end(swipe) {
+      if (!swipe) {
+        to(0, 200);
+        return setTimeout(done, 200);
+      }
+      to(-el.offsetWidth, OUT);
+      const back = () => {
+        to(0, 200);
+        setTimeout(done, 200);
+      };
+      if (does === 'queue') setTimeout(back, OUT + 100);
+      else setTimeout(() => el.isConnected && back(), 1000);
     },
   };
 }
@@ -167,10 +232,15 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
       }, HOLD)
     : undefined;
 
+  // A sideways drag that is a swipe is ours alone: the browser's own handling of the touch would end in a
+  // fling, and Chromium drops the next tap while one runs (nothing could be tapped for half a second).
+  const own = (ev: TouchEvent) => press.axis === 'x' && swipes && ev.cancelable && ev.preventDefault();
   const move = (ev: PointerEvent) => {
     if (ev.pointerId !== e.pointerId) return;
     const axis = press.move(ev.clientX, ev.clientY);
-    if (axis === 'x' && swipes) shown?.move(press.offset(ev.clientX));
+    // Only the ways that do something follow the finger (a row moves left to queue, not right).
+    const dx = press.offset(ev.clientX);
+    if (axis === 'x' && swipes) shown?.move(map[dx < 0 ? 'swipe-left' : 'swipe-right'] ? dx : 0);
     if (axis !== 'y') return;
     const action = map['drag-vertical'];
     if (action && isFollow(action)) {
@@ -191,6 +261,7 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
     window.removeEventListener('pointercancel', end);
+    window.removeEventListener('touchmove', own);
     if (!holds) return;
     // The click (after a long-press) and context menu arrive after the release.
     if (longPressed) window.addEventListener('click', swallow, true);
@@ -202,6 +273,7 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
 
   if (holds) window.addEventListener('contextmenu', swallow, true);
   window.addEventListener('pointermove', move);
+  window.addEventListener('touchmove', own, { passive: false });
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', end);
 }

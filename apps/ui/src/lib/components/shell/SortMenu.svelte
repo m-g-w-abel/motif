@@ -6,6 +6,7 @@
   import { moveItem } from '../../reorder';
   import { SORT_KEYS } from '../../sort.svelte';
   import Icon from '../Icon.svelte';
+  import { dim, rise } from '../../screens';
   import ReorderList from '../ReorderList.svelte';
 
   // A view's sort button and its tiered rules, edited tier by tier: a
@@ -65,8 +66,8 @@
     <Icon name="sort" size={16} />
   </button>
   {#if views.sorting}
-    <button class="scrim" tabindex="-1" aria-label="Close" onclick={() => (views.sorting = false)}></button>
-    <div class="popover" role="dialog" aria-label="Sort order">
+    <button class="scrim" tabindex="-1" aria-label="Close" onclick={() => (views.sorting = false)} transition:dim></button>
+    <div class="popover" role="dialog" aria-label="Sort order" transition:rise>
       <div class="current">Sort by</div>
       {#if oneOff}
         <p class="tip">

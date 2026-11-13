@@ -26,7 +26,7 @@
   }
 
   /** Hero names that don't fit one line (phones) scroll once per track while the sheet is open. */
-  const scrolling = $derived(style === 'hero' && playing && sheet.progress === 1 && track ? track.id : null);
+  const scrolling = $derived(style === 'hero' && playing && sheet.rest && track ? track.id : null);
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(
@@ -63,14 +63,14 @@
   {#if style === 'hero'}
     <div class="hero-title">
       <div class="names">
-        <h1 use:marquee={scrolling}><span class="marquee">{track ? trackTitle(track) : none}</span></h1>
-        {#if track}<p class="hero-artist" use:marquee={scrolling}><span class="marquee">{track.artist ?? 'Unknown artist'}</span></p>{/if}
+        <h1 use:marquee={scrolling}><span class="marquee" data-move={playing ? 'title:now' : undefined} data-span="under">{track ? trackTitle(track) : none}</span></h1>
+        {#if track}<p class="hero-artist" use:marquee={scrolling}><span class="marquee" data-move={playing ? 'artist:now' : undefined} data-span="under">{track.artist ?? 'Unknown artist'}</span></p>{/if}
       </div>
       {@render aside?.()}
     </div>
     {#if track}
-      <p class="hero-album">
-        <span class="album-name">{track.album ?? ''}</span>
+      <p class="hero-album" data-enter="fade">
+        <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
         {#if format}<span class="format"><span class="rates">{rates}</span>{format}</span>{/if}
       </p>
     {:else}

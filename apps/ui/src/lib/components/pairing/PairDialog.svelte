@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dim, pop } from '../../screens';
   import { untrack } from 'svelte';
   import { renderSVG } from 'uqr';
   import { getApp } from '../../context';
@@ -55,8 +56,8 @@
 <svelte:window onkeydowncapture={onKey} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={(e) => e.target === e.currentTarget && close()}>
-  <div class="sheet" role="dialog" aria-label="Pair a device" tabindex="-1" use:focus>
+<div class="backdrop" transition:dim onclick={(e) => e.target === e.currentTarget && close()}>
+  <div in:pop out:pop class="sheet" role="dialog" aria-label="Pair a device" tabindex="-1" use:focus>
     <h2>Pair a device</h2>
     {#each pairing?.pending ?? [] as request (request.id)}
       <PendingRequest {request} />

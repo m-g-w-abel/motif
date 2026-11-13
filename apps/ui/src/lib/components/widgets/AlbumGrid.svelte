@@ -5,7 +5,7 @@
   import { demoLibrary, isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
-  import { gesture, mapped } from '../../gestures';
+  import { gesture, mapped, swipeRow } from '../../gestures';
   import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
@@ -19,7 +19,7 @@
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import { scrollMemory } from '../../scrollMemory';
-
+  
   let {
     cardSize,
     columns: layoutColumns,
@@ -53,6 +53,8 @@
     /** The columns shown, for a view's options. */
     shownColumns?: number;
   } = $props();
+  /** What its cards open, for their cover and title to fly to the page (`screens.ts`). */
+  const kind = $derived(items === 'playlists' ? 'playlist' : 'album');
 
   const { engine, library, settings, playlists } = getApp();
   const view = getViewState();
@@ -189,10 +191,12 @@
   // As in the track list: a press inside a selection waits for the click,
   // so a right-click acts on all of it.
   function press(e: PointerEvent, i: number, album: Card) {
-    gesture(e, mapped(settings.current.gestures, 'row'), {
-      queue: () => queueAlbum(i, album),
-      'play-next': () => queueAlbum(i, album, true),
-    });
+    gesture(
+      e,
+      mapped(settings.current.gestures, 'row'),
+      { queue: () => queueAlbum(i, album), 'play-next': () => queueAlbum(i, album, true) },
+      swipeRow(e.currentTarget as HTMLElement, 'queue'),
+    );
     if (e.button === 2) {
       if (!picked.has(album.key)) select(i);
     } else if (e.button !== 0) {
@@ -507,14 +511,16 @@
               ondblclick={() => play(album)}
             >
               {#if mode !== 'list'}
-                <Artwork track={album.track} art={album.art} title={album.title} size={grid ? undefined : 40} />
+                <span class="cover" data-move={`cover:${kind}:${album.key}`}>
+                  <Artwork track={album.track} art={album.art} title={album.title} size={grid ? undefined : 40} />
+                </span>
               {/if}
               {#if grid}
-                {#if titles}<span class="title">{album.title || 'Unknown album'}</span>{/if}
+                {#if titles}<span class="title" data-move={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>{/if}
                 {#if artists}<span class="artist">{album.artist || 'Unknown artist'}</span>{/if}
               {:else}
                 <span class="text">
-                  <span class="title">{album.title || 'Unknown album'}</span>
+                  <span class="title" data-move={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>
                   <span class="artist">{album.artist || 'Unknown artist'}</span>
                 </span>
               {/if}
@@ -584,6 +590,11 @@
     cursor: pointer;
     outline: 2px solid transparent;
     outline-offset: 1px;
+  }
+
+  .cover {
+    display: block;
+    flex: none;
   }
 
   .card :global(.art) {

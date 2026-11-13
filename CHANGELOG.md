@@ -5,6 +5,37 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Animated screen changes**: opening and leaving a view slides it, and an
+  album's or playlist's cover and title fly from its tile to its page and
+  back (the Library's categories too). Swiping back moves the screen with
+  your finger. Now playing grows out of the bar with the artist, album, play
+  button and seek bar each moving to their place, while the bar's buttons
+  drop away. The queue, lyrics, menus and sheets rise from the bottom. A
+  swipe on a song shows a green + (add to the queue) or a red × (remove),
+  and the songs below a removed one slide up. Swiping now playing down moves
+  it with your finger, and on Android the system back swipe moves the screen
+  too. Dialogs, the changelog and the selection bar animate in and out, the
+  player bar's song changes smoothly, and so do search results and the
+  Recently Played switch. Swiping back shows the screen you return to
+  sliding in underneath, with the album's cover and title travelling as you
+  swipe; the queue's steps can be dragged the same way, with the cover,
+  title and controls moving between them. Album covers no longer flicker
+  after opening. The Albums view keeps its place when you come back to it,
+  and the cover flies back to its tile however far down it is. Letters like
+  g are no longer cut off in now playing. A new screen now slides in over
+  the one you leave, and going back is the same move in reverse, by tap or
+  by swipe; Settings pages follow your finger too, without the player bar
+  showing through. Titles keep their shape and change colour and weight
+  smoothly as they fly, and Search no longer shakes when you come back to it.
+  Recently Played and Added remember whether they showed songs or albums,
+  song lists remember how far down you were, and phones lose the thin bar at
+  the top of each view (the back button sits above the title instead).
+  Swiping back works on phones again, titles land in place with a larger
+  system font size, a swipe taken all the way no longer plays again, and
+  covers no longer blink empty when you change pages. A swipe back starts
+  exactly under your finger and you can tap again as soon as it lands; on
+  Android, the system font size now scales the whole app evenly, so titles
+  and their icons land in place, without a last hop.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

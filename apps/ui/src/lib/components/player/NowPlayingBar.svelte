@@ -12,6 +12,8 @@
   import TrackLabel from './TrackLabel.svelte';
   import Transport from './Transport.svelte';
   import Volume from './Volume.svelte';
+  import { untrack } from 'svelte';
+  import { dim, refresh, rise } from '../../screens';
 
   const { engine, position, sheet, settings, settingsView, views } = getApp();
   let sliding = $state<HTMLElement>();
@@ -30,11 +32,25 @@
     gesture(
       e,
       mapped(settings.current.gestures, 'bar'),
-      { next: () => engine.run({ type: 'next' }), previous: () => engine.run({ type: 'previous' }) },
+      { next: () => skip('next'), previous: () => skip('previous') },
       sliding ? slide(sliding) : undefined,
     );
     sheet.drag(e, 'bar', onTrack ? () => sheet.expand() : undefined);
   }
+
+  // A swipe shows its own skip (`slide`); any other change of track, the new one rises into place.
+  let swiped = 0;
+  function skip(type: 'next' | 'previous') {
+    swiped = performance.now();
+    engine.run({ type });
+  }
+  let shownId: number | undefined = untrack(() => engine.current?.id);
+  $effect(() => {
+    const id = engine.current?.id;
+    if (id === shownId) return;
+    shownId = id;
+    if (sliding && performance.now() - swiped > 1000) refresh(sliding);
+  });
 
   /** The phone's Library and Search buttons: back to that root view, out of Settings. */
   // Only phones have the menu; a window widened with it open leaves it closed.
@@ -46,25 +62,26 @@
   }
 </script>
 
-{#if menu}<button class="scrim" aria-label="Close menu" tabindex="-1" onclick={() => (views.menu = null)}></button>{/if}
+{#if menu}<button class="scrim" aria-label="Close menu" tabindex="-1" onclick={() => (views.menu = null)} transition:dim></button>{/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <section bind:this={sheet.origin} class="bar" class:open={menu} aria-label="Player" onpointerdown={onPointerDown}>
   <!-- Over the music area, not pushing it up. -->
-  {#if menu}<div class="grown"><PhoneMenu /></div>{/if}
+  <!-- It rises out of the bar's top edge, which clips it. -->
+  {#if menu}<div class="grown"><div class="panel" transition:rise><PhoneMenu /></div></div>{/if}
 
   <div class="row">
-    <div class="transport"><Transport size={17} /></div>
+    <div class="transport" data-enter="fade"><Transport size={17} /></div>
 
     <button class="identity" title="Expand player">
       <!-- Follows a touch swipe; the button clips it. -->
       <span class="slide" bind:this={sliding}>
-        <Artwork track={engine.current?.track} size={40} exact={BAR_ART_SIZE} />
+        <Artwork track={engine.current?.track} size={40} exact={BAR_ART_SIZE} move="cover:now" />
         <TrackLabel />
       </span>
     </button>
 
-    <div class="end">
+    <div class="end" data-enter="fade">
       <span class="time">
         {formatTime(position.ms)}<span class="total">{' / '}{duration ? formatTime(duration) : '-:--'}</span>
       </span>
@@ -83,7 +100,7 @@
   <div class="strip"><SeekBar variant="strip" /></div>
 
   {#if views.phone}
-    <nav class="buttons" aria-label="Views">
+    <nav class="buttons" aria-label="Views" data-enter="below" data-span="fall">
       <button class="icon-button" class:active={views.root === 'library' && !settingsView.group} aria-label="Library" onclick={() => go('home')}>
         <Icon name="grid" size={24} />
       </button>
@@ -188,6 +205,10 @@
     left: -1px;
     right: -1px;
     bottom: 100%;
+    overflow: hidden;
+  }
+
+  .panel {
     border: 1px solid var(--border);
     border-bottom: 0;
     border-radius: 12px 12px 0 0;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { swap } from '../../motion/swap';
   import { untrack } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
@@ -146,9 +147,9 @@
 {#snippet albumRow(album: LibraryAlbum)}
   <li>
     <button class="album" onclick={() => openAlbum(album.key, album.title, album.art)}>
-      <span class="cover"><Artwork track={undefined} art={album.art} title={album.title} /></span>
+      <span class="cover" data-move={`cover:album:${album.key}`}><Artwork track={undefined} art={album.art} title={album.title} /></span>
       <span class="lines">
-        <span class="title">{album.title || 'Unknown album'}</span>
+        <span class="title" data-move={`title:album:${album.key}`}>{album.title || 'Unknown album'}</span>
         <span class="artist">{album.artist || 'Unknown artist'}</span>
         <span class="meta">
           {album.tracks}
@@ -253,7 +254,8 @@
     </div>
   </div>
 
-  <div class="results">
+  <!-- A new search or filter rises into place; what it finds arriving doesn't. -->
+  <div class="results" use:swap={`${searched}|${filter}`}>
     {#if !searched}
       <p class="empty">Search songs, albums, artists, folders and playlists.</p>
     {:else if songsHere}

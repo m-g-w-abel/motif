@@ -121,18 +121,19 @@
   style:right={pos.h === 'right' ? 0 : undefined}
   style:top={pos.v === 'top' ? 0 : undefined}
   style:bottom={pos.v === 'bottom' ? 'var(--bottom-inset, 0px)' : undefined}
-  style:visibility={sheet.open ? 'hidden' : undefined}
+  style:visibility={sheet.rest ? 'hidden' : undefined}
   style:transform={`translate(${pos.h === 'left' ? pos.x : -pos.x}px, ${pos.v === 'top' ? pos.y : -pos.y}px)`}
   onpointerdown={startDrag}
   ondblclick={resetPosition}
 >
   <div class="row">
     <button class="expand" title="Expand player" onclick={() => sheet.expand()}>
-      <Artwork track={engine.current?.track} size={48} exact={BAR_ART_SIZE} />
+      <Artwork track={engine.current?.track} size={48} exact={BAR_ART_SIZE} move="cover:now" />
       <TrackLabel />
     </button>
     <span
       class="grip"
+      data-enter="fade"
       role="button"
       tabindex="0"
       aria-label="Move player (arrow keys; Shift for bigger steps)"
@@ -140,7 +141,7 @@
       onkeydown={onKey}><Icon name="grip" size={14} /></span
     >
   </div>
-  <div class="row controls">
+  <div class="row controls" data-enter="fade">
     <Transport size={16} />
   </div>
   <SeekBar variant="strip" />

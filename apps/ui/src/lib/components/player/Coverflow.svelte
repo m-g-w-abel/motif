@@ -133,7 +133,7 @@
           style:transform={p.transform}
           style:z-index={p.z}
         >
-          <div class="card" class:frame={centre} class:tap={centre && !alone} use:menu={centre ? items : () => []}>
+          <div class="card" class:frame={centre} data-move={centre ? 'cover:now' : undefined} data-enter={centre ? undefined : 'fade'} class:tap={centre && !alone} use:menu={centre ? items : () => []}>
             <!-- An empty key is the track's own cover, looked up (and held while the next loads). -->
             <Artwork {track} art={card.key || undefined} size={side} drawn={side * p.scale} />
             {#if !centre}
@@ -153,7 +153,7 @@
          fades by class, also when the list arrives late. -->
     <!-- Phones page by swiping or tapping the cover instead. -->
     {#if !narrow.current}
-    <div class="turns">
+    <div class="turns" data-enter="rise">
       <button class="icon-button turn previous" class:hidden={!settled || alone} aria-label="Previous image" onclick={() => go(at - 1)}>
         <Icon name="chevron-left" />
       </button>
@@ -163,7 +163,7 @@
     </div>
     {/if}
   </div>
-  <div class="below">
+  <div class="below" data-enter="rise">
     <!-- Always two lines high, so nothing below moves as it pages. -->
     {#if !narrow.current}
       <div class="caption" class:hidden={!settled || !cards[at]?.title} style:width="{side}px" aria-live="polite">
