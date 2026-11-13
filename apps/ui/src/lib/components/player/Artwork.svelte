@@ -13,6 +13,7 @@
     exact,
     art,
     title = '',
+    move,
   }: {
     track: TrackRef | null | undefined;
     /** Pixels; fills its container if absent. */
@@ -25,6 +26,8 @@
     art?: string | null;
     /** For the image's description. */
     title?: string;
+    /** A shared element's name (`data-move`, docs/ANIMATION.md). */
+    move?: string;
   } = $props();
 
   const { library } = getApp();
@@ -86,6 +89,7 @@
 </script>
 
 <div
+  data-move={move}
   class="art"
   style:width={size ? `${size}px` : undefined}
   style:height={size ? `${size}px` : undefined}

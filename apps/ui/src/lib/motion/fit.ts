@@ -90,3 +90,19 @@ export function textFlight({ from, fromGlyph, to, toGlyph, steps, ink }: { from:
   }
   return { clip, dest, source };
 }
+
+/** How a shared element's old box maps onto its new one (`data-fit`). */
+export type Fit = 'box' | 'even' | 'text' | 'line';
+
+/**
+ * The box at the start of a flight that the new drawing (`to`) starts on:
+ * all of `from` (`box`), the largest box of `to`'s shape centred in it
+ * (`even`), or `to`'s own height centred on `from`'s line (`line`).
+ */
+export function fitted(from: Box, to: Box, fit: Fit): Box {
+  if (fit === 'line') return { left: from.left, width: from.width, top: from.top + (from.height - to.height) / 2, height: to.height };
+  if (fit !== 'even') return from;
+  const s = Math.min(from.width / to.width, from.height / to.height);
+  const [width, height] = [to.width * s, to.height * s];
+  return { left: from.left + (from.width - width) / 2, top: from.top + (from.height - height) / 2, width, height };
+}

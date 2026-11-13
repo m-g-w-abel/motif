@@ -70,8 +70,12 @@ export class Transition implements Drive {
   readonly #length = this.#still ? STILL_DURATION : DURATION;
   #cleanup?: () => void;
   #to: 0 | 1 | null = null;
-  #done?: Promise<void>;
   #ended = false;
+  #over!: () => void;
+  /** Resolves once, when it has ended and cleaned up. */
+  readonly done = new Promise<void>((r) => (this.#over = r));
+  /** Counts plays, so one a finger caught never ends it. */
+  #play = 0;
   #at = 0;
 
   constructor(tracks: Track[], cleanup?: () => void) {
@@ -123,30 +127,46 @@ export class Transition implements Drive {
 
   /** Plays on from where it is to `to`; resolves once, when it has got there and cleaned up. */
   play(to: 0 | 1): Promise<void> {
-    if (this.#done) return this.#done;
+    if (this.#ended || this.#to !== null) return this.done;
+    this.#to = to;
     if (Transition.hold !== null) {
       const p = Transition.hold;
       Transition.hold = null;
+      this.#to = null;
       this.seek(p);
       // Frozen for inspection; the next change ends it.
-      this.#done = new Promise(() => {});
       this.#to = to;
-      return this.#done;
+      return this.done;
     }
-    this.#to = to;
+    const play = ++this.#play;
+    const finish = () => play === this.#play && this.#finish(to);
     // Already there (a swipe let go at the end): playing would rewind it and run it again.
     const time = this.#time();
     if (to ? time >= this.#length - 0.5 : time <= 0.5) {
-      this.#done = Promise.resolve().then(() => this.#finish(to));
-      return this.#done;
+      void Promise.resolve().then(finish);
+      return this.done;
     }
     for (const a of this.#animations) {
       a.playbackRate = to ? 1 : -1;
       a.play();
     }
     // Cancelled ones (their element gone) count as finished.
-    this.#done = Promise.allSettled(this.#animations.map((a) => a.finished)).then(() => this.#finish(to));
-    return this.#done;
+    void Promise.allSettled(this.#animations.map((a) => a.finished)).then(finish);
+    return this.done;
+  }
+
+  /**
+   * A finger catches it while it plays: it stops where it is drawn, and
+   * seeking and letting go work again from there. Its progress, or null
+   * once it has ended.
+   */
+  grab(): number | null {
+    if (this.#ended) return null;
+    this.#at = this.progress;
+    for (const a of this.#animations) a.pause();
+    this.#to = null;
+    this.#play++;
+    return this.#at;
   }
 
   /** A gesture let go: on to the end, or back to the start. */
@@ -167,5 +187,6 @@ export class Transition implements Drive {
     for (const a of this.#animations) a.cancel();
     this.#animations.length = 0;
     this.#cleanup?.();
+    this.#over();
   }
 }

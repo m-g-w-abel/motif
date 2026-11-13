@@ -7,10 +7,10 @@
 </script>
 
 <div class="label">
-  <span class="title">{track ? trackTitle(track) : 'Nothing playing'}</span>
+  <span class="title" data-move="title:now">{track ? trackTitle(track) : 'Nothing playing'}</span>
   <span class="sub">
     <!-- Apart, so each travels to its own place in now playing (`ExpandedPlayer`). -->
-    {#if track}<span class="artist">{track.artist ?? 'Unknown artist'}</span>{#if track.album}<span class="sep">{' · '}</span><span class="album"
+    {#if track}<span class="artist" data-move="artist:now">{track.artist ?? 'Unknown artist'}</span>{#if track.album}<span class="sep" data-enter="fade">{' · '}</span><span class="album" data-move="album:now"
           >{track.album}</span
         >{/if}{:else}—{/if}
   </span>

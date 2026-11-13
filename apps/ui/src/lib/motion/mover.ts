@@ -1,4 +1,4 @@
-import { boxFlight, css, textFlight, type Box } from './fit';
+import { boxFlight, css, fitted, textFlight, type Box, type Fit } from './fit';
 import type { Track } from './transition';
 
 /**
@@ -86,12 +86,12 @@ export function see(el: HTMLElement, box = el.getBoundingClientRect()): Seen {
 
 let layer: HTMLElement | undefined;
 /** Where copies travel: fixed, above everything, never in the way of a press. */
-function motionLayer() {
+export function motionLayer() {
   if (!layer?.isConnected) {
     layer = document.createElement('div');
     layer.className = 'motion-layer';
     layer.ariaHidden = 'true';
-    Object.assign(layer.style, { position: 'fixed', left: '0', top: '0', width: '0', height: '0', overflow: 'visible', zIndex: '40', pointerEvents: 'none' });
+    Object.assign(layer.style, { position: 'fixed', left: '0', top: '0', width: '0', height: '0', overflow: 'visible', zIndex: '46', pointerEvents: 'none' });
     document.body.append(layer);
   }
   return layer;
@@ -111,10 +111,10 @@ export function rootZoom() {
   return zoom.value;
 }
 
-/** A copy of `s.el`, looking as it does there, at `at` (absolute in `parent`, or fixed on screen). */
-function copyOf(s: Seen, at: Box, fixed: boolean) {
-  const c = s.el.cloneNode(true) as HTMLElement;
-  c.removeAttribute('data-move');
+/** A copy of `s.el` (or `clone`, made of it earlier), looking as it does there, at `at` (absolute in its parent, or fixed on screen). */
+export function copyOf(s: Seen, at: Box, fixed: boolean, clone = s.el.cloneNode(true) as HTMLElement) {
+  const c = clone;
+  for (const n of [c, ...c.querySelectorAll('[data-move], [data-enter]')]) n.removeAttribute('data-move'), n.removeAttribute('data-enter');
   // The original's lazy, async image would decode afresh and draw nothing for a frame.
   for (const img of c.querySelectorAll('img')) Object.assign(img, { loading: 'eager', decoding: 'sync' });
   for (const [p, v] of Object.entries(s.look)) c.style.setProperty(p, v);
@@ -166,7 +166,8 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
   const root = motionLayer();
   const tracks: Track[] = [];
   const copies: HTMLElement[] = [];
-  /** The copy that ends where `to` is. */
+  /** The copies that start where `from` is and end where `to` is. */
+  let starts!: HTMLElement;
   let lands!: HTMLElement;
   if (from.text && dest.text) {
     // Whole words at both ends (one line, not cut off): their widths, so another weight doesn't ghost.
@@ -196,14 +197,18 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
     }
     copies.push(clip);
     lands = words;
+    starts = clip.lastElementChild as HTMLElement;
   } else {
     // The sharper drawing already loaded travels (the grid's or the page's).
     const own = from.res > 0 && from.res >= dest.res ? 'from' : 'to';
     const s = own === 'from' ? from : dest;
-    const c = copyOf(s, own === 'from' ? fb : tb, true);
-    tracks.push({ el: c, frames: boxFlight(fb, tb, own).frames.map((m) => ({ transform: css(m) })) });
+    const fit = (to.dataset.fit ?? from.el.dataset.fit ?? 'box') as Fit;
+    // Shapes other than a box: the drawing starts on (or ends on) the part of the old box its shape fits.
+    const [a, b] = own === 'from' ? [fb, fitted(tb, fb, fit)] : [fitted(fb, tb, fit), tb];
+    const c = copyOf(s, own === 'from' ? a : b, true);
+    tracks.push({ el: c, frames: boxFlight(a, b, own).frames.map((m) => ({ transform: css(m) })) });
     copies.push(c);
-    lands = c;
+    lands = starts = c;
   }
   for (const c of copies) {
     c.style.visibility = 'hidden';
@@ -230,7 +235,9 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
         if (transform) t.el.style.transform = transform;
         if (opacity !== undefined) t.el.style.opacity = String(opacity);
       }
-      if (landed && landings && to.isConnected) {
+      // Back where it started (played backwards): the copy that shows first lies on `from`, as it does at the end.
+      const [shows, real] = landed ? [lands, to] : [starts, from.el];
+      if (landings && real.isConnected) {
         // Text: where its words are drawn, not its element's box (the two can sit differently inside their boxes).
         const drawnAt = (el: HTMLElement) => {
           if (!dest.text) return el.getBoundingClientRect();
@@ -238,14 +245,17 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
           range.selectNodeContents(el);
           return range.getBoundingClientRect();
         };
-        const a = drawnAt(lands);
-        const b = drawnAt(to);
-        const [la, lb] = [getComputedStyle(lands), getComputedStyle(to)];
+        const boxOf = (d: DOMRect): Box => ({ left: d.x, top: d.y, width: d.width, height: d.height });
+        const a = boxOf(drawnAt(shows));
+        // A drawing of another shape lies on the part of the box its shape fits (`fitted`).
+        const fit = (to.dataset.fit ?? from.el.dataset.fit ?? 'box') as Fit;
+        const b = dest.text ? boxOf(drawnAt(real)) : fitted(boxOf(drawnAt(real)), a, fit);
+        const [la, lb] = [getComputedStyle(shows), getComputedStyle(real)];
         // The copy is drawn at its own size and scaled; compare what shows.
-        const scale = lands.getBoundingClientRect().height / ((lands.offsetHeight || 1) * rootZoom());
+        const scale = shows.getBoundingClientRect().height / ((shows.offsetHeight || 1) * rootZoom());
         landings.push({
-          name,
-          box: Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.width - b.width), Math.abs(a.height - b.height)),
+          name: landed ? name : `${name} (back)`,
+          box: Math.max(Math.abs(a.left - b.left), Math.abs(a.top - b.top), Math.abs(a.width - b.width), Math.abs(a.height - b.height)),
           look: (from.text ? LANDING : []).filter((p) => (p === 'font-size' ? Math.abs(parseFloat(la.fontSize) * scale - parseFloat(lb.fontSize)) > 0.5 : la.getPropertyValue(p) !== lb.getPropertyValue(p))),
         });
       }

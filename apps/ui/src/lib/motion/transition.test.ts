@@ -133,6 +133,31 @@ describe('Transition', () => {
     expect(cleaned).toBe(1);
   });
 
+  it('is caught by a new finger where it is drawn, and then ends only as that finger lets go', async () => {
+    let cleaned = 0;
+    const t = new Transition([track()], () => cleaned++);
+    let done = 0;
+    void t.play(1).then(() => done++);
+    made[0].currentTime = CURVE.inverse(0.6) * DURATION;
+    expect(t.grab()).toBeCloseTo(0.6);
+    expect(made[0].log.at(-1)).toBe('pause');
+    expect(t.heading).toBeNull();
+    // The play it caught finishing late changes nothing.
+    made[0].finish();
+    await settle();
+    expect(cleaned).toBe(0);
+    t.seek(0.2);
+    expect(t.progress).toBeCloseTo(0.2);
+    void t.release(false);
+    expect(made[0].log.at(-1)).toBe('play -1');
+    made[0].finish();
+    await settle();
+    expect(cleaned).toBe(1);
+    expect(t.heading).toBe(0);
+    expect(done).toBe(1);
+    expect(t.grab()).toBeNull();
+  });
+
   it('holds the next transition at the dev scrubber’s progress instead of playing it', () => {
     Transition.hold = 0.3;
     const t = new Transition([track()]);

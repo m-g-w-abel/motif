@@ -71,17 +71,17 @@
   {#if menu}<div class="grown"><div class="panel" transition:rise><PhoneMenu /></div></div>{/if}
 
   <div class="row">
-    <div class="transport"><Transport size={17} /></div>
+    <div class="transport" data-enter="fade"><Transport size={17} /></div>
 
     <button class="identity" title="Expand player">
       <!-- Follows a touch swipe; the button clips it. -->
       <span class="slide" bind:this={sliding}>
-        <Artwork track={engine.current?.track} size={40} exact={BAR_ART_SIZE} />
+        <Artwork track={engine.current?.track} size={40} exact={BAR_ART_SIZE} move="cover:now" />
         <TrackLabel />
       </span>
     </button>
 
-    <div class="end">
+    <div class="end" data-enter="fade">
       <span class="time">
         {formatTime(position.ms)}<span class="total">{' / '}{duration ? formatTime(duration) : '-:--'}</span>
       </span>
@@ -100,7 +100,7 @@
   <div class="strip"><SeekBar variant="strip" /></div>
 
   {#if views.phone}
-    <nav class="buttons" aria-label="Views">
+    <nav class="buttons" aria-label="Views" data-enter="below" data-span="fall">
       <button class="icon-button" class:active={views.root === 'library' && !settingsView.group} aria-label="Library" onclick={() => go('home')}>
         <Icon name="grid" size={24} />
       </button>

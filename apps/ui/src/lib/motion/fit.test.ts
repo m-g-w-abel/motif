@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { apply, boxFlight, compose, ID, invert, textFlight, type Box, type Map2 } from './fit';
+import { apply, boxFlight, compose, fitted, ID, invert, textFlight, type Box, type Map2 } from './fit';
 
 const box = (left: number, top: number, width: number, height: number): Box => ({ left, top, width, height });
 const near = (a: Box, b: Box) => {
@@ -108,5 +108,15 @@ describe('textFlight between two weights', () => {
   it('still starts exactly as the old drawing and lands exactly as the new', () => {
     near(onScreen(to, f.clip[0], at, f.source[0], box(0, 0, from.width, from.height)), from);
     near2(compose(f.clip.at(-1)!, f.dest.at(-1)!), ID);
+  });
+});
+
+describe('fitted', () => {
+  it('stretches by default, keeps the shape scaled evenly about the centre, or stretches a line across only', () => {
+    const from = box(0, 100, 400, 4);
+    const to = box(20, 500, 300, 20);
+    near(fitted(from, to, 'box'), from);
+    near(fitted(from, to, 'line'), box(0, 92, 400, 20));
+    near(fitted(box(0, 0, 100, 50), box(0, 0, 40, 40), 'even'), box(25, 0, 50, 50));
   });
 });

@@ -32,6 +32,7 @@
     running={engine.player?.status === 'playing'}
     {levels}
     preview
+    move="seek:now"
     oninput={(v) => (scrubbing = v)}
     onchange={(v) => {
       scrubbing = null;
