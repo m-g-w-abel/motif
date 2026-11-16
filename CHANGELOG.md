@@ -5,6 +5,8 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Album colours at start-up**: with art colours on, Motif now opens in the
+  last album's colours instead of showing the plain theme until the music loads.
 - **Animated screen changes**: opening and leaving a view slides it, and an
   album's or playlist's cover and title fly from its tile to its page and
   back (the Library's categories too). Swiping back moves the screen with
