@@ -64,7 +64,13 @@ const frame = ({ map, opacity }: Frame): Keyframe => ({ transform: css(map), ...
 
 export function change(root: HTMLElement, apply: () => void, options: Options = {}): Change {
   const then = measure(root, options);
-  apply();
+  try {
+    apply();
+  } catch (e) {
+    // Not drawn: drop the measured start, or the stage's next change would start from it.
+    waiting.delete(root);
+    throw e;
+  }
   return then();
 }
 
