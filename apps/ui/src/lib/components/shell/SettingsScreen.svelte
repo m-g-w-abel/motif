@@ -32,7 +32,11 @@
   import { LOCAL_ID, removeEngine, switchTo } from '../../engines';
   import WindowButtons from './WindowButtons.svelte';
 
+  // `page`: phones show the list and each group as screens of their own, each fixed to its page; desktop's follows the group.
+  const { page }: { page?: 'list' | SettingsGroup } = $props();
   const { settings, themes, engine, library, settingsView } = getApp();
+  /** The page showing now (not one leaving, or one beneath a swipe back), which owns the dialogs and Esc. */
+  const active = $derived(page === undefined || page === (settingsView.list ? 'list' : settingsView.group));
   let panel = $state<HTMLElement>();
 
   const groups = SETTINGS_GROUPS.map((id) => ({ id, label: GROUP_INFO[id].label }));
@@ -41,14 +45,14 @@
   let searching = $state(false);
   let find = $state('');
   const results = $derived(searchSettings(find, true));
-  const showList = $derived(settingsView.phone && settingsView.list);
+  const showList = $derived(page === undefined ? settingsView.phone && settingsView.list : page === 'list');
   function pick(g: SettingsGroup) {
     searching = false;
     find = '';
     settingsView.open(g);
   }
   const focusOnMount = (node: HTMLElement) => node.focus();
-  const group = $derived(settingsView.group);
+  const group = $derived(page && page !== 'list' ? page : settingsView.group);
   const title = $derived(showList || !group ? 'Settings' : GROUP_INFO[group].label);
   /** What a group's controls need; other devices see that they can't change it. */
   const needs: Partial<Record<SettingsGroup, Scope>> = { library: 'library', playback: 'settings', integrations: 'settings', devices: 'pairing' };
@@ -206,7 +210,7 @@
   ]);
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && settingsView.close()} />
+<svelte:window onkeydown={(e) => active && e.key === 'Escape' && settingsView.close()} />
 <svelte:document onvisibilitychange={() => (allFilesAccess = storage?.hasAllFilesAccess() ?? true)} />
 
 <!--
@@ -870,8 +874,8 @@
   </div>
 </section>
 
-{#if settingsView.addingEngine}<AddEngineDialog onClose={() => (settingsView.addingEngine = false)} />{/if}
-{#if settingsView.pairing}<PairDialog onClose={() => (settingsView.pairing = false)} />{/if}
+{#if active && settingsView.addingEngine}<AddEngineDialog onClose={() => (settingsView.addingEngine = false)} />{/if}
+{#if active && settingsView.pairing}<PairDialog onClose={() => (settingsView.pairing = false)} />{/if}
 
 {#snippet gainSlider(label: string, key: 'preamp_db' | 'untagged_db', db: number)}
   <div class="row">

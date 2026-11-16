@@ -1,3 +1,5 @@
+import { Transition, type Drive } from './motion/transition';
+
 /**
  * Touch gestures (touch and pen only; the mouse keeps its clicks and drags).
  * Each surface maps its gestures to actions in one table, which the
@@ -63,6 +65,8 @@ export function mapped(overrides: unknown, surface: Surface): GestureMap {
 /** One press, from where (px) and when (ms) it started. */
 export class Press {
   axis: 'x' | 'y' | null = null;
+  /** Where the finger was when the press became a drag. */
+  #from = 0;
 
   constructor(
     readonly x: number,
@@ -74,7 +78,10 @@ export class Press {
   move(x: number, y: number) {
     const dx = x - this.x;
     const dy = y - this.y;
-    if (this.axis === null && Math.hypot(dx, dy) >= SLOP) this.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    if (this.axis === null && Math.hypot(dx, dy) >= SLOP) {
+      this.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      this.#from = x;
+    }
     return this.axis;
   }
 
@@ -83,9 +90,9 @@ export class Press {
     return this.axis === null && t - this.t >= HOLD;
   }
 
-  /** How far content follows the finger sideways at `x`: only once the press is a horizontal drag. */
+  /** How far content follows the finger sideways at `x`: only once the press is a horizontal drag, from where it became one (it starts where it is, never jumping by the slop). */
   offset(x: number) {
-    return this.axis === 'x' ? x - this.x : 0;
+    return this.axis === 'x' ? x - this.#from : 0;
   }
 
   /** The swipe a release at `x` completes, if any. */
@@ -106,34 +113,97 @@ export function dragValue(start: number, dy: number, span: number) {
 /** What a surface can do; a `Follow` action starts a drag (undefined: not now) and gets its vertical distance (down positive). */
 export type Handlers = Partial<Record<Once, () => void> & Record<Follow, () => ((dy: number) => void) | undefined>>;
 
-/** Shows a swipe under way: `move` as the finger goes, then `end` with the swipe it completed (null: none). */
-export interface Slide {
-  move(dx: number): void;
-  end(swipe: Gesture | null): void;
+/**
+ * Draws a sideways swipe as it goes: for its way (-1 left, 1 right), a
+ * transition the finger drives across `distance` px, then releases (null:
+ * nothing moves that way).
+ */
+export type Swipe = (way: -1 | 1) => { drive: Drive; distance: number } | null;
+
+const translate = (x: number) => ({ transform: x ? `translateX(${x}px)` : 'none' });
+
+/**
+ * Moves `el` with a swipe (the bar's track, the sheet's artwork): it
+ * follows the finger out, then on letting go either goes on out and the
+ * next track comes in from the other side, or springs back.
+ */
+export function slide(el: HTMLElement): Swipe {
+  return (way) => {
+    const w = el.offsetWidth;
+    const t = new Transition([{ el, frames: [translate(0), translate(way * w)] }]);
+    return {
+      distance: w,
+      drive: {
+        seek: (p) => t.seek(p),
+        release(commit) {
+          void t.release(commit).then(() => {
+            // In the same task as the first one's clean-up, so it never shows where it started.
+            if (commit) void new Transition([{ el, frames: [translate(-way * w), translate(0)] }]).play(1);
+          });
+        },
+      },
+    };
+  };
 }
 
 /**
- * Moves `el` with a swipe by `transform` alone, in short transitions: it
- * follows the finger, then slides out the swipe's way and back in from the
- * other side (the next track), or springs back.
+ * Moves a list row left with a swipe over a strip that shows what the swipe
+ * does: a green + (`queue`) or a red × (`remove`), uncovered as the row
+ * goes. A queued row slides out to the left and comes back the same way; a
+ * removed one stays out, coming back only if still shown a while later (the
+ * engine refused). The row's parent clips both while it moves; a table row
+ * has none to spare and slides without the strip.
  */
-export function slide(el: HTMLElement): Slide {
-  const to = (x: number, ms: number) => {
-    el.style.transition = ms ? `transform ${ms}ms ease-out` : 'none';
-    el.style.transform = x ? `translateX(${x}px)` : '';
-  };
-  return {
-    move: (dx) => to(dx, 0),
-    end(swipe) {
-      if (!swipe) return to(0, 200);
-      const out = swipe === 'swipe-left' ? -el.offsetWidth : el.offsetWidth;
-      to(out, 150);
-      setTimeout(() => {
-        to(-out, 0);
-        void el.offsetWidth; // lays out the jump, so the slide in starts from it
-        to(0, 200);
-      }, 150);
-    },
+export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Swipe {
+  return (way) => {
+    if (way > 0) return null;
+    const box = el instanceof HTMLTableRowElement ? null : el.parentElement;
+    const w = el.offsetWidth;
+    const kept = box?.style.cssText ?? '';
+    let strip: HTMLElement | undefined;
+    if (box) {
+      box.style.overflow = 'hidden';
+      if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
+      strip = document.createElement('span');
+      strip.className = `swipe-strip ${does}`;
+      strip.textContent = does === 'queue' ? '+' : '×';
+      strip.ariaHidden = 'true';
+      // Level with the row, which needn't fill its parent (a queue's row among the others).
+      Object.assign(strip.style, { top: `${el.offsetTop}px`, bottom: 'auto', height: `${el.offsetHeight}px` });
+      box.append(strip);
+    }
+    /** The row (and strip) from `a` px to `b` px. */
+    const move = (a: number, b: number) =>
+      new Transition([
+        { el, frames: [translate(a), translate(b)] },
+        ...(strip ? [{ el: strip, frames: [{ transform: `translateX(calc(100% + ${a}px))` }, { transform: `translateX(calc(100% + ${b}px))` }] }] : []),
+      ]);
+    const done = () => {
+      strip?.remove();
+      if (box) box.style.cssText = kept;
+    };
+    const back = () => void move(-w, 0).play(1).then(done);
+    const t = move(0, -w);
+    return {
+      distance: w,
+      drive: {
+        seek: (p) => t.seek(p),
+        release(commit) {
+          void t.release(commit).then(() => {
+            if (!commit) return done();
+            // Out of sight until it comes back (or goes, removed).
+            el.style.transform = translate(-w).transform;
+            if (strip) strip.style.transform = `translateX(calc(100% - ${w}px))`;
+            const restore = () => {
+              el.style.transform = '';
+              back();
+            };
+            if (does === 'queue') setTimeout(restore, 100);
+            else setTimeout(() => (el.isConnected ? restore() : done()), 1000);
+          });
+        },
+      },
+    };
   };
 }
 
@@ -142,13 +212,16 @@ export function slide(el: HTMLElement): Slide {
  * to (`mapped`); `shown` shows its swipes that do something. On surfaces with a long-press, the browser's
  * own long-press (the context menu) is held back; menus stay on right-click.
  */
-export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: Slide) {
+export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: Swipe) {
   if (e.pointerType === 'mouse' || !e.isPrimary) return;
   const press = new Press(e.clientX, e.clientY, performance.now());
   const holds = !!map['long-press'];
   const swipes = !!(map['swipe-left'] || map['swipe-right']);
   let follow: ((dy: number) => void) | undefined;
   let longPressed = false;
+  /** The swipe drawn, and the way it went first. */
+  let showing: ReturnType<Swipe> = null;
+  let swiping = 0;
   // Its own function per press, so one press's cleanup never removes another's.
   const swallow = (ev: Event) => {
     ev.preventDefault();
@@ -167,10 +240,22 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
       }, HOLD)
     : undefined;
 
+  // A sideways drag that is a swipe is ours alone: the browser's own handling of the touch would end in a
+  // fling, and Chromium drops the next tap while one runs (nothing could be tapped for half a second).
+  const own = (ev: TouchEvent) => press.axis === 'x' && swipes && ev.cancelable && ev.preventDefault();
   const move = (ev: PointerEvent) => {
     if (ev.pointerId !== e.pointerId) return;
     const axis = press.move(ev.clientX, ev.clientY);
-    if (axis === 'x' && swipes) shown?.move(press.offset(ev.clientX));
+    // Only the ways that do something follow the finger (a row moves left to queue, not right); the first way it goes, it keeps.
+    const dx = press.offset(ev.clientX);
+    if (axis === 'x' && swipes && dx) {
+      const way = dx < 0 ? -1 : 1;
+      if (!swiping && map[way < 0 ? 'swipe-left' : 'swipe-right']) {
+        swiping = way;
+        showing = shown?.(way) ?? null;
+      }
+      if (showing) showing.drive.seek(Math.max(0, dx * swiping) / showing.distance);
+    }
     if (axis !== 'y') return;
     const action = map['drag-vertical'];
     if (action && isFollow(action)) {
@@ -182,15 +267,16 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
     if (ev.pointerId !== e.pointerId) return;
     const swipe = longPressed ? null : press.swipe(ev.clientX);
     if (swipe) run(swipe);
-    if (press.axis === 'x' && swipes) shown?.end(swipe && map[swipe] ? swipe : null);
+    showing?.drive.release(!!swipe && !!map[swipe] && (swipe === 'swipe-left') === (swiping < 0));
     end();
   };
   const end = (ev?: PointerEvent) => {
-    if (ev?.type === 'pointercancel' && press.axis === 'x' && swipes) shown?.end(null);
+    if (ev?.type === 'pointercancel') showing?.drive.release(false);
     clearTimeout(timer);
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
     window.removeEventListener('pointercancel', end);
+    window.removeEventListener('touchmove', own);
     if (!holds) return;
     // The click (after a long-press) and context menu arrive after the release.
     if (longPressed) window.addEventListener('click', swallow, true);
@@ -202,6 +288,7 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
 
   if (holds) window.addEventListener('contextmenu', swallow, true);
   window.addEventListener('pointermove', move);
+  window.addEventListener('touchmove', own, { passive: false });
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', end);
 }

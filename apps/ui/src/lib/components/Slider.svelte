@@ -16,6 +16,7 @@
     preview = false,
     oninput,
     onchange,
+    move,
   }: {
     value: number;
     max: number;
@@ -33,6 +34,8 @@
     preview?: boolean;
     oninput?: (value: number) => void;
     onchange?: (value: number) => void;
+    /** A shared element's name (`data-move`, docs/ANIMATION.md). */
+    move?: string;
   } = $props();
 
   let track = $state<HTMLElement>();
@@ -126,6 +129,7 @@
 
 <div
   bind:this={track}
+  data-move={move}
   class="slider {variant}"
   class:disabled
   class:waveform={!!wave}

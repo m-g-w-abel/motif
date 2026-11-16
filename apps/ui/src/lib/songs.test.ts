@@ -39,8 +39,8 @@ describe('song rows', () => {
 
 describe('album header', () => {
   it('reads "album artist · year", preferring the original year', () => {
-    expect(albumLine(track, details({ album_artist: 'AFX', year: 2002, original_year: 1992 }))).toBe('AFX · 1992');
-    expect(albumLine(track, details({ year: 1992 }))).toBe('Aphex Twin · 1992');
-    expect(albumLine(track, undefined)).toBe('Aphex Twin');
+    expect(albumLine(track, details({ album_artist: 'AFX', year: 2002, original_year: 1992 }))).toEqual({ artist: 'AFX', year: 1992 });
+    expect(albumLine(track, details({ year: 1992 }))).toEqual({ artist: 'Aphex Twin', year: 1992 });
+    expect(albumLine(track, undefined)).toEqual({ artist: 'Aphex Twin', year: undefined });
   });
 });

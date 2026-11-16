@@ -1,9 +1,12 @@
 import { onBackButtonPress } from '@tauri-apps/api/app';
+import type { Drive } from './motion/transition';
 
 /** Something system back closes; listed topmost first. */
 export interface Layer {
   open: boolean;
   close(): void;
+  /** Shows a system back swipe under way (predictive back): what it drives, if anything. */
+  follow?: () => Drive | undefined;
 }
 
 /** Closes the first open layer. False when none is open. */
@@ -13,7 +16,29 @@ export function closeTop(layers: Layer[]): boolean {
   return !!top;
 }
 
-const android = (globalThis as { MotifAndroid?: { moveToBack(): void } }).MotifAndroid;
+/**
+ * Android's predictive back swipe as it goes (`MainActivity.kt` reports its
+ * progress, 0 to 1) drives the top open layer's change, which springs back
+ * if the swipe is cancelled. Letting go is an ordinary back (`routeBack`),
+ * which finishes the change from there.
+ */
+export function backSwipe(layers: () => Layer[]) {
+  let shown: Drive | undefined;
+  return {
+    start() {
+      shown = layers().find((layer) => layer.open)?.follow?.();
+    },
+    progress(p: number) {
+      shown?.seek(p);
+    },
+    cancel() {
+      shown?.release(false);
+      shown = undefined;
+    },
+  };
+}
+
+const android = (globalThis as { MotifAndroid?: { moveToBack(): void; followBack?(): void } }).MotifAndroid;
 
 /**
  * Android's back (gesture or button) closes the topmost layer from `layers()`;
@@ -23,5 +48,11 @@ const android = (globalThis as { MotifAndroid?: { moveToBack(): void } }).MotifA
 export function routeBack(layers: () => Layer[]): () => void {
   if (!android) return () => {};
   const listener = onBackButtonPress(() => closeTop(layers()) || android.moveToBack());
-  return () => void listener.then((l) => l.unregister());
+  const own = globalThis as { motifBack?: ReturnType<typeof backSwipe> };
+  own.motifBack = backSwipe(layers);
+  android.followBack?.();
+  return () => {
+    delete own.motifBack;
+    void listener.then((l) => l.unregister());
+  };
 }

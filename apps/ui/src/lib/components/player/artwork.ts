@@ -30,3 +30,23 @@ export function keptArt(
   const album = albumOf(track);
   return album !== null && shown.album === album ? shown.id : null;
 }
+
+/**
+ * Covers decoded so far this session, each at the sharpest size drawn: a
+ * screen that mounts shows one at once (no blank frames while it decodes
+ * again), and swaps to its own size once that has decoded.
+ */
+export class DecodedArt {
+  readonly #best = new Map<string, { url: string; px: number }>();
+
+  get(id: string) {
+    return this.#best.get(id);
+  }
+
+  add(id: string, url: string, px: number) {
+    const had = this.#best.get(id);
+    if (!had || px >= had.px) this.#best.set(id, { url, px });
+  }
+}
+
+export const decodedArt = new DecodedArt();
