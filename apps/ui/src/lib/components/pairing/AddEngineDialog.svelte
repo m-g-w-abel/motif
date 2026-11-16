@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dim, pop } from '../../screens';
+  import { surface } from '../../motion/surface';
   import { getApp } from '../../context';
   import { guessName } from '../../deviceName';
   import { discoverEngines, holdMulticast, pairEngine, parsePairLink, type FoundEngine, type PairLink } from '../../discover';
@@ -138,8 +138,8 @@
 <svelte:window onkeydowncapture={onKey} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" transition:dim onclick={(e) => e.target === e.currentTarget && onClose()}>
-  <div in:pop out:pop class="sheet" role="dialog" aria-label="Add an engine" tabindex="-1" use:focus>
+<div class="backdrop" transition:surface={{ enter: 'fade' }} onclick={(e) => e.target === e.currentTarget && onClose()}>
+  <div transition:surface={{ enter: 'grow' }} class="sheet" role="dialog" aria-label="Add an engine" tabindex="-1" use:focus>
     <h2>Add an engine</h2>
     {#if waiting && chosen}
       <p>Waiting for approval…</p>

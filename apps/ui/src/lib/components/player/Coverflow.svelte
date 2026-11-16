@@ -122,8 +122,8 @@
       {#if Math.abs(i - at) <= near + 1}
         {@const p = place(i)}
         {@const centre = i === at}
-        <!-- The slot places the card; the centre card's face is the `.frame` the sheet's open and
-             close morph moves, and the other faces fade in after it (see ExpandedPlayer). -->
+        <!-- The slot places the card; the centre card's face is the `.frame` the sheet's cover
+             travels to (`cover:now`), and the other faces fade in once the sheet is still. -->
         <div
           class="slot"
           class:hidden={p.hidden}
@@ -149,8 +149,8 @@
         </div>
       {/if}
     {/each}
-    <!-- The sheet's morph fades `.turns` and `.below` (inline opacity); what shows inside them
-         fades by class, also when the list arrives late. -->
+    <!-- The sheet's transitions bring `.turns` and `.below` in (`data-enter`); what shows inside
+         them fades by class, also when the list arrives late. -->
     <!-- Phones page by swiping or tapping the cover instead. -->
     {#if !narrow.current}
     <div class="turns" data-enter="rise">

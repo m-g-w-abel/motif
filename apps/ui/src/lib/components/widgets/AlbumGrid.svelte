@@ -53,7 +53,7 @@
     /** The columns shown, for a view's options. */
     shownColumns?: number;
   } = $props();
-  /** What its cards open, for their cover and title to fly to the page (`screens.ts`). */
+  /** What its cards open, for their cover and title to fly to the page (`lib/motion/stage.svelte.ts`). */
   const kind = $derived(items === 'playlists' ? 'playlist' : 'album');
 
   const { engine, library, settings, playlists } = getApp();

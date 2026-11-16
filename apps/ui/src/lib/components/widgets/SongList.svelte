@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-  import { rise } from '../../screens';
+  import { surface } from '../../motion/surface';
   import { tick, untrack, type Snippet } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { addFolder } from '../../folders';
@@ -302,7 +302,7 @@
   </div>
   <Scrollbar target={scroller} />
   {#if selecting}
-    <div class="select-bar" transition:rise role="toolbar" aria-label="Selected songs">
+    <div class="select-bar" transition:surface={{ enter: 'below' }} role="toolbar" aria-label="Selected songs">
       <span class="picked-count" aria-live="polite">{picked.size} selected</span>
       <button onclick={() => (picked.size === count ? (view.browse.picked = new Map()) : selectAll())}>
         {picked.size === count && count ? 'None' : 'All'}

@@ -291,7 +291,7 @@ language for phone and desktop, not a separate mobile UI.
   release** (swipe back with the screen it returns to drawn beneath, now
   playing's drag down, the sheet's queue and lyrics steps, row swipes,
   Android's predictive back). Closing mirrors opening; transform and opacity
-  only, short, nothing while idle, reduced motion respected (`lib/screens.ts`).
+  only, short, nothing while idle, reduced motion respected (`docs/ANIMATION.md`).
 
 ## Phase 0 checklist
 

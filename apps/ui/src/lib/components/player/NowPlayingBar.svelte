@@ -13,7 +13,7 @@
   import Transport from './Transport.svelte';
   import Volume from './Volume.svelte';
   import { untrack } from 'svelte';
-  import { dim, rise } from '../../screens';
+  import { surface } from '../../motion/surface';
   import { risen } from '../../motion/swap';
 
   const { engine, position, sheet, settings, settingsView, views } = getApp();
@@ -63,13 +63,13 @@
   }
 </script>
 
-{#if menu}<button class="scrim" aria-label="Close menu" tabindex="-1" onclick={() => (views.menu = null)} transition:dim></button>{/if}
+{#if menu}<button class="scrim" aria-label="Close menu" tabindex="-1" onclick={() => (views.menu = null)} transition:surface={{ enter: 'fade' }}></button>{/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <section bind:this={sheet.origin} class="bar" class:open={menu} aria-label="Player" onpointerdown={onPointerDown}>
   <!-- Over the music area, not pushing it up. -->
   <!-- It rises out of the bar's top edge, which clips it. -->
-  {#if menu}<div class="grown"><div class="panel" transition:rise><PhoneMenu /></div></div>{/if}
+  {#if menu}<div class="grown"><div class="panel" transition:surface={{ enter: 'below' }}><PhoneMenu /></div></div>{/if}
 
   <div class="row">
     <div class="transport" data-enter="fade"><Transport size={17} /></div>
