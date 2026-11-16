@@ -81,9 +81,10 @@ control isn't an add-on: it's the normal code path.
   to its place, and swipes move what they act on with the finger. All of it
   runs on one small motion foundation ([docs/ANIMATION.md](docs/ANIMATION.md)):
   every transition is a function of progress that a clock plays or a finger
-  drives, shared elements are declared in markup, and a headless-browser
-  check fails any element that doesn't land exactly where it belongs (short
-  transform and opacity transitions, nothing running while idle).
+  drives, shared elements are declared in markup, and a browser check (run
+  headless and on the phone) fails any element that doesn't land exactly
+  where it belongs, screens and now playing alike (short transform and
+  opacity transitions, nothing running while idle).
 
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable

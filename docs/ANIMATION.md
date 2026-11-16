@@ -4,10 +4,10 @@ How Motif animates. The reference for any UI work that moves something: new
 pages and features get their animations by declaring them with the tools
 below, not by writing animation code.
 
-Status (#180): migration steps 1–4 are built (`apps/ui/src/lib/motion/`:
-`transition.ts`, `fit.ts`, `mover.ts`, `stage.svelte.ts`, `swap.ts`); the
-sheet, rows and surfaces still run the old code in `lib/screens.ts` and
-`ExpandedPlayer.svelte` until steps 5–8.
+Status (#180): all of it is built (`apps/ui/src/lib/motion/`:
+`transition.ts`, `fit.ts`, `plan.ts`, `change.ts`, `mover.ts`,
+`stage.svelte.ts`, `swap.ts`, `surface.ts`); every animation in the app
+runs on it.
 
 ## Rules
 
@@ -70,9 +70,9 @@ progress `p`, from 0 (before) to 1 (after). Nothing else moves anything.
 - **Interrupting.** Each place things move (a **stage**: the screen area,
   the sheet, a menu) runs one transition at a time. A new gesture on a stage
   with a transition still playing **catches it**: it pauses where it is and
-  the finger carries on from that progress (as the sheet's `shown` does now),
-  or, if the new change is a different one, the running one jumps to its end
-  first. Nothing is ignored (no `busy` flags dropping input) and nothing
+  the finger carries on from that progress (`grab()`; the sheet's
+  open/close), or, if the new change is a different one, the running one
+  jumps to its end first (the sheet's steps, the screens). Nothing is ignored (no `busy` flags dropping input) and nothing
   restarts from 0.
 - **Repeat-safe.** `release` and `play` on a finished or released transition
   do nothing; `done` resolves once. Matches the rule that handlers are safe
@@ -94,11 +94,13 @@ class Transition {
   seek(p: number): void;                 // finger
   play(to: 0 | 1): Promise<void>;        // clock, from where it is
   release(commit: boolean): Promise<void>; // = play(commit ? 1 : 0), once
+  grab(): number | null;                 // a finger catches it playing: pauses where it is drawn
   add(track: Track): void;               // joins where the others are (a card that loads late)
   end(): void;                           // jump to where it was heading, clean up
+  readonly done: Promise<void>;          // once, when it has ended and cleaned up
 }
 
-/** What a gesture drives. Replaces `Slide`. */
+/** What a gesture drives. */
 interface Drive { seek(p: number): void; release(commit: boolean): void }
 ```
 
@@ -106,7 +108,9 @@ interface Drive { seek(p: number): void; release(commit: boolean): void }
 sheet's drags and the step handles all talk to. Each turns its distance into
 progress (`dx / width`, `dy / distance`) and its commit decision (`Press.swipe`,
 `released`, flick velocity) into `release`. Recognising gestures stays in
-`gestures.ts`; drawing them moves here.
+`gestures.ts`; drawing them lives here. A sideways swipe is a `Swipe`: for
+the way the finger first goes that does something, a `Drive` and the
+distance it spans (`slide`, `swipeRow`, the swipe back).
 
 ## Building transitions: measure, change, measure
 
@@ -128,14 +132,18 @@ t.play(1);           // a tap
    - only after → **enter** as it declares;
    - only before → **leave** as it declares (a copy, since the DOM dropped it);
    - inside something that moves → its own move less its parent's (the
-     "lift" `stepChange` computes now), so nested parts don't double up.
+     "lift"), so nested parts don't double up; inside something coming,
+     going or flying → nothing of its own, it rides along.
 
 The planner works on plain data (names, boxes, nesting, declared enter/leave),
 so the rules are tested without a browser. The DOM layer around it only
 measures, copies and applies keyframes.
 
 The sheet's open/close is the same with both states always in the DOM: the
-"before" snapshot is the player bar, the "after" is the sheet.
+"before" snapshot is the player bar (`from`), the "after" is the sheet.
+State that changes outside a callback (the queue, from the engine) uses the
+two halves: `measure(root)` before, and the function it returns once the
+DOM has changed.
 
 ## Declaring it
 
@@ -305,9 +313,14 @@ letting go releases it (flick by velocity, otherwise by distance); tapping
 the bar plays it. A drag that catches a closing sheet continues from where it
 is drawn. The step changes (now playing, half and full queue, lyrics) are
 `change()` on the sheet with the step as the state; the handles drive them.
-The bar's elements carry the same `data-move` names as the sheet's, so the
-morph and the steps share the mover; the `MORPH`, `ROLES`, `STEPPED`,
-`FADING` tables become attributes and a span table.
+The bar's elements carry the same `data-move` names as the sheet's
+(`cover:now`, `title:now`, `artist:now`, `album:now`, `play:now`,
+`seek:now`), so the open/close and the steps share the mover; everything
+else declares how it comes and goes (`data-enter`), and the choreography
+is the sheet's span table (`ExpandedPlayer.svelte`). Parts that a change
+takes away leave as copies in the sheet's `.leaving` layer, behind the
+rest. The carousel keeps its size while hidden (half queue, lyrics), so the
+cover lands on it the moment it shows again.
 
 **Menus, dialogs, the selection bar.** `transition:surface`. The scrim dims.
 
@@ -353,19 +366,19 @@ it replaces.
    `shared`, `flight`, `fly`, `handOver`, `backScrub`, `quietly`, `peek`
    and `backSettling`.
 4. **Content swaps** ✓ (`swap.ts`): `use:swap` in Search and the recents
-   switch. The bar's song change keeps `refresh` until step 7, as it is tied
-   to the bar's swipe.
-5. **Sheet steps**: the pure planner (pairing, enter and leave, nested lift;
+   switch.
+5. **Sheet steps** ✓: the pure planner (pairing, enter and leave, nested lift;
    test-first) and `change()`, its first user; attributes on the sheet,
    `change()` per step, handles as drives. Deletes `ROLES`, `STEPPED`, `FADING`, `seen`, `stepChange`,
    `stepDrag`, `busy`, `scrubbing`.
-6. **Sheet open/close**: bar and sheet snapshots, the sheet's spans, drags
+6. **Sheet open/close** ✓: bar and sheet snapshots, the sheet's spans, drags
    as drives. Deletes `MORPH`, `FADE`, `LEAVE`, `pair`, `copy`, `tinted`,
    `measure`, `apply`, `timing` and the CSS-transition path, and
-   `PlayerSheet.shown`/`settling`.
-7. **Rows and slides**: `swipeRow` and `slide` as transitions; `flip` for
-   the queue. Deletes `slideRows` and `Slide`.
-8. **Surfaces**: `transition:surface` for menus, dialogs, scrims and the
+   `PlayerSheet.shown`/`settling` (the sheet's state is `open` and `moving`).
+7. **Rows and slides** ✓: `swipeRow` and `slide` as transitions; `flip` for
+   the queue (`measure`). Deleted `slideRows`, `Slide`, `Scrub` and
+   `refresh` (the bar's song change uses `swap.ts`'s `risen`).
+8. **Surfaces** ✓: `transition:surface` for menus, dialogs, scrims and the
    selection bar. Deletes `rise`, `pop`, `dim`; `screens.ts` is gone.
 
 Steps 1–3 come first because they fix the most of the issues below; 5 and 6
@@ -387,7 +400,12 @@ before the rest (Checking).
   second screen, copies or hidden elements behind. Dev builds record each
   landing in `window.motifLandings` for it. Run it against a muted test
   engine with a library (CLAUDE.md). `STEPS=file.mjs` runs your own steps
-  with its helpers, for debugging. The sheet joins it with steps 5–6.
+  with its helpers, for debugging. The now-playing sheet is in it too: open
+  and close by tap and by real drags (and closing from the full queue),
+  every step change by its handle's tap and by dragging it; each shared
+  part must land on its real element, and closing must put each back on
+  the bar's (recorded as `name (back)`, as is a swipe that springs back).
+  It needs a track loaded on the engine, paused.
 - **At another zoom and font:** the phone scenarios run again at Scale
   125% (`?dev-scale=125`), which caught boxes measured on screen but placed
   in CSS pixels, and in DejaVu Sans (`?dev-font=`), whose glyphs, like
@@ -422,6 +440,6 @@ before the rest (Checking).
 | 4 | Recently Added forgets it was showing Albums | ✓ **Own fix**: `show` is local state in `ViewScreen.svelte`, lost when the screen unmounts; it belongs in the view's saved state. |
 | 5 | An old bar at the top of the phone screen | ✓ **Own fix**: the view's `header.toolbar`, gone on phones; the back button sits above a category's title, the home has a title with its ⋮, Playlists' + sits by its title (a playlist being edited keeps the bar for Done). |
 | 6 | Settings sections flash the player bar; the move plays only after the gesture | ✓ **Foundation**: Settings screens move on the screen stage, driven by the finger like any back; an across change keeps the old screen opaque beneath, so the bar can't show through (both screens currently fade at once over it). |
-| 7 | Long titles clip on the now-playing screen; colour and weight change abruptly | **Foundation**: the mover's clip box and look crossfade. |
-| 8 | The seek bar doesn't animate to the right place | **Foundation, plus a check**: the bar's strip and the sheet's seek bar become one `data-move` pair with `line` fit. Also to check: the sheet's slider may show a stale position when it opens (bars update on a timer while shown), which would be its own small fix. |
+| 7 | Long titles clip on the now-playing screen; colour and weight change abruptly | ✓ **Foundation**: the mover's clip box and look crossfade. A title wrapped over two lines (desktop) is an inline-block, so its copy wraps the same. |
+| 8 | The seek bar doesn't animate to the right place | ✓ **Foundation**: the bar's strip and the sheet's seek bar are one `data-move` pair (`seek:now`), travelling as a box (with `line` fit, the sheet's taller waveform jumped to its full height at the start). The sheet's slider was not stale on opening: both get the same position and the same timer. |
 | — | Song lists don't remember their scroll | ✓ **Own fix** (needed by the foundation's back to a row's cover): `SongList` gets `scrollMemory` like the albums grid and `TrackList`. |

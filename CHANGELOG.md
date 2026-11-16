@@ -35,7 +35,13 @@ grouped by phase of the plan.
   covers no longer blink empty when you change pages. A swipe back starts
   exactly under your finger and you can tap again as soon as it lands; on
   Android, the system font size now scales the whole app evenly, so titles
-  and their icons land in place, without a last hop.
+  and their icons land in place, without a last hop. Now playing opens and
+  closes as one move that follows your finger and can be caught halfway;
+  its cover, title, artist, album, play button and seek bar each travel in
+  one piece to their place, long titles no longer clip or change colour or
+  weight at once, and the seek bar lands where it belongs. Moving between
+  now playing, the queue and lyrics moves every part between them, with
+  nothing popping in or out.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.
