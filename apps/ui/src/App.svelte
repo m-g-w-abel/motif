@@ -7,6 +7,7 @@
   import { EngineClient, engines, PlaybackPosition } from './lib/engine.svelte';
   import { addEngine, LOCAL_ID, switchTo } from './lib/engines';
   import { accentFromPixels, artPalette } from './lib/artAccent';
+  import { lastArtPixels, rememberArtPixels } from './lib/artMemory';
   import { setBarIconsDark } from './lib/folders';
   import { LibraryClient } from './lib/library.svelte';
   import { installLayoutFiles } from './lib/layout/install';
@@ -115,11 +116,15 @@
   // The playing track's art: 16px of pixels sampled from the art once
   // per track (and cached per art id), never while idle. It asks for the
   // 256px size the album grid already loaded, so it is usually a cache hit.
-  let artPixels = $state<Uint8ClampedArray | null>(null);
+  // Starts in the last cover's colours, so a restart doesn't flash the theme's.
+  let artPixels = $state<Uint8ClampedArray | null>(lastArtPixels());
+  $effect(() => rememberArtPixels(artPixels));
   const pixelCache = new Map<string, Uint8ClampedArray | null>();
-  // `undefined` while the track's details are looked up: keep the last colours rather than flashing the theme's.
+  // `undefined` until the engine says what plays and while the track's details are looked up: keep the last colours rather than flashing the theme's.
   const artId = $derived.by(() => {
-    if (settings.current.artColours === 'off' || !engine.current) return null;
+    if (settings.current.artColours === 'off') return null;
+    if (!engine.player) return undefined;
+    if (!engine.current) return null;
     const details = library.details(engine.current.track);
     return details === undefined ? undefined : (details?.art ?? null);
   });

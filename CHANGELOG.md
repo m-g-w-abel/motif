@@ -5,6 +5,8 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Album colours at start-up**: with art colours on, Motif now opens in the
+  last album's colours instead of showing the plain theme until the music loads.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.
