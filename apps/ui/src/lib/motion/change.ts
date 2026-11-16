@@ -19,6 +19,8 @@ export interface Options {
   under?: HTMLElement;
   /** The transition ended, at the new state (`landed`) or back at the old, after cleaning up. */
   ended?: (landed: boolean) => void;
+  /** Whether parts that went play their way out; without, they are gone at once (a row swiped out already). */
+  leaves?: boolean;
 }
 
 export type Change = Transition & { distance: number };
@@ -51,9 +53,23 @@ function snapshot(root: HTMLElement, copies: boolean): Snapshot {
 
 const frame = ({ map, opacity }: Frame): Keyframe => ({ transform: css(map), ...(opacity !== undefined && { opacity }) });
 
-export function change(root: HTMLElement, apply: () => void, { from = root, spans, under, ended }: Options = {}): Change {
-  const before = snapshot(from, true);
+export function change(root: HTMLElement, apply: () => void, options: Options = {}): Change {
+  const then = measure(root, options);
   apply();
+  return then();
+}
+
+/**
+ * `change` in two halves, for a state that changes outside a callback (an
+ * engine's update): measures now, and returns what draws the transition
+ * once the DOM has changed.
+ */
+export function measure(root: HTMLElement, options: Options = {}): () => Change {
+  const before = snapshot(options.from ?? root, options.leaves !== false);
+  return () => draw(root, before, options);
+}
+
+function draw(root: HTMLElement, before: Snapshot, { spans, under, ended, leaves = true }: Options): Change {
   const after = snapshot(root, false);
   const z = rootZoom();
   const r = root.getBoundingClientRect();
@@ -83,7 +99,7 @@ export function change(root: HTMLElement, apply: () => void, { from = root, span
   // Copies of what went, standing where it was; what flies out of them is left out (its copy travels).
   const copies: HTMLElement[] = [];
   const at = under?.getBoundingClientRect();
-  for (const m of p.leave) {
+  for (const m of leaves ? p.leave : []) {
     const s = before.seen[m.before];
     const clone = before.clones[m.before];
     for (const n of clone.querySelectorAll<HTMLElement>('[data-move]')) if (flown.has(n.dataset.move!)) n.style.visibility = 'hidden';

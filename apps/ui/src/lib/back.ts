@@ -1,12 +1,12 @@
 import { onBackButtonPress } from '@tauri-apps/api/app';
-import type { Slide } from './gestures';
+import type { Drive } from './motion/transition';
 
 /** Something system back closes; listed topmost first. */
 export interface Layer {
   open: boolean;
   close(): void;
-  /** Shows a system back swipe under way (predictive back): what moves with it, if anything. */
-  follow?: () => Slide | undefined;
+  /** Shows a system back swipe under way (predictive back): what it drives, if anything. */
+  follow?: () => Drive | undefined;
 }
 
 /** Closes the first open layer. False when none is open. */
@@ -18,21 +18,21 @@ export function closeTop(layers: Layer[]): boolean {
 
 /**
  * Android's predictive back swipe as it goes (`MainActivity.kt` reports its
- * progress, 0 to 1): the top open layer follows it across `width()`, and
- * springs back if the swipe is cancelled. Letting go is an ordinary back
- * (`routeBack`), which finishes the move from there (`screens.ts` `leave`).
+ * progress, 0 to 1) drives the top open layer's change, which springs back
+ * if the swipe is cancelled. Letting go is an ordinary back (`routeBack`),
+ * which finishes the change from there.
  */
-export function backSwipe(layers: () => Layer[], width: () => number) {
-  let shown: Slide | undefined;
+export function backSwipe(layers: () => Layer[]) {
+  let shown: Drive | undefined;
   return {
     start() {
       shown = layers().find((layer) => layer.open)?.follow?.();
     },
     progress(p: number) {
-      shown?.move(p * width());
+      shown?.seek(p);
     },
     cancel() {
-      shown?.end(null);
+      shown?.release(false);
       shown = undefined;
     },
   };
@@ -49,7 +49,7 @@ export function routeBack(layers: () => Layer[]): () => void {
   if (!android) return () => {};
   const listener = onBackButtonPress(() => closeTop(layers()) || android.moveToBack());
   const own = globalThis as { motifBack?: ReturnType<typeof backSwipe> };
-  own.motifBack = backSwipe(layers, () => innerWidth);
+  own.motifBack = backSwipe(layers);
   android.followBack?.();
   return () => {
     delete own.motifBack;

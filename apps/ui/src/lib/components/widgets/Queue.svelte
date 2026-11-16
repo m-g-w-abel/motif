@@ -3,14 +3,15 @@
   import { getApp } from '../../context';
   import { menu } from '../../contextMenu.svelte';
   import { formatTime, trackTitle } from '../../format';
-  import { gesture, mapped, OUT, swipeRow } from '../../gestures';
+  import { gesture, mapped, swipeRow } from '../../gestures';
   import { queueMenu } from '../../menus';
   import type { QueueItem } from '../../protocol/QueueItem';
   import { moveItem } from '../../reorder';
   import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
   import ReorderList from '../ReorderList.svelte';
-  import { slideRows } from '../../screens';
+  import { measure } from '../../motion/change';
+  import { DURATION } from '../../motion/transition';
   import Scrollbar from '../Scrollbar.svelte';
 
   /**
@@ -63,14 +64,14 @@
     }
   }
 
-  // Rows that move when another comes or goes (removed, played, dropped elsewhere) slide into place.
+  // Rows that move when another comes or goes (removed, played, dropped elsewhere) slide into place, new ones fade in (`flip`).
   let root = $state<HTMLElement>();
   $effect.pre(() => {
     void queue;
     void fromContext;
     if (!root) return;
-    const rows = root;
-    tick().then(slideRows(() => rows.querySelectorAll<HTMLElement>('.entry[data-key]')));
+    const then = measure(root, { leaves: false });
+    void tick().then(() => then().play(1));
   });
 
   function move(from: number, to: number) {
@@ -96,14 +97,14 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="entry"
-    data-key={item.id}
+    data-move="row:{item.id}"
     onpointerdown={queued && engine.can('queue')
       ? (e) =>
           gesture(
             e,
             mapped(settings.current.gestures, 'queued'),
             // Once the row has slid out: removing it sooner drops it mid-slide.
-            { remove: () => setTimeout(() => engine.run({ type: 'remove_item', item_id: item.id }), OUT) },
+            { remove: () => setTimeout(() => engine.run({ type: 'remove_item', item_id: item.id }), DURATION) },
             // The whole row goes, its drag handle too.
             swipeRow((e.currentTarget as HTMLElement).closest('li') ?? (e.currentTarget as HTMLElement), 'remove'),
           )

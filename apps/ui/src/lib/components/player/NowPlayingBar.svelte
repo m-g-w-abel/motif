@@ -13,7 +13,8 @@
   import Transport from './Transport.svelte';
   import Volume from './Volume.svelte';
   import { untrack } from 'svelte';
-  import { dim, refresh, rise } from '../../screens';
+  import { dim, rise } from '../../screens';
+  import { risen } from '../../motion/swap';
 
   const { engine, position, sheet, settings, settingsView, views } = getApp();
   let sliding = $state<HTMLElement>();
@@ -49,7 +50,7 @@
     const id = engine.current?.id;
     if (id === shownId) return;
     shownId = id;
-    if (sliding && performance.now() - swiped > 1000) refresh(sliding);
+    if (sliding && performance.now() - swiped > 1000) void risen(sliding).play(1);
   });
 
   /** The phone's Library and Search buttons: back to that root view, out of Settings. */

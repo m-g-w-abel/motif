@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { backSwipe, closeTop } from './back';
-import type { Gesture } from './gestures';
 
 describe('closeTop', () => {
   it('closes only the first open layer', () => {
@@ -18,15 +17,15 @@ describe('closeTop', () => {
 });
 
 describe('backSwipe', () => {
-  it("moves the top open layer with the system back swipe, across the screen's width, and springs it back when cancelled", () => {
-    const shown: (number | Gesture | null)[] = [];
-    const slide = { move: (dx: number) => shown.push(dx), end: (swipe: Gesture | null) => shown.push(swipe) };
-    const below = { open: true, close() {}, follow: () => ({ move: () => shown.push(-1), end() {} }) };
-    const swipe = backSwipe(() => [{ open: false, close() {} }, { open: true, close() {}, follow: () => slide }, below], () => 400);
+  it('drives the top open layer by the system back swipe, and springs it back when cancelled', () => {
+    const shown: (number | string)[] = [];
+    const drive = { seek: (p: number) => shown.push(p), release: (commit: boolean) => shown.push(`release ${commit}`) };
+    const below = { open: true, close() {}, follow: () => ({ seek: () => shown.push(-1), release() {} }) };
+    const swipe = backSwipe(() => [{ open: false, close() {} }, { open: true, close() {}, follow: () => drive }, below]);
     swipe.start();
     swipe.progress(0.25);
     swipe.progress(0.5);
     swipe.cancel();
-    expect(shown).toEqual([100, 200, null]);
+    expect(shown).toEqual([0.25, 0.5, 'release false']);
   });
 });

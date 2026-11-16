@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { CHOICES, GESTURES, HOLD, Press, SLOP, SWIPE, dragValue, mapped } from './gestures';
+import { afterEach, describe, expect, it } from 'vitest';
+import { CHOICES, GESTURES, HOLD, Press, SLOP, SWIPE, dragValue, gesture, mapped, type Swipe } from './gestures';
 
 describe('Press', () => {
   it('picks no axis for small movements', () => {
@@ -127,5 +127,46 @@ describe('mapped', () => {
     expect(mapped(bad, 'view')).toEqual(GESTURES.view);
     expect(mapped(null, 'bar')).toEqual(GESTURES.bar);
     expect(mapped('x', 'bar')).toEqual(GESTURES.bar);
+  });
+});
+
+describe('gesture swipes', () => {
+  /** A window with just listeners, to send a finger's moves through. */
+  const listeners = new Map<string, Set<(e: unknown) => void>>();
+  (globalThis as { window?: unknown }).window = {
+    addEventListener: (type: string, f: (e: unknown) => void) => listeners.set(type, (listeners.get(type) ?? new Set()).add(f)),
+    removeEventListener: (type: string, f: (e: unknown) => void) => listeners.get(type)?.delete(f),
+  };
+  const send = (type: string, clientX: number) => {
+    for (const f of [...(listeners.get(type) ?? [])]) f({ type, pointerId: 1, clientX, clientY: 0, cancelable: false, preventDefault() {} });
+  };
+  afterEach(() => listeners.clear());
+  const press = { pointerType: 'touch', isPrimary: true, pointerId: 1, clientX: 0, clientY: 0 } as PointerEvent;
+
+  /** Swipes from 0 through `xs`, letting go at the last; what the drawn swipe was asked. */
+  function swipe(map: Parameters<typeof gesture>[1], xs: number[], end = 'pointerup') {
+    const log: string[] = [];
+    const shown: Swipe = (way) => (log.push(`build ${way}`), { distance: 100, drive: { seek: (p) => log.push(`seek ${p}`), release: (c) => log.push(`release ${c}`) } });
+    const ran: string[] = [];
+    gesture(press, map, { next: () => ran.push('next'), queue: () => ran.push('queue') }, shown);
+    for (const x of xs) send('pointermove', x);
+    send(end, xs.at(-1)!);
+    return { log, ran };
+  }
+
+  it('drives the way that does something with the finger, from where it became a swipe, and completes it when the swipe does', () => {
+    const { log, ran } = swipe({ 'swipe-left': 'next' }, [-SLOP, -30, -80]);
+    expect(log).toEqual(['build -1', 'seek 0.2', 'seek 0.7', 'release true']);
+    expect(ran).toEqual(['next']);
+  });
+
+  it("springs back when the swipe doesn't get far enough, goes back past its start, or is cancelled", () => {
+    expect(swipe({ 'swipe-left': 'next' }, [-SLOP, -30]).log.at(-1)).toBe('release false');
+    expect(swipe({ 'swipe-left': 'next' }, [-SLOP, -40, 20, 90]).log.slice(-2)).toEqual(['seek 0', 'release false']);
+    expect(swipe({ 'swipe-left': 'next' }, [-SLOP, -80], 'pointercancel').log.at(-1)).toBe('release false');
+  });
+
+  it('draws nothing the way that does nothing (a row swiped right)', () => {
+    expect(swipe({ 'swipe-left': 'queue' }, [SLOP, 80]).log).toEqual([]);
   });
 });

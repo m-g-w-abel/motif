@@ -38,7 +38,7 @@
   import { Stage } from './lib/motion/stage.svelte';
   import { Transition, type Drive } from './lib/motion/transition';
   import { landings } from './lib/motion/mover';
-  import type { Slide } from './lib/gestures';
+  import type { Swipe } from './lib/gestures';
   import PlaylistPrompt from './lib/components/playlists/PlaylistPrompt.svelte';
   import { Playlists } from './lib/playlists.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
@@ -366,23 +366,23 @@
    * finger moves, the screen it goes back to is mounted beneath and the
    * change follows the finger, then finishes or springs back.
    */
-  function backDrag(): Slide | undefined {
+  function backDrag(): Drive | undefined {
     const to = under;
     if (!to) return undefined;
-    let drive: Drive | undefined;
-    const width = () => stageEl?.offsetWidth || innerWidth;
+    const drive = (backing = stage.drag(to, goBack));
     return {
-      move(dx) {
-        if (!drive && dx <= 0) return;
-        drive ??= backing = stage.drag(to, goBack);
-        drive.seek(Math.max(0, dx) / width());
-      },
-      end(swipe) {
+      seek: (p) => drive.seek(p),
+      release(commit) {
         if (backing === drive) backing = null;
-        drive?.release(!!swipe);
+        drive.release(commit);
       },
     };
   }
+  /** The same, for a touch swipe right. */
+  const swipeBackDrag: Swipe = (way) => {
+    const drive = way > 0 ? backDrag() : undefined;
+    return drive ? { drive, distance: stageEl?.offsetWidth || innerWidth } : null;
+  };
   /** Back by a swipe that is driving the change (it lets go), or at once. */
   const back = () => {
     const b = backing;
@@ -416,7 +416,7 @@
       e,
       mapped(settings.current.gestures, 'view'),
       { back },
-      backDrag(),
+      swipeBackDrag,
     );
   }
 </script>

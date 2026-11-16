@@ -220,7 +220,7 @@ const tap = (selector) => () => run(`${selector}.click()`);
 
 try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
-  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, sleep, settled, card });
+  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card });
   else {
     // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size),
     // and in a font whose glyphs sit differently in their line than the default's (Roboto's on phones do).
