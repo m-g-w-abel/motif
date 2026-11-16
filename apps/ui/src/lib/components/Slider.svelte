@@ -34,7 +34,7 @@
     preview?: boolean;
     oninput?: (value: number) => void;
     onchange?: (value: number) => void;
-    /** A shared element's name (`data-move`, docs/ANIMATION.md): it travels as a line, stretched across only. */
+    /** A shared element's name (`data-move`, docs/ANIMATION.md). */
     move?: string;
   } = $props();
 
@@ -130,7 +130,6 @@
 <div
   bind:this={track}
   data-move={move}
-  data-fit={move && 'line'}
   class="slider {variant}"
   class:disabled
   class:waveform={!!wave}

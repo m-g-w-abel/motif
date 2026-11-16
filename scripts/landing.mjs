@@ -7,8 +7,9 @@
 //   node scripts/landing.mjs [base-url]
 //
 // base-url is a dev server (`npm run dev`; default http://localhost:5173)
-// whose engine has a library with albums. Use a muted test engine of your
-// own (CLAUDE.md), not one playing. Needs Chromium (CHROME overrides it).
+// whose engine has a library with albums and a track loaded, paused (the
+// now-playing sheet's checks need one). Use a muted test engine of your own
+// (CLAUDE.md), not one playing. Needs Chromium (CHROME overrides it).
 //
 // On the phone: CDP=http://127.0.0.1:9333 drives the app's own WebView (a
 // debug build, its DevTools forwarded as in CLAUDE.md, the app in front)
@@ -114,28 +115,41 @@ async function open(query, width, height) {
  */
 async function swipe(dx0, dx1, y) {
   const left = await run("document.querySelector('main').getBoundingClientRect().left");
-  const [x0, x1] = [left + dx0, left + dx1];
+  return drag(left + dx0, y, left + dx1, y);
+}
+
+/** A real finger from (x0, y0) to (x1, y1), in the page's pixels (`swipe`). */
+async function drag(x0, y0, x1, y1) {
   if (phone) {
-    // Screen pixels; the WebView sits under the status bar, which a sideways swipe can ignore.
+    // Screen pixels, below the status bar the WebView sits under.
+    // Screen pixels; the app draws edge to edge, so the page starts at the screen's top.
     const k = await run("devicePixelRatio");
-    execFileSync("adb", ["shell", "input", "swipe", ...[x0, y, x1, y].map((v) => String(Math.round(v * k))), "300"]);
+    execFileSync("adb", ["shell", "input", "swipe", ...[x0, y0, x1, y1].map((v) => String(Math.round(v * k))), "300"]);
     return sleep(100);
   }
-  const at = (x) => [{ x, y, id: 1 }];
-  await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(x0) });
+  const at = (i) => [{ x: x0 + ((x1 - x0) * i) / 12, y: y0 + ((y1 - y0) * i) / 12, id: 1 }];
+  await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(0) });
   for (let i = 1; i <= 12; i++) {
     await sleep(16);
-    await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(x0 + ((x1 - x0) * i) / 12) });
+    await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(i) });
   }
   await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 }
 
-/** One screen showing (another may be kept hidden beneath), none about to show or moving, no copies left. */
+/** A finger dragging the middle of `selector` by `dy`. */
+async function dragBy(selector, dy) {
+  const [x, y] = await run(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+  return drag(x, y, x, y + dy);
+}
+
+/** One screen showing (another may be kept hidden beneath), none about to show or moving, no copies left, nothing moving in the sheet or the bar. */
 const settled = `(() => {
   const screens = [...document.querySelectorAll('main > .screen')];
   return screens.filter((s) => getComputedStyle(s).visibility !== 'hidden').length === 1
     && !screens.some((s) => (!s.inert && getComputedStyle(s).visibility === 'hidden') || s.getAnimations().length)
-    && !document.querySelector('.motion-layer')?.children.length;
+    && !document.querySelector('.motion-layer')?.children.length
+    && !document.querySelector('.sheet .leaving')?.children.length
+    && ![...document.querySelectorAll('.sheet, .bar')].some((e) => e.getAnimations({ subtree: true }).some((a) => a.effect?.getTiming().fill === 'both'));
 })()`;
 const failures = [];
 
@@ -152,7 +166,7 @@ async function check(name, act, least = 1) {
     return;
   }
   const landings = await run("JSON.stringify(window.motifLandings)").then(JSON.parse);
-  const hidden = await run("[...document.querySelectorAll('main > .screen:not([inert]) [style*=\"visibility: hidden\"]')].map((e) => e.dataset.move ?? e.className)");
+  const hidden = await run("[...document.querySelectorAll('main > .screen:not([inert]) [style*=\"visibility: hidden\"], .sheet [style*=\"visibility: hidden\"], .bar [style*=\"visibility: hidden\"]')].map((e) => e.dataset.move ?? e.className)");
   // A quarter pixel: words a fraction of a pixel off still hop visibly at the hand-over.
   const bad = landings.filter((l) => l.box > 0.25 || l.look.length);
   for (const l of bad) failures.push(`${name}: ${l.name} landed ${l.box.toFixed(1)}px off${l.look.length ? `, ${l.look.join(", ")} differ` : ""}`);
@@ -163,6 +177,45 @@ async function check(name, act, least = 1) {
 }
 
 const card = "document.querySelector('main > .screen:not([inert]) .card:not(.loading)')";
+/** A tap on the bar's track, which opens the sheet (pointer events, as the bar's own drag reads them). */
+const tapBar = `(() => { const el = document.querySelector('.bar .identity'); const r = el.getBoundingClientRect(); const o = { bubbles: true, button: 0, clientX: r.x + 20, clientY: r.y + 10, pointerType: 'touch', isPrimary: true, pointerId: 7 }; el.dispatchEvent(new PointerEvent('pointerdown', o)); window.dispatchEvent(new PointerEvent('pointerup', o)); })()`;
+const step = (name) => `document.querySelector('.sheet').dataset.step === '${name}'`;
+
+/**
+ * The now-playing sheet (phones): open and close, by taps and by real
+ * drags, and every step change, by its handle's tap and by dragging it.
+ * Each shared part (cover, title, artist, album, play, seek bar) must land
+ * on its real element, and closing must put each back on the bar's.
+ */
+async function sheet(label) {
+  await open("dev-view=albums", 384, 820);
+  await until("!!document.querySelector('.bar .identity img')?.complete");
+  const shared = 6;
+  await check(`${label}: open the sheet`, () => run(tapBar), shared);
+  await check(`${label}: now playing to the half queue`, tap("document.querySelector('.more .step')"), 1);
+  await check(`${label}: half to the full queue`, tap("document.querySelector('.queue-slot > .step')"), 4);
+  await check(`${label}: full back to half`, tap("document.querySelector('.mini .step')"), 4);
+  await check(`${label}: half back to now playing`, () => dragBy(".queue-slot > .step", 200), 1);
+  if (!(await run(step("now")))) failures.push(`${label}: dragging the half queue's handle down didn't go back to now playing`);
+  await check(`${label}: drag up to the half queue`, () => dragBy(".more .step", -200), 1);
+  if (!(await run(step("half")))) failures.push(`${label}: dragging the handle up didn't show the half queue`);
+  await check(`${label}: half back to now playing (again)`, () => dragBy(".queue-slot > .step", 200), 1);
+  await check(`${label}: lyrics`, tap("document.querySelector('.lyrics-button')"), 4);
+  await check(`${label}: lyrics back to now playing`, tap("document.querySelector('.mini .step')"), 4);
+  await check(`${label}: close by dragging down`, () => dragBy(".details .hero-title", 400), shared);
+  if (await run("document.querySelector('.sheet').classList.contains('open')")) failures.push(`${label}: dragging now playing down didn't close it`);
+  await check(`${label}: open by dragging the bar up`, () => dragBy(".bar .identity", -500), shared);
+  if (!(await run("document.querySelector('.sheet').classList.contains('open')"))) failures.push(`${label}: dragging the bar up didn't open the sheet`);
+  await check(`${label}: close from the full queue`, async () => {
+    await run("document.querySelector('.more .step').click()");
+    await until(settled);
+    await run("document.querySelector('.queue-slot > .step').click()");
+    await until(settled);
+    await run("window.motifLandings.length = 0");
+    // Escape closes it from any step.
+    await run("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+  }, 4);
+}
 const tap = (selector) => () => run(`${selector}.click()`);
 
 try {
@@ -207,6 +260,14 @@ try {
           await swipe(20, 40, h / 2);
         }, 0);
       }
+      await sheet(phone_);
+    }
+    if (!phone) {
+      [scale, font] = [100, ""];
+      await open("dev-view=albums", 1200, 800);
+      await until("!!document.querySelector('.bar .identity img')?.complete");
+      await check("desktop: open the sheet", tap("document.querySelector('.bar [aria-label=\"Expand player\"]')"), 6);
+      await check("desktop: close the sheet", tap("document.querySelector('.sheet [aria-label=Collapse]')"), 6);
     }
   }
   if (!process.env.STEPS) {

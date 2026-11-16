@@ -135,6 +135,11 @@
     display: none;
   }
 
+  /* One box, wrapped across the names' width: an inline one spans only its longest line, and the sheet's moving copy (a box that size) would wrap differently. */
+  .names .marquee {
+    display: inline-block;
+  }
+
   h1 {
     margin: 0;
     font-size: 1.8em;

@@ -208,9 +208,10 @@ export class Stage<S extends Screen> {
     t = new Transition(tracks, () => {
       over = true;
       const landed = t!.heading === 1;
-      for (const f of flights) f.done(landed);
+      // The screens at rest first, so the flights hand over to where their elements now are.
       fromEl.style.cssText = kept[0];
       toEl.style.cssText = kept[1];
+      for (const f of flights) f.done(landed);
       ended(landed);
     });
     return t;
