@@ -220,7 +220,9 @@ export class EngineClient {
     // Stays `closed` while reconnecting, so a lost engine reads as lost.
     let socket: WebSocket;
     try {
-      const url = socketUrl(engines.current, this.#attempts++, await ownEngineUrl());
+      const engine = engines.current;
+      // Another device's engine needs no lookup of this one's (which a page not the app's own can't do).
+      const url = socketUrl(engine, this.#attempts++, engine.addresses.length ? '' : await ownEngineUrl());
       this.httpBase = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
       socket = new WebSocket(withToken(url));
     } catch (e) {

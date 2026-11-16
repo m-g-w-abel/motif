@@ -23,7 +23,16 @@
   import Coverflow, { type Card } from '../player/Coverflow.svelte';
 
   /** In the main window a click expands the player; inside it, it doesn't. `playing` shows the playing track, not the selected one. */
-  let { expands = true, playing = false }: { expands?: boolean; playing?: boolean } = $props();
+  let {
+    expands = true,
+    playing = false,
+    hidden = false,
+  }: {
+    expands?: boolean;
+    playing?: boolean;
+    /** Laid out elsewhere, unseen (the sheet's queue and lyrics steps): it takes its size again the moment it shows. */
+    hidden?: boolean;
+  } = $props();
 
   const { engine, sheet, library, settings, position } = getApp();
   const view = getViewState();
@@ -103,17 +112,8 @@
       index = i;
     }
   });
-  // Side cards and controls wait until the cover has arrived (the sheet's morph takes 260ms), also
-  // when the list comes in during the morph; while dragging, the morph fades them itself.
-  let settled = $state(false);
-  $effect(() => {
-    if (sheet.dragging) settled = true;
-    else if (sheet.progress < 1) settled = false;
-    else {
-      const timer = setTimeout(() => (settled = true), 260);
-      return () => clearTimeout(timer);
-    }
-  });
+  // Side cards and controls show once the sheet is open and still: they fade in by class after it arrives.
+  const settled = $derived(sheet.rest);
   // Until the list holds this track's cover (another album still loading), the track's own cover
   // alone, keyed by its art so it stays the same card (and the sheet's morph target) when the rest
   // arrive.
@@ -127,6 +127,13 @@
   let height = $state(0);
   const PADDING = 12;
   const side = $derived(Math.max(0, Math.min(width, height) - 2 * PADDING));
+  let box = $state<HTMLElement>();
+  // Its size is otherwise observed a frame after a change; shown again, it must be that size at once, where the sheet's cover lands.
+  $effect(() => {
+    if (hidden || !box) return;
+    width = box.clientWidth;
+    height = box.clientHeight;
+  });
 
   // In the sheet, touch gestures: swipe to skip, drag up or down for the volume (or seek), shown while it changes.
   let level = $state<{ value: number; text: string; icon: 'volume' | 'play' } | null>(null);
@@ -172,6 +179,7 @@
 <!-- Touch gestures only; keys and the mouse have the player's controls. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <section
+  bind:this={box}
   class="artwork"
   bind:clientWidth={width}
   bind:clientHeight={height}

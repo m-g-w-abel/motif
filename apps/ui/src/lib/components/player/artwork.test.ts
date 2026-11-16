@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TrackRef } from '../../protocol/TrackRef';
-import { albumOf, keptArt } from './artwork';
+import { albumOf, DecodedArt, keptArt } from './artwork';
 
 const track = (artist: string | null, album: string | null) => ({ artist, album }) as TrackRef;
 const shown = { id: 'a1', album: albumOf(track('Machine Girl', 'Gemini'))! };
@@ -27,5 +27,17 @@ describe('keptArt', () => {
   it('shows its own image without a track or album', () => {
     expect(keptArt(shown, undefined, 'a1')).toBe('a1');
     expect(keptArt({ id: 'x', album: '' }, track('A', null), 'x')).toBe('x');
+  });
+});
+
+describe('DecodedArt', () => {
+  it('knows the sharpest drawing of each cover decoded so far, to draw it at once on the next screen', () => {
+    const art = new DecodedArt();
+    expect(art.get('a')).toBeUndefined();
+    art.add('a', '/art/a?s=128', 128);
+    art.add('a', '/art/a?s=512', 512);
+    art.add('a', '/art/a?s=256', 256);
+    expect(art.get('a')).toEqual({ url: '/art/a?s=512', px: 512 });
+    expect(art.get('b')).toBeUndefined();
   });
 });

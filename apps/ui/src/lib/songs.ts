@@ -19,9 +19,7 @@ export function matches(track: TrackRef, query: string): boolean {
   return [track.title, track.artist, track.album].some((field) => field?.toLowerCase().includes(q)) || !q;
 }
 
-/** An album page's line under the title: "album artist · year". */
-export function albumLine(track: TrackRef, details: LibraryTrack | undefined): string {
-  const artist = details?.album_artist ?? track.artist ?? 'Unknown artist';
-  const year = details?.original_year ?? details?.year;
-  return year ? `${artist} · ${year}` : artist;
+/** An album page's line under the title, "album artist · year": its two parts (the artist is a shared element). */
+export function albumLine(track: TrackRef, details: LibraryTrack | undefined): { artist: string; year?: number } {
+  return { artist: details?.album_artist ?? track.artist ?? 'Unknown artist', year: details?.original_year ?? details?.year ?? undefined };
 }

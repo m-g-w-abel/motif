@@ -1,6 +1,13 @@
 <script lang="ts">
+  import { flushSync } from 'svelte';
+  import { SLOP } from '../../gestures';
+  import { released, stepTo } from '../../sheet.svelte';
   import { getApp, setViewState } from '../../context';
   import { mapped } from '../../gestures';
+  import { change, type Change } from '../../motion/change';
+  import { css, onto } from '../../motion/fit';
+  import { rootZoom } from '../../motion/mover';
+  import { still, Transition, type Span } from '../../motion/transition';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
   import Transport from './Transport.svelte';
@@ -18,262 +25,157 @@
   let section = $state<HTMLElement>();
   let backdrop = $state<HTMLElement>();
   let tint = $state<HTMLElement>();
+  let leaving = $state<HTMLElement>();
   setViewState({ source: 'library', layoutId: 'now-playing', browse: layout.browseState('now-playing') });
 
   /**
-   * The morph runs in stages so no two moving things cross: the bar's own
-   * controls fade out where they are (OUT), the artwork, title and artist
-   * travel together (MOVE), then the sheet's controls fade in where they
-   * belong (IN). Bar element → its counterpart here, the box to match (`box`
-   * stretches, `even` scales evenly, `text` matches the first letter), and
-   * what it does:
-   * - `move`: the sheet's own element travels; nothing to hand over.
-   * - `cross`: a copy of the bar's (a ghost) travels with the sheet's and they
-   *   crossfade once both have arrived, drawn at the same place and size.
-   * - `handover`: like `cross`, but the contents differ (the bar's line has
-   *   the album too), so the ghost is gone before the sheet's appears.
-   * - `stage`: the bar's fades out in OUT, the sheet's fades in in IN.
-   * - `edge`: the bar's strip rides the top edge of the growing background
-   *   and fades; the sheet's seek bar fades in in IN.
+   * The open/close transition's stretches (docs/ANIMATION.md): the bar's
+   * own parts go first (`leave`) and the shared ones travel (`move`); on
+   * phones the names under the artwork wait for it to rise past them
+   * (`under`), and the album's line, which starts under the title in the
+   * bar and ends above it, sets off earlier (`album`). The sheet's other
+   * parts rise once the movers are nearly there (`enter`), the queue from
+   * below (`queue`), and the bar's view buttons fall away (`fall`).
    */
-  const MORPH: [string, string, Mode, Kind][] = [
-    ['.art', '.frame', 'box', 'move'],
-    ['.label .title', '.info h1', 'text', 'cross'],
-    ['.label .sub', '.info .hero-artist', 'text', 'handover'],
-    ['.seek .slider', '.controls .seek .slider', 'box', 'edge'],
-    ['.transport', '.controls .transport', 'box', 'stage'],
-    ['.time', '.controls .seek .time:first-child', 'box', 'stage'],
-    ['.total', '.controls .seek .time:last-child', 'box', 'stage'],
-    ['[aria-label^="Repeat"]', '.controls [aria-label^="Repeat"]', 'box', 'stage'],
-    ['[aria-label="Shuffle"]', '.controls [aria-label="Shuffle"]', 'box', 'stage'],
-    ['.volume', '.controls .volume', 'box', 'stage'],
-    ['.end > [aria-label="Expand player"]', 'header [aria-label="Collapse"]', 'box', 'stage'],
-  ];
-  /** No counterpart in the bar: fade in in IN (the carousel's side cards and controls after its cover). */
-  const FADE =
-    'header .handle, header .lyrics-toggle, .art.lyrics, .hero-album, .album-title, .lyrics-button, .more, .coverflow .card:not(.frame), .coverflow .turns, .coverflow .below';
-
-  type Mode = 'box' | 'even' | 'text';
-  type Kind = 'move' | 'cross' | 'handover' | 'stage' | 'edge';
-  /** A stretch of progress. */
-  type Span = [number, number];
+  const spans = (phone: boolean): Record<string, Span> => ({
+    leave: [0, 0.1],
+    move: [0.1, 0.85],
+    enter: [0.6, 1],
+    under: phone ? [0.4, 0.85] : [0.1, 0.85],
+    album: phone ? [0.2, 0.85] : [0.1, 0.85],
+    queue: [0.5, 1],
+    fall: [0, 0.5],
+  });
   /** The background grows until the movers arrive, so they never poke out of it. */
   const GROW: Span = [0, 0.85];
-  const OUT: Span = [0, 0.1];
-  const MOVE: Span = [0.1, 0.85];
-  const IN: Span = [0.85, 1];
-  /** Text under the artwork (phones) waits until the growing artwork has risen past it. */
-  const MOVE_UNDER: Span = [0.4, 0.85];
-  const DURATION = 260;
-  const CURVE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+
+  /** The step change under way (phones). */
+  let stepping: Change | null = null;
 
   /**
-   * `el` is moved over `move` by (dx, dy, sx, sy): the sheet's own parts start
-   * at the bar and arrive at rest, ghosts start at rest (over the bar) and
-   * arrive at the sheet. It fades in over `show` or out over `hide`.
+   * Bar (0) to sheet (1): shared parts move from the bar to their places
+   * here, the bar's other parts go and the sheet's come, and the
+   * background grows out of the bar's box, its corners opening out to the
+   * screen's and its colour turning to the sheet's. Without a player to
+   * grow out of, or with reduced motion, the whole sheet fades.
    */
-  type Part = { el: HTMLElement; ghost: boolean; dx: number; dy: number; sx: number; sy: number; move?: Span; show?: Span; hide?: Span };
-  const STILL = { dx: 0, dy: 0, sx: 1, sy: 1 };
-  // Plain, not state: measured once per gesture, read by the effect below.
-  let parts: Part[] = [];
-  /** The progress last drawn, where a settle's transitions start from. */
-  let drawn = 0;
-  /** MOVE, or MOVE_UNDER for text, set per measure. */
-  let textMove = MOVE;
-  let ghosts = $state<HTMLElement>();
-
-  function shown(root: Element, selector: string) {
-    return [...root.querySelectorAll<HTMLElement>(selector)].find((e) => e.offsetWidth > 0);
-  }
-
-  /** The box of the first letter or digit, or of the element without one. */
-  function glyph(el: HTMLElement): DOMRect {
-    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-      const i = n.textContent?.search(/[\p{L}\p{N}]/u) ?? -1;
-      if (i < 0) continue;
-      const range = document.createRange();
-      range.setStart(n, i);
-      range.setEnd(n, i + 1);
-      return range.getBoundingClientRect();
-    }
-    return el.getBoundingClientRect();
-  }
-
-  /** The box of all of the element's text. */
-  function ink(el: HTMLElement): DOMRect {
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    return range.getBoundingClientRect();
-  }
-
-  /** FLIP: the transform (origin top left) that puts box `x`, inside `e`, over box `y`. */
-  function fit(e: DOMRect, x: DOMRect, y: DOMRect, mode: Mode) {
-    let sx = y.width / x.width;
-    let sy = y.height / x.height;
-    if (mode === 'text') sx = sy;
-    else if (mode === 'even') sx = sy = Math.min(sx, sy);
-    const dx = y.left + y.width / 2 - e.left - (x.left + x.width / 2 - e.left) * sx;
-    const dy = y.top + y.height / 2 - e.top - (x.top + x.height / 2 - e.top) * sy;
-    return { dx, dy, sx, sy };
-  }
-
-  /** A copy of the bar's `a`, laid over it here. */
-  function copy(a: HTMLElement, selector: string, at: DOMRect) {
-    const r = a.getBoundingClientRect();
-    const el = a.cloneNode(true) as HTMLElement;
-    // Nested parts (the total inside the bar's time) are copied on their own.
-    for (const [from] of MORPH) if (from !== selector) for (const n of el.querySelectorAll(from)) n.remove();
-    Object.assign(el.style, {
-      position: 'absolute',
-      left: `${r.left - at.left}px`,
-      top: `${r.top - at.top}px`,
-      width: `${r.width}px`,
-      height: `${r.height}px`,
-      margin: '0',
-      transformOrigin: '0 0',
-    });
-    ghosts?.append(el);
-    return el;
-  }
-
-  /** The parts that carry bar element `a` to sheet element `b`. */
-  function pair(a: HTMLElement, from: string, b: HTMLElement, mode: Mode, kind: Kind, at: DOMRect, o: DOMRect): Part[] {
-    const ra = a.getBoundingClientRect();
-    const rb = b.getBoundingClientRect();
-    const [ga, gb] = mode === 'text' ? [glyph(a), glyph(b)] : [ra, rb];
-    b.style.transformOrigin = '0 0';
-    const move = mode === 'text' ? textMove : MOVE;
-    if (kind === 'cross' && mode === 'text') {
-      const [ia, ib] = [ink(a), ink(b)];
-      // Same text on one line in both: the sheet's travels alone, matched by width, since any
-      // crossfade between two drawings of it shows (#109). Cut-off or wrapped titles still crossfade.
-      if (a.scrollWidth <= a.clientWidth && ib.height < 1.5 * gb.height) {
-        const sx = ia.width / ib.width;
-        const sy = ga.height / gb.height;
-        const dx = ia.left - rb.left - (ib.left - rb.left) * sx;
-        const dy = ga.top + ga.height / 2 - rb.top - (gb.top + gb.height / 2 - rb.top) * sy;
-        return [{ el: b, ghost: false, dx, dy, sx, sy, move }];
-      }
-    }
-    const there = { el: b, ghost: false, ...fit(rb, gb, ga, mode), move };
-    if (kind === 'move') return [there];
-    if (kind === 'stage') return [{ el: b, ghost: false, ...STILL, show: IN }, { el: copy(a, from, at), ghost: true, ...STILL, hide: OUT }];
-    if (kind === 'edge') {
-      // Keeps its place relative to the background (stretching only across).
-      const sx = at.width / o.width;
-      const dx = at.left + (ra.left - o.left) * sx - ra.left;
-      const dy = at.top + (ra.top - o.top) * (at.height / o.height) - ra.top;
-      return [
-        { el: b, ghost: false, ...STILL, show: IN },
-        { el: copy(a, from, at), ghost: true, dx, dy, sx, sy: 1, move: GROW, hide: [0.3, 0.5] },
-      ];
-    }
-    const ghost = { el: copy(a, from, at), ghost: true, ...fit(ra, ga, gb, mode), move };
-    return [
-      { ...there, show: IN },
-      { ...ghost, hide: kind === 'cross' ? IN : [0.75, 0.85] },
-    ];
-  }
-
-  /**
-   * Measures where each part starts (in the bar or floating player) and ends
-   * (here, untransformed), then pins them at the current progress without
-   * easing, so the next change animates from there. Without a player to grow
-   * out of, or with reduced motion, the whole sheet fades instead.
-   */
-  function measure() {
-    if (!section || !backdrop || !ghosts) return;
-    for (const { el } of parts) {
-      el.style.transition = 'none';
-      el.style.transform = '';
-      el.style.opacity = '';
-    }
-    ghosts.replaceChildren();
-    parts = [];
+  function toggle(): Transition | null {
+    if (!section || !backdrop || !tint || !leaving) return null;
+    stepping?.end();
     const origin = sheet.origin;
-    if (origin && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      const at = section.getBoundingClientRect();
-      const o = origin.getBoundingClientRect();
-      const bd = backdrop.getBoundingClientRect();
-      const art = section.querySelector('.frame')?.getBoundingClientRect();
-      const info = section.querySelector('.info')?.getBoundingClientRect();
-      textMove = art && info && info.top >= art.bottom ? MOVE_UNDER : MOVE;
-      const found: Part[] = [{ el: backdrop, ghost: false, ...fit(bd, bd, o, 'box'), move: GROW }];
-      for (const [from, to, mode, kind] of MORPH) {
-        const b = shown(section, to);
-        if (!b) continue;
-        const a = shown(origin, from);
-        found.push(...(a ? pair(a, from, b, mode, kind, at, o) : [{ el: b, ghost: false, ...STILL, show: IN }]));
-      }
-      for (const el of section.querySelectorAll<HTMLElement>(FADE)) found.push({ el, ghost: false, ...STILL, show: IN });
-      // The queue rises from below the page once the artwork and seek strip are clear of it.
-      const queue = section.querySelector<HTMLElement>('.queue-slot');
-      if (queue) found.push({ el: queue, ghost: false, ...STILL, dy: at.bottom - queue.getBoundingClientRect().top, move: [0.5, 1] });
-      parts = found;
+    if (!origin || still()) {
+      flushSync();
+      return new Transition([{ el: section, frames: [{ opacity: 0 }, { opacity: 1 }] }]);
     }
-    apply(sheet.progress, true);
-    // Commit the start styles before the transition to the new progress.
-    void getComputedStyle(backdrop).transform;
-  }
-
-  function ramp(p: number, [a, b]: Span) {
-    return Math.min(1, Math.max(0, (p - a) / (b - a)));
+    const t = change(section, () => flushSync(), { from: origin, spans: spans(views.phone), under: leaving });
+    const z = rootZoom();
+    const box = (r: DOMRect) => ({ left: r.left / z, top: r.top / z, width: r.width / z, height: r.height / z });
+    const [o, b] = [box(origin.getBoundingClientRect()), box(backdrop.getBoundingClientRect())];
+    const grow = onto({ ...b, left: 0, top: 0 }, { ...o, left: o.left - b.left, top: o.top - b.top });
+    // Phones: the bar is a rounded card inset from the edges; its corners, undone by the scale.
+    const r = views.phone ? parseFloat(getComputedStyle(origin).borderTopLeftRadius) || 0 : 0;
+    t.add({ el: backdrop, frames: [{ transform: css(grow), borderRadius: `${r / grow.sx}px / ${r / grow.sy}px` }, { transform: 'none', borderRadius: '0px' }], span: GROW });
+    t.add({ el: tint, frames: [{ opacity: 1 }, { opacity: 0 }], span: GROW });
+    return t;
   }
 
   /**
-   * Duration and delay that put span `s` where it falls in a settle from
-   * `from` to `to`, as if progress moved evenly over the settle.
+   * Phones: a step change (now playing, half or full queue, lyrics) by
+   * `apply`, as a transition between the two layouts. `undo` puts the step
+   * back if a finger lets it spring back.
    */
-  function timing([a, b]: Span, from: number, to: number) {
-    const lo = Math.max(a, Math.min(from, to));
-    const hi = Math.min(b, Math.max(from, to));
-    const span = Math.abs(to - from);
-    if (hi <= lo || !span) return '0s';
-    const ms = (v: number) => `${Math.round((v / span) * DURATION)}ms`;
-    return `${ms(hi - lo)} ${to > from ? ms(lo - from) : ms(from - hi)}`;
-  }
-
-  function apply(p: number, instant: boolean) {
-    if (!section || !tint) return;
-    const from = drawn;
-    drawn = p;
-    for (const { el, ghost, dx, dy, sx, sy, move, show, hide } of parts) {
-      const fade = show ?? hide;
-      if (instant) el.style.transition = 'none';
-      else {
-        // Duration first, then the curve, then the delay.
-        const time = (s: Span, curve: string) => timing(s, from, p).replace(' ', ` ${curve} `);
-        el.style.transition = [move && `transform ${time(move, CURVE)}`, fade && `opacity ${time(fade, 'linear')}`]
-          .filter(Boolean)
-          .join(', ');
-      }
-      if (move) {
-        const t = ghost ? ramp(p, move) : 1 - ramp(p, move);
-        el.style.transform = t ? `translate(${dx * t}px, ${dy * t}px) scale(${1 + (sx - 1) * t}, ${1 + (sy - 1) * t})` : '';
-      }
-      if (show) el.style.opacity = String(ramp(p, show));
-      else if (hide) el.style.opacity = String(1 - ramp(p, hide));
+  function step(apply: () => void, undo?: () => void): Change | null {
+    if (!section || !leaving || !views.phone || still()) {
+      apply();
+      return null;
     }
-    section.style.opacity = parts.length ? '' : String(p);
-    tint.style.transition = instant ? 'none' : `opacity ${timing(GROW, from, p)}`;
-    tint.style.opacity = parts.length ? String(1 - ramp(p, GROW)) : '0';
+    stepping?.end();
+    const t = change(
+      section,
+      () => {
+        apply();
+        flushSync();
+      },
+      {
+        under: leaving,
+        ended: (landed) => {
+          if (stepping === t) stepping = null;
+          if (landed || !undo) return;
+          undo();
+          flushSync();
+        },
+      },
+    );
+    stepping = t;
+    return t;
   }
 
-  sheet.measure = measure;
-  // Writes styles only; reads no state it writes.
-  $effect(() => apply(sheet.progress, sheet.dragging));
+  sheet.motion = { toggle, step: (apply) => void step(apply)?.play(1) };
+
+  /**
+   * Phones: a drag on one of the sheet's handles. Once it moves, the step
+   * change it heads for (up towards the queue, back towards now playing)
+   * follows the finger, then finishes or springs back on letting go, as
+   * `released` decides. A tap calls `onTap`; a drag that would close the
+   * sheet is the sheet's own (`closing`, else on letting go).
+   */
+  function stepDrag(e: PointerEvent, onTap: () => void, closing?: () => void) {
+    if (e.button !== 0) return;
+    if (!views.phone || still()) return closing ? closing() : sheet.handle(e, onTap);
+    const y0 = e.clientY;
+    const from = sheet.step;
+    let way: 'up' | 'back' | null = null;
+    let t: Change | null = null;
+    const move = (ev: PointerEvent) => {
+      const dy = ev.clientY - y0;
+      if (!way) {
+        if (Math.abs(dy) < SLOP) return;
+        way = dy < 0 ? 'up' : 'back';
+        const to = stepTo(from, way);
+        if (to === 'closed' && closing) {
+          stop();
+          return closing();
+        }
+        if (!to || to === 'closed' || !sheet.rest) return;
+        t = step(
+          () => (sheet.step = to),
+          () => (sheet.step = from),
+        );
+      }
+      t?.seek((way === 'up' ? -dy : dy) / t.distance);
+    };
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+    const end = (ev: PointerEvent) => {
+      stop();
+      const what = ev.type === 'pointercancel' ? null : released(ev.clientY - y0);
+      if (t) return void t.release(what === way);
+      if (what === 'tap') onTap();
+      else if (what === 'up') sheet.up();
+      else if (what === 'back') sheet.back();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && sheet.progress === 1) sheet.collapse();
+    if (e.key === 'Escape' && sheet.open) sheet.collapse();
   }
 
-  /** Phones: a drag on now playing closes it (down) or shows the queue (up); the seek bar keeps its own, and the artwork unless its drag is remapped away from this. */
+  /**
+   * Phones: a drag on now playing closes it (down, the sheet's drag) or
+   * brings up the queue (up, following the finger like the handle); the seek
+   * bar keeps its own, and the artwork unless its drag is remapped away from this.
+   */
   function dragNow(e: PointerEvent) {
     if (!views.phone || sheet.step !== 'now') return;
     const own = mapped(settings.current.gestures, 'artwork')['drag-vertical'] !== 'close';
     if ((e.target as Element).closest(own ? '.art, [role="slider"], .more' : '[role="slider"], .more')) return;
-    sheet.drag(e, 'sheet', undefined, true);
+    stepDrag(e, () => {}, () => sheet.drag(e, 'sheet', undefined, true));
   }
 
   /** The keyboard's press on a handle; pointers go through `sheet.handle`. */
@@ -285,25 +187,25 @@
 <svelte:window onkeydown={onKey} />
 
 <!--
-  Morphs out of the player bar (or floating player): the background grows from
-  its box and the artwork, title, transport and seek bar move from their places
-  in it, all by `progress`, so dragging scrubs the morph. Built from the same
-  widgets layouts use.
+  Grows out of the player bar (or floating player): the background grows from
+  its box and the artwork, title, play button and seek bar move from their places
+  in it (`toggle`). Parts declare their roles (`data-move`, `data-enter`,
+  `data-span`; docs/ANIMATION.md). Built from the same widgets layouts use.
 -->
 <section
   bind:this={section}
   class="sheet"
   data-step={sheet.step}
-  class:open={sheet.open}
-  class:dragging={sheet.dragging}
+  class:open={sheet.open || sheet.moving}
   aria-label="Now playing"
   aria-hidden={!sheet.open}
   inert={!sheet.open}
 >
   <div class="backdrop" bind:this={backdrop}><div class="tint" bind:this={tint}></div></div>
-  <div class="ghosts" bind:this={ghosts} inert aria-hidden="true"></div>
+  <!-- Copies of the parts a change takes away, going behind the rest. -->
+  <div class="leaving" bind:this={leaving} aria-hidden="true"></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <header onpointerdown={(e) => sheet.drag(e, 'sheet')}>
+  <header data-enter="rise" onpointerdown={(e) => sheet.drag(e, 'sheet')}>
     <span class="handle"></span>
     <button
       class="icon-button lyrics-toggle"
@@ -322,12 +224,12 @@
 
   <!-- Phones, full queue and lyrics: the playing track in a strip whose drag or tap steps back. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="mini" onpointerdown={(e) => !(e.target as Element).closest('.transport') && sheet.handle(e, () => sheet.back())}>
+  <div class="mini" data-enter="above" onpointerdown={(e) => !(e.target as Element).closest('.transport') && stepDrag(e, () => sheet.back())}>
     <div class="mini-row">
-      <Artwork track={engine.current?.track} size={48} />
+      <Artwork track={engine.current?.track} size={48} move="cover:now" />
       <span class="mini-names">
-        <b>{engine.current ? trackTitle(engine.current.track) : 'Nothing playing'}</b>
-        <span>{engine.current?.track.artist ?? ''}</span>
+        <b data-move="title:now">{engine.current ? trackTitle(engine.current.track) : 'Nothing playing'}</b>
+        <span data-move="artist:now">{engine.current?.track.artist ?? ''}</span>
       </span>
       <Transport compact size={22} />
     </div>
@@ -340,14 +242,21 @@
       <!-- Phones, half queue: the cover, full width, behind the title. -->
       {#if views.phone && sheet.step === 'half'}
         <div class="cover-bg" aria-hidden="true" bind:clientWidth={coverWidth}>
-          {#if coverWidth}<Artwork track={engine.current?.track} size={coverWidth} />{/if}
+          {#if coverWidth}<Artwork track={engine.current?.track} size={coverWidth} move="cover:now" />{/if}
         </div>
+        <!-- Apart from the cover, which travels as a copy: the shade fades over it as it arrives. -->
+        <span class="shade" data-enter="fade"></span>
       {/if}
       <div class="art" class:lyrics={sheet.lyrics}>
-        {#if sheet.lyrics}<Lyrics />{:else}<ArtworkWidget expands={false} playing />{/if}
+        {#if sheet.lyrics}<div class="lyrics-slot" data-enter="rise"><Lyrics /></div>{/if}
+        <!-- Kept laid out, unseen, while the lyrics show: drawn afresh (rebuilt, or from display: none),
+             the carousel's cards fade in (its @starting-style), which blinked the cover on closing them. -->
+        <div class="keep" hidden={sheet.lyrics}><ArtworkWidget expands={false} playing hidden={sheet.step !== 'now'} /></div>
       </div>
-      <div class="details">
-        <p class="album-title" use:marquee={sheet.progress === 1 ? (engine.current?.track.id ?? null) : null}><span class="marquee">{album}</span></p>
+      <div class="details" data-enter="rise">
+        <p class="album-title" data-enter="fade" use:marquee={sheet.rest ? (engine.current?.track.id ?? null) : null}>
+          <span class="marquee" data-move="album:now" data-span="album">{album}</span>
+        </p>
         <TrackInfo style="hero" playing>
           {#snippet aside()}
             <button class="lyrics-button" aria-label="Lyrics" aria-pressed={sheet.lyrics} title="Show lyrics" onclick={() => sheet.toggleLyrics()}>
@@ -358,16 +267,16 @@
         <Controls />
         <!-- Phones: the handle at the bottom; a tap or drag up shows the queue. -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="more" onpointerdown={(e) => sheet.handle(e, () => sheet.up())}>
+        <div class="more" data-enter="fade" onpointerdown={(e) => stepDrag(e, () => sheet.up())}>
           <button class="step" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
         </div>
       </div>
     </div>
-    <div class="queue-slot">
+    <div class="queue-slot" data-enter="below" data-span="queue">
       <button
         class="step"
         aria-label="Show all of the queue"
-        onpointerdown={(e) => sheet.handle(e, () => sheet.up())}
+        onpointerdown={(e) => stepDrag(e, () => sheet.up())}
         onclick={(e) => keyed(e, () => sheet.up())}
       ></button>
       <Queue collapsible={!views.phone} nowPlaying={views.phone} />
@@ -383,29 +292,21 @@
     z-index: 30;
     display: flex;
     flex-direction: column;
-    /* Hidden once the collapse has finished; the fade is the reduced-motion one. */
+    /* Shown while open or on its way (its transition draws the rest). */
     visibility: hidden;
-    transition:
-      opacity 150ms linear,
-      visibility 0s 260ms;
   }
 
   .sheet.open {
     visibility: visible;
-    transition: opacity 150ms linear;
-  }
-
-  .sheet.dragging {
-    transition: none;
   }
 
   .backdrop {
     position: absolute;
     inset: 0;
     z-index: -1;
+    overflow: hidden;
     background: var(--bg);
     transform-origin: 0 0;
-    will-change: transform;
   }
 
   /* The bar's colour, fading into the sheet's as it grows. */
@@ -416,11 +317,10 @@
     opacity: 0;
   }
 
-  /* Copies of the bar's parts, on top while they crossfade. */
-  .ghosts {
+  /* Not clipped: the bar's parts can lie outside the sheet (desktop). */
+  .leaving {
     position: absolute;
     inset: 0;
-    z-index: 1;
     pointer-events: none;
   }
 
@@ -496,8 +396,29 @@
     align-self: stretch;
   }
 
+  /* Lays the artwork out as if it were the art's own child. */
+  .keep {
+    display: contents;
+  }
+
+  .art.lyrics {
+    position: relative;
+  }
+
+  .keep[hidden] {
+    display: block;
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
   .art.lyrics :global(.lyrics) {
     background: none;
+  }
+
+  .lyrics-slot {
+    height: 100%;
   }
 
   .lyrics-toggle.active {
@@ -596,13 +517,16 @@
     /* One line each, so the controls never move between tracks; what doesn't fit scrolls (`marquee.ts`). */
     .album-title {
       display: flex;
-      height: 1.3em;
+      height: calc(1.3em + 0.4em);
       margin: 0;
       font-size: 1.5em;
       font-weight: 700;
       line-height: 1.3;
       overflow: hidden;
       white-space: nowrap;
+      /* Room in the clipping box for ascenders and descenders, taken back outside it. */
+      padding-block: 0.2em;
+      margin-block: -0.2em;
     }
 
     /* Centred while it fits; auto margins drop to 0 when it overflows, so it starts at the left. */
@@ -611,9 +535,19 @@
       margin-inline: auto;
     }
 
+    /* Clipping one-line boxes (`marquee.ts`), with room for ascenders and descenders (a 'g') taken back outside them. */
     .details :global(.hero :is(h1, .hero-artist)) {
       overflow: hidden;
       white-space: nowrap;
+      padding-block: 0.2em;
+    }
+
+    .details :global(.hero h1) {
+      margin-block: -0.2em;
+    }
+
+    .details :global(.hero .hero-artist) {
+      margin-block: calc(var(--space-1) - 0.2em) -0.2em;
     }
 
     .details :global(.marquee) {
@@ -720,10 +654,14 @@
       border-radius: 0;
     }
 
-    .cover-bg::after {
-      content: '';
+    /* Over the cover, the same square. */
+    .shade {
       position: absolute;
-      inset: 0;
+      left: 0;
+      right: 0;
+      top: calc(min(100vw, 62vh) - 100vw);
+      height: 100vw;
+      z-index: -1;
       background: linear-gradient(transparent 45%, var(--bg));
     }
 
@@ -790,6 +728,14 @@
     [data-step='lyrics'] .art.lyrics {
       flex: 1 1 0;
       min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    [data-step='lyrics'] .lyrics-slot {
+      flex: 1;
+      min-height: 0;
+      height: auto;
       display: flex;
       flex-direction: column;
     }

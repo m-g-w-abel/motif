@@ -19,6 +19,8 @@
   {/if}
   <button
     class="icon-button play"
+    data-move="play:now"
+    data-fit="even"
     aria-label={playing ? 'Pause' : 'Play'}
     disabled={!engine.current && !engine.queue.length && !engine.context.items.length}
     onclick={() => engine.run({ type: 'toggle_playback' })}

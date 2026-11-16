@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { surface } from '../../motion/surface';
   import { getApp } from '../../context';
 
   // Asks for a playlist's name, or to confirm deleting one (`Playlists.asking`).
@@ -13,7 +14,7 @@
 </script>
 
 {#if asking}
-  <dialog use:open aria-label={asking.title} onclose={() => playlists.asking === asking && playlists.answer(null)}>
+  <dialog transition:surface={{ enter: 'grow' }} use:open aria-label={asking.title} onclose={() => playlists.asking === asking && playlists.answer(null)}>
     <form method="dialog" onsubmit={() => playlists.answer(asking.value === null ? '' : value)}>
       <h2>{asking.title}</h2>
       <!-- First in the dialog, so showModal() focuses it. -->
