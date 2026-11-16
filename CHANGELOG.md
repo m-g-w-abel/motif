@@ -15,6 +15,10 @@ grouped by phase of the plan.
   too instead of setting the volume; Settings → Gestures brings that back.
 - **Changelog and Help**: this changelog, in the menu on phones and the left
   panel on desktop, and Help, which opens the project's documentation online.
+- **Fixed**: ReplayGain on albums without gain tags. The second and later
+  songs played without any adjustment, so the volume jumped after the first
+  one. Now every song gets the album's level, and the first song fades to it
+  once the whole album has been measured.
 - The phone's now-playing sheet steps, by drag or its handle, between now
   playing, a half queue under the cover, a full reorderable queue, and lyrics.
 - A shuffle button next to repeat, in the player and the bar.

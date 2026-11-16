@@ -133,7 +133,11 @@ impl Engine {
                             output.set_tap(wanted);
                             bands_tick.reset();
                         }
-                        player.tick(now) | output.poll(&mut player, now) | resolver.measured()
+                        let measured = resolver.measured();
+                        if measured {
+                            player.refresh_gain(&resolver);
+                        }
+                        player.tick(now) | output.poll(&mut player, now) | measured
                     }
                     _ = bands_tick.tick(), if tapping => {
                         if let Some(bands) = output.bands() {
