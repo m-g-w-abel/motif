@@ -153,9 +153,38 @@ const settled = `(() => {
 })()`;
 const failures = [];
 
-/** Runs `act`, waits for the change to settle, then checks its landings (at least `least` of them). */
-async function check(name, act, least = 1) {
+/**
+ * Watches a change frame by frame: anything that moves (a shared element or
+ * its copy) must move from the start (no delay, no early end), and, while a
+ * finger drives it, the drawn progress (a whole-length track's) must start
+ * where the change starts and never jump between frames.
+ */
+const watch = `{
+  const rec = (window.motifWatch = { late: [], p: [], up: null });
+  const t0 = performance.now();
+  for (const end of ['pointerup', 'pointercancel', 'touchend']) addEventListener(end, () => (rec.up ??= performance.now()), { capture: true, once: true });
+  const tick = (t) => {
+    let drawn = null;
+    for (const a of document.getAnimations()) {
+      const g = a.effect?.getTiming?.();
+      const el = a.effect?.target;
+      if (!g || g.fill !== 'both' || !el) continue;
+      const late = g.delay > 0.5 || g.endDelay > 0.5;
+      if (late && (el.dataset?.move || el.closest?.('.motion-layer'))) rec.late.push(el.dataset?.move ?? (el.closest('.motion-layer > *')?.className || 'a copy'));
+      if (!late && g.duration > 200 && drawn === null) drawn = a.effect.getComputedTiming().progress;
+    }
+    if (rec.up === null && drawn !== null) rec.p.push([t, drawn]);
+    if (t - t0 < 1500) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+} 0`;
+/** The most a dragged change may move in a frame's time, 16.7 ms (the finger itself moves up to about 0.1 in one here); a dropped frame is slow, not a jump. */
+const STEP = 0.15;
+
+/** Runs `act`, waits for the change to settle, then checks its landings (at least `least` of them); `dragged`: a finger drives it. */
+async function check(name, act, least = 1, dragged = false) {
   await run("window.motifLandings.length = 0");
+  await run(watch);
   await act();
   // The change begins a frame or two later (the new screen is laid out first).
   await sleep(150);
@@ -172,6 +201,19 @@ async function check(name, act, least = 1) {
   for (const l of bad) failures.push(`${name}: ${l.name} landed ${l.box.toFixed(1)}px off${l.look.length ? `, ${l.look.join(", ")} differ` : ""}`);
   if (landings.length < least) failures.push(`${name}: ${landings.length} shared elements flew, expected at least ${least}`);
   if (hidden.length) failures.push(`${name}: left hidden: ${hidden.join(", ")}`);
+  const watched = await run("window.motifWatch");
+  const late = [...new Set(watched.late)];
+  if (late.length) failures.push(`${name}: moved late (a span on a move): ${late.join(", ")}`);
+  if (dragged) {
+    const p = watched.p;
+    if (!p.length) failures.push(`${name}: nothing followed the finger`);
+    else if (Math.min(p[0][1], 1 - p[0][1]) > STEP) failures.push(`${name}: its first frame jumped to ${p[0][1].toFixed(2)}`);
+    for (let i = 1; i < p.length; i++)
+      if (Math.abs(p[i][1] - p[i - 1][1]) > STEP * Math.max(1, (p[i][0] - p[i - 1][0]) / 16.7)) {
+        failures.push(`${name}: jumped from ${p[i - 1][1].toFixed(2)} to ${p[i][1].toFixed(2)} in ${Math.round(p[i][0] - p[i - 1][0])} ms under the finger`);
+        break;
+      }
+  }
   const mine = failures.filter((f) => f.startsWith(`${name}:`));
   console.log(`${mine.length ? "FAIL" : "ok  "} ${name} (${landings.length} landed)${mine.map((f) => `\n       ${f.slice(name.length + 2)}`).join("")}`);
 }
@@ -195,17 +237,25 @@ async function sheet(label) {
   await check(`${label}: now playing to the half queue`, tap("document.querySelector('.more .step')"), 1);
   await check(`${label}: half to the full queue`, tap("document.querySelector('.queue-slot > .step')"), 4);
   await check(`${label}: full back to half`, tap("document.querySelector('.mini .step')"), 4);
-  await check(`${label}: half back to now playing`, () => dragBy(".queue-slot > .step", 200), 1);
+  await check(`${label}: half back to now playing`, () => dragBy(".queue-slot > .step", 200), 1, true);
   if (!(await run(step("now")))) failures.push(`${label}: dragging the half queue's handle down didn't go back to now playing`);
-  await check(`${label}: drag up to the half queue`, () => dragBy(".more .step", -200), 1);
+  await check(`${label}: drag up to the half queue`, () => dragBy(".more .step", -200), 1, true);
   if (!(await run(step("half")))) failures.push(`${label}: dragging the handle up didn't show the half queue`);
-  await check(`${label}: half back to now playing (again)`, () => dragBy(".queue-slot > .step", 200), 1);
+  await check(`${label}: half back to now playing (again)`, () => dragBy(".queue-slot > .step", 200), 1, true);
   await check(`${label}: lyrics`, tap("document.querySelector('.lyrics-button')"), 4);
   await check(`${label}: lyrics back to now playing`, tap("document.querySelector('.mini .step')"), 4);
-  await check(`${label}: close by dragging down`, () => dragBy(".details .hero-title", 400), shared);
+  await check(`${label}: close by dragging down`, () => dragBy(".details .hero-title", 400), shared, true);
   if (await run("document.querySelector('.sheet').classList.contains('open')")) failures.push(`${label}: dragging now playing down didn't close it`);
-  await check(`${label}: open by dragging the bar up`, () => dragBy(".bar .identity", -500), shared);
+  await check(`${label}: open by dragging the bar up`, () => dragBy(".bar .identity", -500), shared, true);
   if (!(await run("document.querySelector('.sheet').classList.contains('open')"))) failures.push(`${label}: dragging the bar up didn't open the sheet`);
+  // Each step change, held at its start: the half and full queue, back, lyrics.
+  await startsInPlace(`${label}: now playing to the half queue starts in place`, tap("document.querySelector('.more .step')"));
+  await startsInPlace(`${label}: half to the full queue starts in place`, tap("document.querySelector('.queue-slot > .step')"));
+  await startsInPlace(`${label}: full back to half starts in place`, tap("document.querySelector('.mini .step')"));
+  await dragBy(".queue-slot > .step", 200);
+  await until(settled);
+  await startsInPlace(`${label}: lyrics start in place`, tap("document.querySelector('.lyrics-button')"));
+  await startsInPlace(`${label}: lyrics back to now playing starts in place`, tap("document.querySelector('.mini .step')"));
   await check(`${label}: close from the full queue`, async () => {
     await run("document.querySelector('.more .step').click()");
     await until(settled);
@@ -217,6 +267,116 @@ async function sheet(label) {
   }, 4);
 }
 const tap = (selector) => () => run(`${selector}.click()`);
+
+/** The most a row may move in a frame's time (16.7 ms) when nothing jumps: a 260 ms glide of a row's height moves under 20 px in its fastest frame. */
+const ROW_STEP = 30;
+
+/** Runs `act` (a finger on the queue) and fails if any of the queue's rows jumps between frames instead of gliding. */
+async function rowsGlide(name, act) {
+  await run(`{
+    const rows = [...document.querySelectorAll('.sheet .queue-slot li')];
+    const rec = (window.motifRows = { jumps: [] });
+    const last = new Map();
+    const t0 = performance.now();
+    let prev = t0;
+    const tick = (t) => {
+      for (const r of rows) {
+        // Hidden while a copy stands in for it (the copy's landing is checked like any other).
+        if (!r.isConnected || !r.getClientRects().length || getComputedStyle(r).visibility === 'hidden') {
+          last.delete(r);
+          continue;
+        }
+        const top = r.getBoundingClientRect().top;
+        const was = last.get(r);
+        if (was !== undefined && Math.abs(top - was) > ${ROW_STEP} * Math.max(1, (t - prev) / 16.7)) rec.jumps.push(r.textContent.trim().slice(0, 16) + ' ' + Math.round(top - was) + 'px');
+        last.set(r, top);
+      }
+      prev = t;
+      if (t - t0 < 2000) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } 0`);
+  await act();
+  await sleep(2100);
+  await until(settled);
+  const jumps = await run("window.motifRows.jumps");
+  if (jumps.length) failures.push(`${name}: rows jumped: ${jumps.slice(0, 4).join(", ")}`);
+  console.log(`${jumps.length ? "FAIL" : "ok  "} ${name}`);
+}
+
+/** The queue in the phone sheet (it needs one): reordering by the handle, a reorder let go where it started, removing by a swipe. */
+async function queue(label) {
+  await open("dev-view=albums", 384, 820);
+  await until(`!!${card}`);
+  await run(`${card}.click()`);
+  await sleep(300);
+  await until(settled);
+  // Three songs queued by swiping them left.
+  for (let i = 0; i < 3; i++) {
+    const [x, y] = await run(`(() => { const r = [...document.querySelectorAll('main > .screen:not([inert]) .song')][${i}].getBoundingClientRect(); return [r.x + r.width * 0.8, r.y + r.height / 2]; })()`);
+    await drag(x, y, x - 250, y);
+    await sleep(700);
+  }
+  await open("dev-view=albums&dev-sheet=full", 384, 820);
+  await until("document.querySelectorAll('.sheet .queue-slot ol li .handle').length >= 3");
+  // The sheet comes up first.
+  await sleep(300);
+  await until(settled);
+  const handle = `(() => { const r = document.querySelector('.sheet .queue-slot ol li .handle').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`;
+  const pitch = await run("(() => { const [a, b] = document.querySelectorAll('.sheet .queue-slot ol li'); return b.getBoundingClientRect().top - a.getBoundingClientRect().top; })()");
+  await rowsGlide(`${label}: reorder the queue`, async () => {
+    const [x, y] = await run(handle);
+    await drag(x, y, x, y + pitch * 1.3);
+  });
+  await rowsGlide(`${label}: a reorder let go where it started`, async () => {
+    const [x, y] = await run(handle);
+    await drag(x, y, x, y + pitch * 0.4);
+  });
+  await rowsGlide(`${label}: remove from the queue by a swipe`, async () => {
+    const [x, y] = await run("(() => { const r = document.querySelector('.sheet .queue-slot ol li .entry').getBoundingClientRect(); return [r.x + r.width * 0.6, r.y + r.height / 2]; })()");
+    await drag(x, y, Math.max(4, x - 300), y);
+  });
+  await run("document.querySelector('.sheet .queue-slot .heading .link')?.click()");
+}
+
+/** What a stage draws (its innermost elements and its buttons), with where each is: set aside before a change. */
+const drawnIn = (root) => `(() => {
+  const out = [];
+  for (const el of document.querySelectorAll('${root} *')) {
+    if (el.closest('.leaving') || (el.children.length && el.tagName !== 'BUTTON') || !el.getClientRects().length || getComputedStyle(el).visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > innerHeight || !r.width || !r.height) continue;
+    out.push([el, r]);
+  }
+  return out;
+})()`;
+
+/**
+ * Every change starts exactly where things were: with the clock held at 0,
+ * whatever is still drawn after the change has begun (not hidden for a copy
+ * standing in for it) is where it was before it. Elements the layout moved
+ * but nothing animated jump here.
+ */
+async function startsInPlace(name, act) {
+  await run(`window.motifBefore = ${drawnIn(".sheet")}; 0`);
+  await send("Animation.enable");
+  await send("Animation.setPlaybackRate", { playbackRate: 0 });
+  try {
+    await act();
+    await sleep(300);
+    const off = await run(`window.motifBefore.filter(([el, r]) => {
+      if (!el.isConnected || !el.getClientRects().length) return false;
+      for (let e = el; e; e = e.parentElement) if (getComputedStyle(e).visibility === 'hidden' || getComputedStyle(e).opacity === '0') return false;
+      const n = el.getBoundingClientRect();
+      return Math.max(Math.abs(n.left - r.left), Math.abs(n.top - r.top)) > 1;
+    }).map(([el, r]) => (el.dataset.move ?? el.getAttribute('aria-label') ?? el.textContent.trim().slice(0, 20) ?? el.className) + ' ' + Math.round(el.getBoundingClientRect().top - r.top) + 'px')`);
+    if (off.length) failures.push(`${name}: didn't start where it was: ${off.slice(0, 6).join(", ")}`);
+  } finally {
+    await send("Animation.setPlaybackRate", { playbackRate: 1 });
+  }
+  await until(settled);
+  console.log(`${failures.some((f) => f.startsWith(`${name}:`)) ? "FAIL" : "ok  "} ${name}`);
+}
 
 try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
@@ -240,7 +400,7 @@ try {
       await until("!!document.querySelector('main > .screen:not([inert]) button.album img')?.complete");
       // Cover, title and artist.
       await check(`${phone_}: open an album from Search`, tap("document.querySelector('main > .screen:not([inert]) button.album')"), 3);
-      await check(`${phone_}: swipe back to Search`, () => swipe(20, 300, 410), 2);
+      await check(`${phone_}: swipe back to Search`, () => swipe(20, 300, 410), 2, true);
       for (const [label, w, h] of [
         [phone_, 384, 820],
         ["desktop", 1200, 800],
@@ -253,7 +413,7 @@ try {
           await check(`${label}: back by the button`, tap("document.querySelector('main > .screen:not([inert]) .back')"), 2);
           await check(`${label}: open it again`, tap(card), 3);
         }
-        await check(`${label}: swipe back`, () => swipe(20, w * 0.8, h / 2), 2);
+        await check(`${label}: swipe back`, () => swipe(20, w * 0.8, h / 2), 2, true);
         await check(`${label}: swipe back cancelled`, async () => {
           await run(`${card}.click()`);
           await until(settled);
@@ -267,10 +427,21 @@ try {
       await check(`${phone_}: open an album to scroll`, tap(card), 3);
       const scroller = "[...document.querySelectorAll('main > .screen:not([inert]) *')].find((e) => e.scrollHeight > e.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(e).overflowY))";
       if (!(await run(`(() => { const s = ${scroller}; if (!s) return false; s.scrollTop = s.scrollHeight; return s.scrollTop > 20; })()`))) failures.push(`${phone_}: the album page didn't scroll`);
-      await check(`${phone_}: swipe back from the scrolled album`, () => swipe(20, 300, 280), 2);
+      await check(`${phone_}: swipe back from the scrolled album`, () => swipe(20, 300, 280), 2, true);
       await check(`${phone_}: open the album again`, tap(card), 3);
       if (await run(`(${scroller})?.scrollTop`)) failures.push(`${phone_}: the album page opened scrolled`);
+      // The grid scrolled a little (on a fixed head, its first row would sit partly under it): the cover flies back
+      // to a card that shows whole, since the head scrolls with the grid; nothing covers the card's corners.
+      await open("dev-view=albums", 384, 820);
+      await until(`!!${card}?.querySelector('img')?.complete`);
+      await run("document.querySelector('main > .screen:not([inert]) .album-grid .scroll').scrollTop = 60");
+      await sleep(300);
+      await check(`${phone_}: open an album from a scrolled grid`, tap(card), 3);
+      await check(`${phone_}: swipe back to the scrolled grid`, () => swipe(20, 300, 600), 2, true);
+      const covered = await run(`(() => { const c = ${card}; const r = c.getBoundingClientRect(); return [[r.left + 10, r.top + 10], [r.right - 10, r.top + 10], [r.left + 10, r.bottom - 10], [r.right - 10, r.bottom - 10]].filter(([x, y]) => !c.contains(document.elementFromPoint(x, y))).length; })()`);
+      if (covered) failures.push(`${phone_}: back on the scrolled grid, ${covered} corners of the card the cover flew to are hidden`);
       await sheet(phone_);
+      if (scale === 100 && !font) await queue(phone_);
     }
     if (!phone) {
       [scale, font] = [100, ""];

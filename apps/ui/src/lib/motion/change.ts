@@ -1,5 +1,5 @@
 import { css, type Box } from './fit';
-import { copyOf, fly, motionLayer, rootZoom, see, type Flight, type Seen } from './mover';
+import { cloneOf, copyOf, fly, motionLayer, rootZoom, see, type Flight, type Seen } from './mover';
 import { plan, type Enter, type Frame, type Part } from './plan';
 import { Transition, type Span, type Track } from './transition';
 
@@ -13,7 +13,7 @@ import { Transition, type Span, type Track } from './transition';
 export interface Options {
   /** Where the "before" parts are, when not in `root` (the player bar, before the sheet). */
   from?: HTMLElement;
-  /** Named stretches of progress (`data-span`), and `move`, `enter` and `leave` for parts that name none. */
+  /** Named stretches of progress (`data-span`) for parts that come or go, and `enter` and `leave` for those that name none. Moves always run the whole way. */
   spans?: Record<string, Span>;
   /** A positioned element in the stage that copies of leaving parts go in (they keep its rules); else above everything. */
   under?: HTMLElement;
@@ -28,17 +28,23 @@ export type Change = Transition & { distance: number };
 /** Drawn: laid out and not hidden. */
 const shows = (el: HTMLElement) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
 
-type Snapshot = { parts: Part[]; els: HTMLElement[]; seen: Seen[]; clones: HTMLElement[] };
+type Snapshot = { parts: Part[]; els: HTMLElement[]; seen: Seen[]; clones: (HTMLElement | null)[] };
 
 /** The stage's parts as they are now, in CSS pixels, each with a copy to stand in for it if the change takes it away. */
 function snapshot(root: HTMLElement, copies: boolean): Snapshot {
   const z = rootZoom();
-  const els = [...root.querySelectorAll<HTMLElement>('[data-move], [data-enter]')].filter(shows);
+  const declared = [...root.querySelectorAll<HTMLElement>('[data-move], [data-enter]')].filter(shows);
+  // The elements between parts and up to the stage (implicit parts): when one moves, what it holds moves with it.
+  const all = new Set(declared);
+  for (const el of declared)
+    for (let up = el.parentElement; up && up !== root && !all.has(up); up = up.parentElement) if (!up.matches('[data-move], [data-enter]') && shows(up)) all.add(up);
+  const els = [...all].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
   const seen = els.map((el) => see(el));
   const parts = els.map((el, i): Part => {
     const b = seen[i].box;
     let parent: number | undefined;
     for (let j = i - 1; j >= 0 && parent === undefined; j--) if (els[j].contains(el)) parent = j;
+    const style = getComputedStyle(el);
     return {
       el,
       name: el.dataset.move,
@@ -46,9 +52,12 @@ function snapshot(root: HTMLElement, copies: boolean): Snapshot {
       span: el.dataset.span,
       box: { left: b.left / z, top: b.top / z, width: b.width / z, height: b.height / z },
       parent,
+      implicit: !el.matches('[data-move], [data-enter]'),
+      clips: style.overflowX !== 'visible' || style.overflowY !== 'visible',
     };
   });
-  return { parts, els, seen, clones: copies ? els.map((el) => el.cloneNode(true) as HTMLElement) : [] };
+  // Only declared parts ever leave, so only they need a copy.
+  return { parts, els, seen, clones: els.map((el, i) => (copies && !parts[i].implicit ? cloneOf(el) : null)) };
 }
 
 const frame = ({ map, opacity }: Frame): Keyframe => ({ transform: css(map), ...(opacity !== undefined && { opacity }) });
@@ -65,11 +74,26 @@ export function change(root: HTMLElement, apply: () => void, options: Options = 
  * once the DOM has changed.
  */
 export function measure(root: HTMLElement, options: Options = {}): () => Change {
-  const before = snapshot(options.from ?? root, options.leaves !== false);
-  return () => draw(root, before, options);
+  // A second change before the first is drawn (two updates in one tick) starts from the same place: the
+  // layout now is already the first's end, and starting there would jump.
+  const before = waiting.get(root) ?? snapshot(options.from ?? root, options.leaves !== false);
+  waiting.set(root, before);
+  return () => {
+    waiting.delete(root);
+    return draw(root, before, options);
+  };
 }
 
+/** Stages measured and not yet drawn: what they showed before. */
+const waiting = new Map<HTMLElement, Snapshot>();
+
+/** The changes under way, by the stage they run in. */
+const running = new Map<Change, HTMLElement>();
+
 function draw(root: HTMLElement, before: Snapshot, { spans, under, ended, leaves = true }: Options): Change {
+  // One change at a time in a stage: one still running in it (rows still sliding when the next update
+  // comes) ends, and this one starts from where that left things drawn, as `before` measured them.
+  for (const [c, r] of running) if (root.contains(r)) c.end();
   const after = snapshot(root, false);
   const z = rootZoom();
   const r = root.getBoundingClientRect();
@@ -79,19 +103,23 @@ function draw(root: HTMLElement, before: Snapshot, { spans, under, ended, leaves
   const tracks: Track[] = [];
   /** Inline transform origins to put back (keyframes scale about the top left). */
   const origins = new Map<HTMLElement, string>();
-  const own = (el: HTMLElement, frames: [Frame, Frame], span: Span) => {
+  const own = (el: HTMLElement, frames: [Frame, Frame], span?: Span) => {
+    // Its own shift (a row a reorder moved aside) stays under the move, which would otherwise replace it.
+    // shortcut: only a plain shift is kept (one with a scale would scale about the new origin); none has one yet.
+    const m = new DOMMatrix(getComputedStyle(el).transform === 'none' ? undefined : getComputedStyle(el).transform);
+    const base = m.isIdentity || !(m.is2D && m.a === 1 && m.d === 1 && !m.b && !m.c) ? '' : ` translate(${m.e}px, ${m.f}px)`;
     if (!origins.has(el)) origins.set(el, el.style.transformOrigin);
     el.style.transformOrigin = '0 0';
-    tracks.push({ el, frames: frames.map(frame), span });
+    tracks.push({ el, frames: frames.map((f) => ({ ...frame(f), transform: css(f.map) + base })), span });
   };
-  for (const m of p.place) own(after.els[m.after], m.frames, m.span);
+  for (const m of p.place) own(after.els[m.after], m.frames);
   for (const m of p.enter) own(after.els[m.after], m.frames, m.span);
 
   const flights: Flight[] = [];
   const flown = new Set<string>();
   for (const f of p.fly) {
     const flight = fly(before.seen[f.before], after.els[f.after], after.seen[f.after].box);
-    for (const t of flight.tracks) tracks.push({ ...t, span: f.span });
+    tracks.push(...flight.tracks);
     flights.push(flight);
     flown.add(before.parts[f.before].name!);
   }
@@ -101,7 +129,7 @@ function draw(root: HTMLElement, before: Snapshot, { spans, under, ended, leaves
   const at = under?.getBoundingClientRect();
   for (const m of leaves ? p.leave : []) {
     const s = before.seen[m.before];
-    const clone = before.clones[m.before];
+    const clone = before.clones[m.before]!;
     for (const n of clone.querySelectorAll<HTMLElement>('[data-move]')) if (flown.has(n.dataset.move!)) n.style.visibility = 'hidden';
     const b = before.parts[m.before].box;
     const c = copyOf(s, at ? { ...b, left: b.left - at.left / z, top: b.top - at.top / z } : b, !at, clone);
@@ -117,8 +145,10 @@ function draw(root: HTMLElement, before: Snapshot, { spans, under, ended, leaves
     for (const f of flights) f.done(landed);
     for (const c of copies) c.remove();
     for (const [el, o] of origins) el.style.transformOrigin = o;
+    running.delete(t);
     ended?.(landed);
   }) as Change;
   t.distance = p.distance;
+  running.set(t, root);
   return t;
 }

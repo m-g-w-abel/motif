@@ -1,4 +1,4 @@
-import { Transition, type Drive } from './motion/transition';
+import { follow, Transition, type Drive } from './motion/transition';
 
 /**
  * Touch gestures (touch and pen only; the mouse keeps its clicks and drags).
@@ -131,12 +131,14 @@ export function slide(el: HTMLElement): Swipe {
   return (way) => {
     const w = el.offsetWidth;
     const t = new Transition([{ el, frames: [translate(0), translate(way * w)] }]);
+    const drive = follow(t);
     return {
       distance: w,
       drive: {
-        seek: (p) => t.seek(p),
+        seek: (p) => drive.seek(p),
         release(commit) {
-          void t.release(commit).then(() => {
+          drive.release(commit);
+          void t.done.then(() => {
             // In the same task as the first one's clean-up, so it never shows where it started.
             if (commit) void new Transition([{ el, frames: [translate(-way * w), translate(0)] }]).play(1);
           });
@@ -184,12 +186,14 @@ export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Swipe {
     };
     const back = () => void move(-w, 0).play(1).then(done);
     const t = move(0, -w);
+    const drive = follow(t);
     return {
       distance: w,
       drive: {
-        seek: (p) => t.seek(p),
+        seek: (p) => drive.seek(p),
         release(commit) {
-          void t.release(commit).then(() => {
+          drive.release(commit);
+          void t.done.then(() => {
             if (!commit) return done();
             // Out of sight until it comes back (or goes, removed).
             el.style.transform = translate(-w).transform;
@@ -217,7 +221,7 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
   const press = new Press(e.clientX, e.clientY, performance.now());
   const holds = !!map['long-press'];
   const swipes = !!(map['swipe-left'] || map['swipe-right']);
-  let follow: ((dy: number) => void) | undefined;
+  let follows: ((dy: number) => void) | undefined;
   let longPressed = false;
   /** The swipe drawn, and the way it went first. */
   let showing: ReturnType<Swipe> = null;
@@ -259,8 +263,8 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
     if (axis !== 'y') return;
     const action = map['drag-vertical'];
     if (action && isFollow(action)) {
-      follow ??= on[action]?.();
-      follow?.(ev.clientY - press.y);
+      follows ??= on[action]?.();
+      follows?.(ev.clientY - press.y);
     }
   };
   const up = (ev: PointerEvent) => {

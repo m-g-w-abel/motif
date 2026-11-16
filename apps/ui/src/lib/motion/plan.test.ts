@@ -11,8 +11,8 @@ describe('plan', () => {
     const before = [part('mini title', box(10, 10), { name: 'title' }), part('controls', box(0, 500))];
     const after = [part('big title', box(20, 300), { name: 'title' }), part('controls', box(0, 600))];
     const p = plan(before, after, STAGE);
-    expect(p.fly).toEqual([{ before: 0, after: 0, span: [0, 1] }]);
-    expect(p.place).toEqual([{ after: 1, frames: [{ map: { sx: 1, sy: 1, x: 0, y: -100 } }, { map: { sx: 1, sy: 1, x: 0, y: 0 } }], span: [0, 1] }]);
+    expect(p.fly).toEqual([{ before: 0, after: 0 }]);
+    expect(p.place).toEqual([{ after: 1, frames: [{ map: { sx: 1, sy: 1, x: 0, y: -100 } }, { map: { sx: 1, sy: 1, x: 0, y: 0 } }] }]);
     expect(p.enter).toEqual([]);
     expect(p.leave).toEqual([]);
   });
@@ -57,7 +57,7 @@ describe('plan', () => {
     expect(p.enter.map((e) => e.after)).toEqual([0]);
     // A name inside something entering still flies, when it has a counterpart.
     const q = plan([part('artist', box(0, 300), { name: 'artist' })], after, STAGE);
-    expect(q.fly).toEqual([{ before: 0, after: 1, span: [0, 1] }]);
+    expect(q.fly).toEqual([{ before: 0, after: 1 }]);
   });
 
   it('carries nothing inside a flight: its destination is hidden while a copy travels', () => {
@@ -77,14 +77,54 @@ describe('plan', () => {
     ]);
   });
 
-  it('takes spans from the table: the declared name, else its kind, else all of it', () => {
-    const spans = { move: [0.1, 0.85], enter: [0.6, 1], fall: [0, 0.5] } as Record<string, [number, number]>;
-    const before = [part('bar title', box(0, 700), { name: 'title' }), part('buttons', box(0, 750), { enter: 'below', span: 'fall' }), part('sep', box(0, 0), { enter: 'fade' })];
-    const after = [part('title', box(0, 300), { name: 'title' }), part('format', box(0, 400), { enter: 'rise' })];
+  it('takes spans from the table for what enters or leaves (the declared name, else its kind, else all of it); moves always run the whole way', () => {
+    const spans = {
+      move: [0.1, 0.85],
+      late: [0.4, 0.85],
+      enter: [0.6, 1],
+      fall: [0, 0.5],
+    } as Record<string, [number, number]>;
+    const before = [
+      part('bar title', box(0, 700), { name: 'title', span: 'late' }),
+      part('controls', box(0, 720)),
+      part('buttons', box(0, 750), { enter: 'below', span: 'fall' }),
+      part('sep', box(0, 0), { enter: 'fade' }),
+    ];
+    const after = [part('title', box(0, 300), { name: 'title', span: 'late' }), part('controls', box(0, 500)), part('format', box(0, 400), { enter: 'rise' })];
     const p = plan(before, after, STAGE, spans);
-    expect(p.fly[0].span).toEqual([0.1, 0.85]);
+    // Every moving element starts at the start: a move has no span to delay it.
+    expect(p.fly).toEqual([{ before: 0, after: 0 }]);
+    expect(p.place.map((m) => 'span' in m)).toEqual([false]);
     expect(p.enter[0].span).toEqual([0.6, 1]);
-    expect(p.leave.map((l) => l.span)).toEqual([[0, 0.5], [0, 1]]);
+    expect(p.leave.map((l) => l.span)).toEqual([
+      [0, 0.5],
+      [0, 1],
+    ]);
+  });
+
+  it('moves the containers between parts too (implicit, kept only), so what they hold moves instead of jumping', () => {
+    // The transport row holds play (a part) and the skip buttons (not parts): it moved up 100 with them.
+    const before = [part('details', box(0, 400), { enter: 'rise' }), part('row', box(0, 600, 400, 50), { implicit: true, parent: 0 }), part('play', box(150, 600), { name: 'play', parent: 1 })];
+    const after = [part('details', box(0, 400), { enter: 'rise' }), part('row', box(0, 500, 400, 50), { implicit: true, parent: 0 }), part('play', box(150, 500), { name: 'play', parent: 1 })];
+    const p = plan(before, after, STAGE);
+    expect(p.place.map((m) => [m.after, m.frames[0].map.y])).toEqual([[1, 100]]);
+    // One that is new or gone neither comes nor goes: only declared parts do.
+    const q = plan([part('old row', box(0, 0), { implicit: true })], [part('new row', box(0, 0), { implicit: true })], STAGE);
+    expect([q.enter, q.leave, q.place, q.fly]).toEqual([[], [], [], []]);
+  });
+
+  it('carries a part that moves out of a box that clips it as a copy, so it is never cut off on the way', () => {
+    const clip = (top: number) => part('h1', box(0, top, 200, 40), { implicit: true, clips: true });
+    // The title moves 300 up inside its clipping line, which stays: it would leave it.
+    const before = [clip(500), part('title', box(0, 500, 200, 40), { name: 'title', parent: 0 })];
+    const after = [clip(500), part('title', box(0, 200, 200, 40), { name: 'title', parent: 0 })];
+    const p = plan(before, after, STAGE);
+    expect(p.fly).toEqual([{ before: 1, after: 1 }]);
+    expect(p.place).toEqual([]);
+    // The line moving with it, or a move that stays inside it: in place.
+    expect(plan([clip(500), before[1]], [clip(200), after[1]], STAGE).fly).toEqual([]);
+    const wide = (top: number) => part('body', box(0, 0, 400, 800), { implicit: true, clips: true });
+    expect(plan([wide(0), before[1]], [wide(0), after[1]], STAGE).place.map((m) => m.after)).toEqual([1]);
   });
 
   it('says how far things move, for a finger to drive it by', () => {

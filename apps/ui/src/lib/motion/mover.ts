@@ -111,8 +111,32 @@ export function rootZoom() {
   return zoom.value;
 }
 
+/** What a copy's insides keep of how they look (the copy's own box takes all of `LOOK`). */
+const INNER = ['display', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-transform', 'color', 'white-space'];
+/** Past this many elements inside, a copy keeps only its own rules (a long list: its rows' rules are their own). */
+const MOST_INSIDE = 300;
+
+/**
+ * A deep copy of `el` whose insides look as they do there: rules that reach
+ * them through the original's ancestors (a phone rule hiding the album's
+ * name, a font set on the sheet) don't reach a copy elsewhere.
+ */
+export function cloneOf(el: HTMLElement): HTMLElement {
+  const c = el.cloneNode(true) as HTMLElement;
+  const inside = el.querySelectorAll<HTMLElement>('*');
+  if (inside.length > MOST_INSIDE) return c;
+  const copies = c.querySelectorAll<HTMLElement>('*');
+  inside.forEach((o, i) => {
+    const n = copies[i];
+    if (!o.getClientRects().length) return void n.style.setProperty('display', 'none');
+    const style = getComputedStyle(o);
+    for (const p of INNER) n.style.setProperty(p, style.getPropertyValue(p));
+  });
+  return c;
+}
+
 /** A copy of `s.el` (or `clone`, made of it earlier), looking as it does there, at `at` (absolute in its parent, or fixed on screen). */
-export function copyOf(s: Seen, at: Box, fixed: boolean, clone = s.el.cloneNode(true) as HTMLElement) {
+export function copyOf(s: Seen, at: Box, fixed: boolean, clone = cloneOf(s.el)) {
   const c = clone;
   for (const n of [c, ...c.querySelectorAll('[data-move], [data-enter]')]) n.removeAttribute('data-move'), n.removeAttribute('data-enter');
   // The original's lazy, async image would decode afresh and draw nothing for a frame.
@@ -134,6 +158,9 @@ export function copyOf(s: Seen, at: Box, fixed: boolean, clone = s.el.cloneNode(
   });
   return c;
 }
+
+/** What an element is made of (its elements and their classes), to tell two drawings of different shapes apart. */
+const shape = (el: Element): string => `${el.tagName}.${[...el.classList].sort().join('.')}(${[...el.children].map(shape).join()})`;
 
 /** Whether `el` is drawn as it will stay: its artwork (if any) loaded, or settled on its placeholder. */
 function drawn(el: HTMLElement) {
@@ -209,23 +236,34 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
     // Shapes other than a box: the drawing starts on (or ends on) the part of the old box its shape fits.
     const [a, b] = own === 'from' ? [fb, fitted(tb, fb, fit)] : [fitted(fb, tb, fit), tb];
     const c = copyOf(s, own === 'from' ? a : b, true);
-    tracks.push({ el: c, frames: boxFlight(a, b, own).frames.map((m) => ({ transform: css(m) })) });
+    // Two drawings of other shapes and no image (the bar's thin seek bar and the sheet's waveform): the old
+    // travels too, stretched the same way, and they crossfade all the way, so neither look shows at the wrong end.
+    const differ = !from.res && !dest.res && !from.el.querySelector('img') && shape(from.el) !== shape(to);
+    tracks.push({ el: c, frames: boxFlight(a, b, own).frames.map((m, k) => ({ transform: css(m), ...(differ && { opacity: k }) })) });
     copies.push(c);
     lands = starts = c;
+    if (differ) {
+      const old = copyOf(from, fb, true);
+      tracks.push({ el: old, frames: boxFlight(fb, tb, 'from').frames.map((m, k) => ({ transform: css(m), opacity: 1 - k })) });
+      copies.unshift(old);
+      starts = old;
+    }
   }
   for (const c of copies) {
     c.style.visibility = 'hidden';
     root.append(c);
   }
-  // Shown with the originals hidden in one go, once decoded (a cached image: at once).
+  // Shown with the originals hidden in one go, once decoded. Loaded already (the copies decode as they
+  // paint): at once, so the real element is never drawn a frame where it isn't yet (a row moving up).
   const images = copies.flatMap((c) => [...c.querySelectorAll('img')]);
-  const decoded = Promise.race([Promise.allSettled(images.map((i) => i.decode())), new Promise((r) => setTimeout(r, 100))]);
   let over = false;
-  void decoded.then(() => {
+  const swap = () => {
     if (over) return;
     for (const c of copies) c.style.visibility = 'visible';
     from.el.style.visibility = to.style.visibility = 'hidden';
-  });
+  };
+  if (images.every((i) => i.complete && i.naturalWidth)) swap();
+  else void Promise.race([Promise.allSettled(images.map((i) => i.decode())), new Promise((r) => setTimeout(r, 100))]).then(swap);
   const name = to.dataset.move ?? '';
   return {
     tracks,

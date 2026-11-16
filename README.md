@@ -83,7 +83,8 @@ control isn't an add-on: it's the normal code path.
   every transition is a function of progress that a clock plays or a finger
   drives, shared elements are declared in markup, and a browser check (run
   headless and on the phone) fails any element that doesn't land exactly
-  where it belongs, screens and now playing alike (short transform and
+  where it belongs, screens and now playing alike, or anything that jumps
+  under the finger or starts anywhere but where it was (short transform and
   opacity transitions, nothing running while idle).
 
 **Remote control and integrations**

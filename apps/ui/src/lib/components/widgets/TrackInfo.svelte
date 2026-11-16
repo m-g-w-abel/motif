@@ -63,8 +63,8 @@
   {#if style === 'hero'}
     <div class="hero-title">
       <div class="names">
-        <h1 use:marquee={scrolling}><span class="marquee" data-move={playing ? 'title:now' : undefined} data-span="under">{track ? trackTitle(track) : none}</span></h1>
-        {#if track}<p class="hero-artist" use:marquee={scrolling}><span class="marquee" data-move={playing ? 'artist:now' : undefined} data-span="under">{track.artist ?? 'Unknown artist'}</span></p>{/if}
+        <h1 use:marquee={scrolling}><span class="marquee" data-move={playing ? 'title:now' : undefined}>{track ? trackTitle(track) : none}</span></h1>
+        {#if track}<p class="hero-artist" use:marquee={scrolling}><span class="marquee" data-move={playing ? 'artist:now' : undefined}>{track.artist ?? 'Unknown artist'}</span></p>{/if}
       </div>
       {@render aside?.()}
     </div>

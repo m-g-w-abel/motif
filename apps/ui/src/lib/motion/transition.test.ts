@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { motion } from './stage.svelte';
-import { CURVE, DURATION, Transition, type Track } from './transition';
+import { CATCH, CURVE, DURATION, follow, Transition, type Drive, type Track } from './transition';
 
 describe('CURVE', () => {
   it('runs from 0 to 1, and its inverse undoes it', () => {
@@ -168,6 +168,100 @@ describe('Transition', () => {
     const u = new Transition([track()]);
     void u.play(1);
     expect(made[1].log.at(-1)).toBe('play 1');
+  });
+});
+
+/** Frames by hand: `paint(ms)` runs what waits for the next frame, that long after the first. */
+let frames: FrameRequestCallback[] = [];
+const paint = (at: number) => {
+  const now = frames;
+  frames = [];
+  for (const f of now) f(at);
+};
+
+describe('follow', () => {
+  beforeEach(() => {
+    frames = [];
+    vi.stubGlobal('requestAnimationFrame', (f: FrameRequestCallback) => frames.push(f));
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A drive that records what it draws. */
+  const drawn = () => {
+    const at: number[] = [];
+    const released: boolean[] = [];
+    return {
+      at,
+      released,
+      seek: (p: number) => void at.push(p),
+      release: (c: boolean) => void released.push(c),
+    };
+  };
+
+  it('draws from the first move: what is drawn meanwhile carries on exactly where the transition takes over', async () => {
+    let built!: (d: Drive) => void;
+    const early: number[] = [];
+    const d = follow(new Promise<Drive>((r) => (built = r)), {
+      early: (p) => early.push(p),
+    });
+    d.seek(0.1);
+    d.seek(0.2);
+    expect(early).toEqual([0.1, 0.2]);
+    const t = drawn();
+    built(t);
+    await settle();
+    // Its first frame is where the early drawing was, so nothing jumps.
+    expect(t.at).toEqual([0.2]);
+    d.seek(0.25);
+    paint(0);
+    expect(t.at.at(-1)).toBeCloseTo(0.2);
+    paint(CATCH);
+    expect(t.at.at(-1)).toBeCloseTo(0.25);
+  });
+
+  it('catches up with the finger smoothly when it took over behind it (built while the finger moved), never jumping', async () => {
+    const t = drawn();
+    const d = follow(t, { from: 0 });
+    // The build held the main thread; these moves arrive before its first frame.
+    d.seek(0.3);
+    d.seek(0.5);
+    paint(0);
+    expect(t.at.at(-1)).toBe(0);
+    let last = 0;
+    for (let ms = 16; ms <= CATCH + 16; ms += 16) {
+      paint(ms);
+      const p = t.at.at(-1)!;
+      expect(p).toBeGreaterThanOrEqual(last);
+      expect(p - last).toBeLessThan(0.2);
+      last = p;
+    }
+    expect(last).toBeCloseTo(0.5);
+    // Caught up: it follows the finger exactly.
+    d.seek(0.6);
+    expect(t.at.at(-1)).toBe(0.6);
+  });
+
+  it('lets go from where it is drawn, built or not', async () => {
+    const t = drawn();
+    const d = follow(t);
+    d.seek(0.4);
+    d.release(true);
+    paint(16);
+    expect(t.at).toEqual([0]);
+    expect(t.released).toEqual([true]);
+    let built!: (d: Drive | null) => void;
+    const u = drawn();
+    const e = follow(new Promise<Drive | null>((r) => (built = r)), {
+      early: () => {},
+    });
+    e.seek(0.3);
+    e.release(false);
+    e.release(true);
+    built(u);
+    await settle();
+    expect(u.at).toEqual([0.3]);
+    expect(u.released).toEqual([false]);
   });
 });
 

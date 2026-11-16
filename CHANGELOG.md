@@ -5,6 +5,16 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Smoother now playing and queue**: pulling now playing up or a handle
+  starts moving under your finger straight away instead of pausing and then
+  jumping, and everything moves from the start of the animation. Changing
+  between now playing and the half or full queue no longer makes the
+  controls, title or queue rows jump; reordering the queue moves the other
+  songs aside smoothly, and letting go glides the song into place. The seek
+  bar fades into the waveform as it grows instead of turning into it at once.
+- **Headers scroll with their lists**: the title and buttons at the top of
+  Albums, All Songs, Playlists and the recent lists now scroll away with the
+  list, so going back to an album never leaves its cover cut off under them.
 - **Album colours at start-up**: with art colours on, Motif now opens in the
   last album's colours instead of showing the plain theme until the music loads.
 - **Animated screen changes**: opening and leaving a view slides it, and an

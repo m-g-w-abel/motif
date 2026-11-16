@@ -190,3 +190,70 @@ export class Transition implements Drive {
     this.#over();
   }
 }
+
+/** How long a transition that took over behind the finger takes to catch up with it (ms). */
+export const CATCH = 120;
+
+/**
+ * What a finger drives (docs/ANIMATION.md, Following the finger): every
+ * gesture goes through this, so none jumps. The transition may still be
+ * being built (laid out, waiting for data, measured) or may have held the
+ * main thread while the finger moved on. Meanwhile `early` draws what it
+ * can, exactly with the finger; the transition then takes over where that
+ * left the drawing (else at `from`) on its first frame and catches up with
+ * the finger over `CATCH` ms, after which it follows it exactly. Letting go
+ * plays on from what is drawn, built or not.
+ */
+export function follow(build: Drive | null | Promise<Drive | null>, { early, from = 0 }: { early?: (p: number) => void; from?: number } = {}): Drive {
+  let t: Drive | null = null;
+  /** The finger's progress, and what is drawn. */
+  let q = from;
+  let shown = from;
+  let released: boolean | null = null;
+  /** Catching up: the gap between the drawing and the finger on the transition's first frame, and when that was. */
+  let catching: { gap: number; since: number } | null = null;
+  let live = false;
+  const draw = (p: number) => {
+    shown = p;
+    t!.seek(p);
+  };
+  const step = (now: number) => {
+    if (released !== null) return;
+    catching ??= { gap: shown - q, since: now };
+    const k = 1 - (now - catching.since) / CATCH;
+    if (k <= 0) {
+      catching = null;
+      return draw(q);
+    }
+    draw(q + catching.gap * k * k);
+    requestAnimationFrame(step);
+  };
+  const take = (built: Drive | null) => {
+    t = built;
+    if (!t) return;
+    t.seek(shown);
+    if (released !== null) return void t.release(released);
+    requestAnimationFrame((now) => {
+      live = true;
+      step(now);
+    });
+  };
+  if (build instanceof Promise) void build.then(take);
+  else take(build);
+  return {
+    seek(p) {
+      if (released !== null) return;
+      q = p;
+      if (!t) {
+        if (!early) return;
+        early(p);
+        shown = p;
+      } else if (live && !catching) draw(p);
+    },
+    release(commit) {
+      if (released !== null) return;
+      released = commit;
+      if (t) void t.release(commit);
+    },
+  };
+}

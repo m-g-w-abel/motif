@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { tick, untrack } from 'svelte';
   import { groupConsecutive } from '../../albums';
   import { getApp, getViewState } from '../../context';
@@ -32,6 +33,7 @@
     artists = true,
     oncolumns,
     shownColumns = $bindable(),
+    header,
   }: {
     cardSize: number;
     columns?: number;
@@ -52,6 +54,8 @@
     oncolumns?: (n: number | null) => void;
     /** The columns shown, for a view's options. */
     shownColumns?: number;
+    /** What scrolls above the cards (a category's head). */
+    header?: Snippet;
   } = $props();
   /** What its cards open, for their cover and title to fly to the page (`lib/motion/stage.svelte.ts`). */
   const kind = $derived(items === 'playlists' ? 'playlist' : 'album');
@@ -257,6 +261,10 @@
   let width = $state(0);
   let viewHeight = $state(0);
   let scrollTop = $state(0);
+  /** Where the cards start in the scroller, below the header. */
+  let listTop = $state(0);
+  /** How far the cards themselves are scrolled. */
+  const rowsTop = $derived(Math.max(0, scrollTop - listTop));
   let cardHeight = $state(0);
   let list = $state<HTMLElement>();
   // `width` includes the 16px side padding.
@@ -303,8 +311,8 @@
   });
   const rowHeight = $derived((cardHeight || (grid ? cardSize + 48 : 48)) + GAP);
   const rowCount = $derived(Math.ceil(count / columns));
-  const firstRow = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - 1));
-  const lastRow = $derived(Math.min(rowCount, Math.ceil((scrollTop + viewHeight) / rowHeight) + 1));
+  const firstRow = $derived(Math.max(0, Math.floor(rowsTop / rowHeight) - 1));
+  const lastRow = $derived(Math.min(rowCount, Math.ceil((rowsTop + viewHeight) / rowHeight) + 1));
   const visible = $derived.by(() => {
     const indices = [];
     for (let i = firstRow * columns; i < Math.min(count, lastRow * columns); i++) indices.push(i);
@@ -364,7 +372,7 @@
     else anchor = to;
     cursor = to;
     viewHeight = scroller.clientHeight; // the bound value can lag a layout change
-    const top = Math.floor(to / columns) * rowHeight + GAP;
+    const top = listTop + Math.floor(to / columns) * rowHeight + GAP;
     scroller.scrollTop = scrollInto(scroller.scrollTop, scroller.clientHeight, top - GAP, top + rowHeight - GAP);
     scrollTop = scroller.scrollTop;
     await tick();
@@ -427,26 +435,26 @@
     if (!scroller) return;
     // Cards are measured once drawn; until then the estimate stands.
     const row = (list?.querySelector('li')?.offsetHeight || cardHeight || cardSize + 48) + GAP;
-    scroller.scrollTop = Math.max(0, Math.floor(index / columns) * row - (scroller.clientHeight - row) / 2);
+    scroller.scrollTop = Math.max(0, listTop + Math.floor(index / columns) * row - (scroller.clientHeight - row) / 2);
   }
   $effect(() => {
-    const top = scrollTop;
+    const top = rowsTop;
     untrack(() => {
       const row = Math.ceil(top / rowHeight);
       anchorOffset = top - row * rowHeight;
       albums?.setAnchor(row * columns);
       if (albums) albums.onShift = (index) => {
-        if (scroller) scroller.scrollTop = Math.ceil(index / columns) * rowHeight + anchorOffset;
+        if (scroller) scroller.scrollTop = listTop + Math.ceil(index / columns) * rowHeight + anchorOffset;
       };
     });
   });
 
   // The scrollbar snaps to rows and names the top row's sort value; albums
   // only know their artist, title and year.
-  const snaps = $derived(Array.from({ length: rowCount }, (_, row) => row * rowHeight));
+  const snaps = $derived(Array.from({ length: rowCount }, (_, row) => listTop + row * rowHeight));
   function topLabel() {
     const key = sort[0]?.key;
-    const album = card(Math.round(scrollTop / rowHeight) * columns);
+    const album = card(Math.round(rowsTop / rowHeight) * columns);
     if (!album || !['album_artist', 'artist', 'album', 'year'].includes(key)) return undefined;
     return sortLabel(key, { album_artist: album.artist, artist: album.artist, album: album.title, year: album.year });
   }
@@ -457,7 +465,10 @@
     void mode;
     void titles;
     void artists;
-    const frame = requestAnimationFrame(() => (cardHeight = list?.querySelector('li')?.offsetHeight ?? 0));
+    const frame = requestAnimationFrame(() => {
+      cardHeight = list?.querySelector('li')?.offsetHeight ?? 0;
+      listTop = list && scroller ? list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop : 0;
+    });
     return () => cancelAnimationFrame(frame);
   });
 </script>
@@ -478,6 +489,7 @@
       if (memoryKey && arrived) scrollMemory.set(memoryKey, scrollTop);
     }}
   >
+    {@render header?.()}
     <ul
       class:rows={!grid}
       class:covers={mode === 'covers'}

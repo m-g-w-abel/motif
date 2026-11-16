@@ -113,7 +113,7 @@
     void settings.current.density;
     const frame = requestAnimationFrame(() => {
       cardHeight = list?.querySelector('li')?.offsetHeight ?? 0;
-      listTop = list?.offsetTop ?? 0;
+      listTop = list && scroller ? list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop : 0;
     });
     return () => cancelAnimationFrame(frame);
   });
