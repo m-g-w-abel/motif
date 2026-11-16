@@ -432,6 +432,13 @@ before the rest (Checking).
   four rounds): tap open and swipe back run at 60 fps with at most one
   dropped frame; the swipe back's 50 ms first frame (rendering the screen
   beneath) is gone.
+  The now-playing sheet (2026-11-16, four rounds each, 700 ms from the
+  start): opening by tap averages 16.7–17.2 ms per frame (at most one frame
+  over 20 ms, once 38 ms); every step change (half, full, back, lyrics, by
+  tap or drag), opening by drag and closing by tap run at 16.7 ms with none
+  over 20 ms. Closing by dragging now playing down drops 2–4 frames
+  (33 ms, once 67 ms): one long frame with no script and little layout, as
+  the transition first takes hold under the finger; to look into.
 - **A frozen frame** (`?dev-scrub=0.3`, dev builds): the next transition
   stops at that progress instead of playing, to inspect on the phone or in
   WebKitGTK; the next change ends it.
