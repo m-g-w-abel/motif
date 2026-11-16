@@ -476,6 +476,25 @@ impl Player {
         }
     }
 
+    /// Takes the current file's ReplayGain values again after loudness
+    /// measurements finished: the rest of its album being measured gives it
+    /// the album gain the following tracks get.
+    pub fn refresh_gain(&mut self, resolver: &dyn Resolver) {
+        let Some(item) = self.current_item() else {
+            return;
+        };
+        let (id, fresh) = (item.id, resolver.resolve(&item.track));
+        if let (
+            Some((resolved, Playable::File(path, tags))),
+            Ok(Playable::File(new_path, new_tags)),
+        ) = (&mut self.resolved, fresh)
+            && *resolved == id
+            && *path == new_path
+        {
+            *tags = new_tags;
+        }
+    }
+
     /// What the current entry resolved to, once [`Self::resolve_current`] has run.
     pub fn playable(&self) -> Option<&Playable> {
         let (id, playable) = self.resolved.as_ref()?;
@@ -1859,6 +1878,45 @@ mod tests {
         assert!(
             resolver.0.lock().unwrap().is_empty(),
             "nothing is measured with ReplayGain off"
+        );
+    }
+
+    /// Each file's own loudness is known; the album's only once `.0` is set.
+    #[derive(Default)]
+    struct AlbumMeasuredLater(std::sync::atomic::AtomicBool);
+    impl Resolver for AlbumMeasuredLater {
+        fn resolve(&self, track: &TrackRef) -> Result<Playable, String> {
+            let album = self.0.load(std::sync::atomic::Ordering::Relaxed);
+            let tags = ReplayGain {
+                album_gain: album.then_some(-4.0),
+                album_peak: album.then_some(0.5),
+                ..TAGS
+            };
+            Ok(Playable::File(track.id.clone().into(), tags))
+        }
+    }
+
+    #[test]
+    fn the_current_track_takes_album_gain_once_the_album_is_measured() {
+        let t0 = Instant::now();
+        let mut p = Player::default();
+        let album = Command::SetContext {
+            tracks: vec![track("a", 1000), track("b", 1000)],
+            start: Some(0),
+            kind: ContextKind::Album,
+            label: None,
+        };
+        p.apply(album, t0).unwrap();
+        let resolver = AlbumMeasuredLater::default();
+        p.resolve_current(&resolver, t0);
+        let gain = |p: &Player| p.snapshot(t0, 0).gain_db;
+        assert_eq!(gain(&p), Some(-6.0), "track gain until the album is known");
+        resolver.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        p.refresh_gain(&resolver);
+        assert_eq!(
+            gain(&p),
+            Some(-4.0),
+            "a plays at the album gain b and the rest will get"
         );
     }
 
