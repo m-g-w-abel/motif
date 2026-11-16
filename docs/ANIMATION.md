@@ -286,6 +286,14 @@ of a `{#key}` block with Svelte transitions:
 Each screen restores its own scroll position on mount (albums grid, song
 lists), so a swipe back can fly a cover to its row further down.
 
+**First data.** A screen coming in is laid out, unseen, for a frame, and
+then waits (at most 250 ms) while anything in it is `aria-busy`: lists
+until their first rows arrive (`SongList`, `AlbumGrid`), an album's or
+playlist's page until its songs do. Before, on the phone, the rows arrived
+a frame or two after the slide had started and popped in. An album's or
+playlist's page always opens at the top (no scroll memory), so what flies
+to it lands where it rests; lists (the albums grid, song lists) keep theirs.
+
 **Kept beneath.** After a change forward, the screen it came from stays
 mounted, hidden and inert, beneath the new one; back (tap or swipe) to it
 starts at once, with nothing to render (rendering it at the swipe's start

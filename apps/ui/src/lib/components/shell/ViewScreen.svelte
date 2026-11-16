@@ -76,6 +76,7 @@
   let show = $state(lastShown.get(view.kind) ?? 'songs');
   const recents = view.kind === 'played' || view.kind === 'added';
   const collection = $derived(view.kind === 'albums' || view.kind === 'playlists' || (recents && show === 'albums'));
+  /** An album's or playlist's page: it always opens at the top (no scroll memory), so what flies to it lands where it rests. */
   const page = view.kind === 'album' || view.kind === 'playlist';
   const songView = $derived(!collection && (view.kind === 'songs' || page || recents));
   const optionsKey = $derived.by((): OptionsKey | null => {
@@ -114,6 +115,8 @@
 
   // An album's or playlist's songs are all fetched; the page's search filters them here.
   let rows = $state.raw<{ track: TrackRef; details?: LibraryTrack; item?: string }[]>([]);
+  /** The page's songs have arrived (a screen sliding in waits for them). */
+  let arrived = $state(false);
   $effect(() => {
     if (view.kind === 'album') {
       if (isDemo) {
@@ -124,12 +127,14 @@
       engine
         .query({ type: 'album_tracks', albums: [view.key], sort: [] })
         .then((r) => r.type === 'tracks' && (rows = r.tracks.map((details) => ({ track: details.track, details }))))
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => (arrived = true));
     } else if (view.kind === 'playlist' && playlists.revision) {
       playlists
         .entries(view.id)
         .then((entries) => (rows = entries.map((e) => ({ track: e.track.track, details: e.track, item: e.item }))))
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => (arrived = true));
     }
   });
   const shown = $derived(rows.filter((r) => matches(r.track, area.browse.search)));
@@ -245,14 +250,18 @@
     </div>
     <h2 data-move={`title:${card}`}>{title}</h2>
     <p class="line">
-      {#if view.kind === 'album'}{first ? albumLine(first.track, first.details) : ''}{:else}{rows.length}
+      {#if view.kind === 'album'}
+        {@const line = first ? albumLine(first.track, first.details) : { artist: view.artist ?? '', year: undefined }}
+        <!-- The tile's artist until the songs arrive, so it has somewhere to fly to. -->
+        <span data-move={`artist:${card}`}>{line.artist}</span>{line.year ? ` · ${line.year}` : ''}
+      {:else}{rows.length}
         {rows.length === 1 ? 'song' : 'songs'}{/if}
     </p>
     {@render toolbar()}
   </div>
 {/snippet}
 
-<section class="view" aria-label={title}>
+<section class="view" aria-label={title} aria-busy={page && !isDemo && !arrived}>
   <!-- Phones have no bar here: back is in a category's head (or a swipe), the home's menu by its title. -->
   {#if !views.phone || (playlist && editing)}
   <header class="toolbar" {...drag}>
@@ -343,8 +352,8 @@
         titles={options.titles}
         artists={options.artists}
         oncolumns={(columns) => optionsKey && settings.setView(optionsKey, { columns })}
-        onopen={(key, title, art) =>
-          views.open(view.kind === 'playlists' ? { kind: 'playlist', id: key, name: title } : { kind: 'album', key, title, art })}
+        onopen={(key, title, art, artist) =>
+          views.open(view.kind === 'playlists' ? { kind: 'playlist', id: key, name: title } : { kind: 'album', key, title, art, artist })}
       />
     {:else if view.kind === 'search'}
       <SearchView />
@@ -364,7 +373,7 @@
         header={page ? hero : undefined}
         openAlbum={view.kind === 'album' ? undefined : openAlbum}
         onremove={removeEntries}
-        memory={`view:${JSON.stringify(view)}`}
+        memory={page ? undefined : `view:${JSON.stringify(view)}`}
       />
     {:else}
       <p class="placeholder">{viewTitle(view)} shows here soon.</p>

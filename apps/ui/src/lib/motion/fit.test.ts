@@ -111,6 +111,21 @@ describe('textFlight between two weights', () => {
   });
 });
 
+describe('textFlight with a scale', () => {
+  it('scales the words by the given ratio (the font sizes), not the rounded glyph boxes, still level with the old words', () => {
+    const from = box(0, 0, 100, 20);
+    const fromGlyph = box(0, 3, 8, 16);
+    const to = box(0, 100, 100, 20);
+    const toGlyph = box(0, 103, 7, 13);
+    const f = textFlight({ from, fromGlyph, to, toGlyph, steps: 2, scale: 13 / 11.44 });
+    const start = compose(f.clip[0], f.dest[0]);
+    expect(start.sy).toBeCloseTo(13 / 11.44, 6);
+    // The new glyph's centre lies on the old glyph's centre.
+    const centre = start.sy * (toGlyph.top - to.top + toGlyph.height / 2) + start.y + to.top;
+    expect(centre).toBeCloseTo(fromGlyph.top + fromGlyph.height / 2, 6);
+  });
+});
+
 describe('fitted', () => {
   it('stretches by default, keeps the shape scaled evenly about the centre, or stretches a line across only', () => {
     const from = box(0, 100, 400, 4);

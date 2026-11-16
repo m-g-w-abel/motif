@@ -98,7 +98,7 @@
   let songList = $state<SongList>();
   let grid = $state<AlbumGrid>();
 
-  const openAlbum = (key: string, title: string, art?: string | null) => views.open({ kind: 'album', key, title, art });
+  const openAlbum = (key: string, title: string, art?: string | null, artist?: string) => views.open({ kind: 'album', key, title, art, artist });
   /** An artist's row: search for them, to see their albums and songs. */
   function pickArtist(name: string) {
     filter = 'All';
@@ -146,11 +146,11 @@
 
 {#snippet albumRow(album: LibraryAlbum)}
   <li>
-    <button class="album" onclick={() => openAlbum(album.key, album.title, album.art)}>
+    <button class="album" onclick={() => openAlbum(album.key, album.title, album.art, album.artist)}>
       <span class="cover" data-move={`cover:album:${album.key}`}><Artwork track={undefined} art={album.art} title={album.title} /></span>
       <span class="lines">
         <span class="title" data-move={`title:album:${album.key}`}>{album.title || 'Unknown album'}</span>
-        <span class="artist">{album.artist || 'Unknown artist'}</span>
+        <span class="artist" data-move={`artist:album:${album.key}`}>{album.artist || 'Unknown artist'}</span>
         <span class="meta">
           {album.tracks}
           {album.tracks === 1 ? 'song' : 'songs'} · {formatTime(album.duration_ms)}{album.year ? ` · ${album.year}` : ''}
@@ -277,8 +277,8 @@
           mode="covers"
           items={filter === 'Playlists' ? 'playlists' : 'albums'}
           sort={filter === 'Albums' ? ALBUM_SORT : undefined}
-          onopen={(key, title, art) =>
-            filter === 'Playlists' ? views.open({ kind: 'playlist', id: key, name: title }) : openAlbum(key, title, art)}
+          onopen={(key, title, art, artist) =>
+            filter === 'Playlists' ? views.open({ kind: 'playlist', id: key, name: title }) : openAlbum(key, title, art, artist)}
         />
       {/key}
     {:else}

@@ -64,8 +64,25 @@ export function boxFlight(from: Box, to: Box, copy: 'from' | 'to') {
  * the same width all the way: the old at its own width at the start, the new
  * at its own at the end.
  */
-export function textFlight({ from, fromGlyph, to, toGlyph, steps, ink }: { from: Box; fromGlyph: Box; to: Box; toGlyph: Box; steps: number; ink?: { from: number; to: number } }) {
-  const s = fromGlyph.height / toGlyph.height;
+export function textFlight({
+  from,
+  fromGlyph,
+  to,
+  toGlyph,
+  steps,
+  ink,
+  scale,
+}: {
+  from: Box;
+  fromGlyph: Box;
+  to: Box;
+  toGlyph: Box;
+  steps: number;
+  ink?: { from: number; to: number };
+  /** How much larger the old words are drawn (their font sizes'), when known: glyph boxes are rounded to whole pixels. */
+  scale?: number;
+}) {
+  const s = scale ?? fromGlyph.height / toGlyph.height;
   const a = local(fromGlyph, to);
   const b = local(toGlyph, to);
   const words0: Map2 = { sx: s, sy: s, x: a.left - s * b.left, y: a.top + a.height / 2 - s * (b.top + b.height / 2) };

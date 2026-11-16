@@ -213,7 +213,8 @@
   }
 </script>
 
-<section class="song-list" class:selecting>
+<!-- Busy until its first rows arrive: a screen sliding in waits for them (`lib/motion/stage.svelte.ts`). -->
+<section class="song-list" class:selecting aria-busy={data.loaded === false}>
   <div
     class="scroll"
     bind:this={scroller}

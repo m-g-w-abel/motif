@@ -41,7 +41,10 @@ grouped by phase of the plan.
   one piece to their place, long titles no longer clip or change colour or
   weight at once, and the seek bar lands where it belongs. Moving between
   now playing, the queue and lyrics moves every part between them, with
-  nothing popping in or out.
+  nothing popping in or out. An album's artist now flies to its page too;
+  album and playlist pages always open at the top, so everything lands in
+  place; and a page opened for the first time slides in with its songs
+  already there instead of them popping in.
 - **Search**: one field for the whole library, with filters for songs,
   albums, artists, album artists, folders and playlists. All shows the
   best-matching artist and their albums first, then other albums, then songs.

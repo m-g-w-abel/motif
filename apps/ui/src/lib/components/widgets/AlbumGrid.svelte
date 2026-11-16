@@ -38,7 +38,7 @@
     /** Where the grid sits in its layout; its scroll position is remembered per layout. */
     at?: string;
     /** Opens an album's page on a plain click or Enter, instead of selecting it (the Albums view). */
-    onopen?: (key: string, title: string, art?: string | null) => void;
+    onopen?: (key: string, title: string, art?: string | null, artist?: string) => void;
     /** What the cards are: the library's albums, recently played albums, or the saved playlists. */
     items?: 'albums' | 'played' | 'playlists';
     /** The order instead of the view's (library albums only). */
@@ -219,7 +219,7 @@
   function release(e: MouseEvent, i: number) {
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
     const album = card(i);
-    if (onopen && album) onopen(album.key, album.title, album.art);
+    if (onopen && album) onopen(album.key, album.title, album.art, album.artist);
     else select(i);
   }
 
@@ -330,7 +330,7 @@
   async function onKey(e: KeyboardEvent, i: number, album: Card) {
     if (e.key === 'Enter') {
       e.preventDefault(); // the button's own Enter would only select
-      if (onopen) onopen(album.key, album.title, album.art);
+      if (onopen) onopen(album.key, album.title, album.art, album.artist);
       else playAll(album);
       return;
     }
@@ -462,7 +462,8 @@
   });
 </script>
 
-<section class="album-grid">
+<!-- Busy until its first cards arrive: a screen sliding in waits for them (`lib/motion/stage.svelte.ts`). -->
+<section class="album-grid" aria-busy={albums ? !albums.loaded : false}>
   <!-- Esc does the same from the keyboard. -->
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
@@ -517,11 +518,11 @@
               {/if}
               {#if grid}
                 {#if titles}<span class="title" data-move={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>{/if}
-                {#if artists}<span class="artist">{album.artist || 'Unknown artist'}</span>{/if}
+                {#if artists}<span class="artist" data-move={`artist:${kind}:${album.key}`}>{album.artist || 'Unknown artist'}</span>{/if}
               {:else}
                 <span class="text">
                   <span class="title" data-move={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>
-                  <span class="artist">{album.artist || 'Unknown artist'}</span>
+                  <span class="artist" data-move={`artist:${kind}:${album.key}`}>{album.artist || 'Unknown artist'}</span>
                 </span>
               {/if}
             </button>

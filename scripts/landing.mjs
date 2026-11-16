@@ -238,7 +238,8 @@ try {
       await open("dev-view=search", 384, 820);
       await run("const i = document.querySelector('main > .screen:not([inert]) input[type=search]'); i.value = 'Short'; i.dispatchEvent(new Event('input', { bubbles: true }))");
       await until("!!document.querySelector('main > .screen:not([inert]) button.album img')?.complete");
-      await check(`${phone_}: open an album from Search`, tap("document.querySelector('main > .screen:not([inert]) button.album')"), 2);
+      // Cover, title and artist.
+      await check(`${phone_}: open an album from Search`, tap("document.querySelector('main > .screen:not([inert]) button.album')"), 3);
       await check(`${phone_}: swipe back to Search`, () => swipe(20, 300, 410), 2);
       for (const [label, w, h] of [
         [phone_, 384, 820],
@@ -247,10 +248,10 @@ try {
         if (label === "desktop" && (scale !== 100 || font)) continue;
         if (!(await open("dev-view=albums", w, h))) continue;
         await until(`!!${card}?.querySelector('img')?.complete`);
-        await check(`${label}: open an album`, tap(card), 2);
+        await check(`${label}: open an album`, tap(card), 3);
         if (label === "desktop") {
           await check(`${label}: back by the button`, tap("document.querySelector('main > .screen:not([inert]) .back')"), 2);
-          await check(`${label}: open it again`, tap(card), 2);
+          await check(`${label}: open it again`, tap(card), 3);
         }
         await check(`${label}: swipe back`, () => swipe(20, w * 0.8, h / 2), 2);
         await check(`${label}: swipe back cancelled`, async () => {
@@ -260,6 +261,15 @@ try {
           await swipe(20, 40, h / 2);
         }, 0);
       }
+      // An album page always opens at the top, so what flies to it lands where it rests: scrolled down, back, and open again.
+      await open("dev-view=albums", 384, 560);
+      await until(`!!${card}?.querySelector('img')?.complete`);
+      await check(`${phone_}: open an album to scroll`, tap(card), 3);
+      const scroller = "[...document.querySelectorAll('main > .screen:not([inert]) *')].find((e) => e.scrollHeight > e.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(e).overflowY))";
+      if (!(await run(`(() => { const s = ${scroller}; if (!s) return false; s.scrollTop = s.scrollHeight; return s.scrollTop > 20; })()`))) failures.push(`${phone_}: the album page didn't scroll`);
+      await check(`${phone_}: swipe back from the scrolled album`, () => swipe(20, 300, 280), 2);
+      await check(`${phone_}: open the album again`, tap(card), 3);
+      if (await run(`(${scroller})?.scrollTop`)) failures.push(`${phone_}: the album page opened scrolled`);
       await sheet(phone_);
     }
     if (!phone) {

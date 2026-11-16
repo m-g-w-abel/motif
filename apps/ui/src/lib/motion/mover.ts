@@ -173,7 +173,10 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
     // Whole words at both ends (one line, not cut off): their widths, so another weight doesn't ghost.
     const whole = (x: Seen) => !x.cut && x.box.height < 2 * x.glyph.height;
     const ink = whole(from) && whole(dest) ? { from: from.ink / z, to: dest.ink / z } : undefined;
-    const f = textFlight({ from: fb, fromGlyph: fg, to: tb, toGlyph: tg, steps: STEPS, ink });
+    // In the same font, the sizes' ratio is exact; glyph boxes are whole pixels (a 5% hop on small text).
+    const sizes = [from, dest].map((x) => parseFloat(x.look['font-size']));
+    const scale = from.look['font-family'] === dest.look['font-family'] && sizes[0] && sizes[1] ? sizes[0] / sizes[1] : undefined;
+    const f = textFlight({ from: fb, fromGlyph: fg, to: tb, toGlyph: tg, steps: STEPS, ink, scale });
     const clip = document.createElement('div');
     Object.assign(clip.style, {
       position: 'fixed',
@@ -255,7 +258,10 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
         const scale = shows.getBoundingClientRect().height / ((shows.offsetHeight || 1) * rootZoom());
         landings.push({
           name: landed ? name : `${name} (back)`,
-          box: Math.max(Math.abs(a.left - b.left), Math.abs(a.top - b.top), Math.abs(a.width - b.width), Math.abs(a.height - b.height)),
+          // Words by their left, width and centre line: the height of a run of text is its font's, rounded to whole pixels at each size.
+          box: dest.text
+            ? Math.max(Math.abs(a.left - b.left), Math.abs(a.width - b.width), Math.abs(a.top + a.height / 2 - b.top - b.height / 2))
+            : Math.max(Math.abs(a.left - b.left), Math.abs(a.top - b.top), Math.abs(a.width - b.width), Math.abs(a.height - b.height)),
           look: (from.text ? LANDING : []).filter((p) => (p === 'font-size' ? Math.abs(parseFloat(la.fontSize) * scale - parseFloat(lb.fontSize)) > 0.5 : la.getPropertyValue(p) !== lb.getPropertyValue(p))),
         });
       }

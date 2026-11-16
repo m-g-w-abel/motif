@@ -19,6 +19,8 @@ export interface Screen {
 const UNDER = '-8%';
 /** How long shared elements that haven't appeared yet (a grid's cards) are looked for. */
 const WAIT = 500;
+/** How long a screen coming in may wait for its first data (`aria-busy`), so its rows come with it instead of popping in. */
+const WAIT_DATA = 250;
 
 const frame = () => new Promise((r) => requestAnimationFrame(r));
 
@@ -139,9 +141,11 @@ export class Stage<S extends Screen> {
       return null;
     }
     if (!kept) {
-      // Laid out, unseen, for a frame: its cards, its scroll position.
+      // Laid out, unseen, for a frame: its cards, its scroll position; and until its first data is in, briefly.
       toEl.style.visibility = 'hidden';
-      await frame();
+      const since = performance.now();
+      do await frame();
+      while (toEl.querySelector('[aria-busy="true"]') && performance.now() - since < WAIT_DATA && token === this.#token);
       if (token !== this.#token) return null;
     }
     // Shown in the same task as its first frame is set (no paint between).

@@ -12,7 +12,7 @@ export type View =
   | { kind: 'playlists' }
   | { kind: 'played' }
   | { kind: 'added' }
-  | { kind: 'album'; key: string; title: string; art?: string | null }
+  | { kind: 'album'; key: string; title: string; art?: string | null; artist?: string }
   | { kind: 'playlist'; id: string; name: string }
   | { kind: 'search' };
 

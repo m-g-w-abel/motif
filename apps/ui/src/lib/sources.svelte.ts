@@ -19,6 +19,8 @@ export interface TrackListData {
   title: string;
   kind: ListSource;
   readonly count: number;
+  /** False until the first rows (and the count) have arrived, where they are fetched. */
+  readonly loaded?: boolean;
   track(index: number): TrackRef | undefined;
   /** Library fields of a row, where the list has them. */
   details?(index: number): LibraryTrack | undefined;
@@ -52,7 +54,7 @@ export interface TrackListData {
  */
 export type SongListData = Pick<
   TrackListData,
-  'title' | 'count' | 'track' | 'details' | 'key' | 'order' | 'currentKey' | 'play' | 'error' | 'empty' | 'sync' | 'load'
+  'title' | 'count' | 'loaded' | 'track' | 'details' | 'key' | 'order' | 'currentKey' | 'play' | 'error' | 'empty' | 'sync' | 'load'
 >;
 
 const localKey = (engine: EngineClient) => {
@@ -93,6 +95,9 @@ export function playedData(engine: EngineClient, plays: RecentPlays): SongListDa
     title: 'Recently Played',
     get count() {
       return plays.total;
+    },
+    get loaded() {
+      return plays.loaded;
     },
     track: (i) => row(i)?.track.track,
     details: (i) => row(i)?.track,
@@ -186,6 +191,9 @@ function libraryData(
     },
     get count() {
       return list().total;
+    },
+    get loaded() {
+      return list().loaded;
     },
     track: (i) => list().get(i)?.track,
     details: (i) => list().get(i),
