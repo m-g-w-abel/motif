@@ -157,6 +157,8 @@ impl Output {
         match upcoming {
             Some((item, path, tags, gain)) => match &mut self.preloaded {
                 Some(next) if next.item == item && next.path == path => {
+                    // Measured since it was preloaded: the player takes these tags when it starts.
+                    next.tags = tags;
                     if next.gain != gain {
                         audio.set_gain(next.token, gain);
                         next.gain = gain;

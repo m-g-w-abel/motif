@@ -433,9 +433,12 @@ impl Feeder {
         // Converted audio not yet in the ring buffer.
         let mut pending: Vec<f32> = Vec::new();
         let mut sent = 0;
-        // The ReplayGain factor last applied, ramped to each track's over ~10 ms.
+        // The ReplayGain factor last applied, ramped to each track's over ~10 ms,
+        // or faded over about a second when it changes mid-track.
         let mut applied = 1.0f32;
         let ramp = 1.0 / (self.rate as f32 * 0.01);
+        let fade = 1.0 / self.rate as f32;
+        let mut step = ramp;
 
         loop {
             let full = self.producer.slots() < self.channels * 256;
@@ -478,6 +481,7 @@ impl Feeder {
                     next = None;
                     next_request = None;
                     applied = gain;
+                    step = ramp;
                     current = self.open(token, item, &path, gain).and_then(|mut loaded| {
                         let reached = if start.is_zero() {
                             Duration::ZERO
@@ -502,6 +506,9 @@ impl Feeder {
                     next_request = Some((token, item, path, gain));
                 }
                 Some(Command::Gain { token, gain }) => {
+                    if current.as_ref().is_some_and(|loaded| loaded.token == token) {
+                        step = fade;
+                    }
                     for loaded in [&mut current, &mut next].into_iter().flatten() {
                         if loaded.token == token {
                             loaded.gain = gain;
@@ -566,6 +573,7 @@ impl Feeder {
                             next = self.open(token, item, &path, gain);
                         }
                         current = next.take();
+                        step = ramp;
                         match &current {
                             Some(n) => self.lock().start(
                                 stream.next_frame(),
@@ -587,7 +595,7 @@ impl Feeder {
                         current = None;
                     }
                 }
-                apply_gain(&mut pending, self.channels, &mut applied, gain, ramp);
+                apply_gain(&mut pending, self.channels, &mut applied, gain, step);
             }
 
             // Move pending audio into the ring buffer, whole frames at a time.
