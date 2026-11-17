@@ -194,28 +194,34 @@ export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Swipe {
         seek: (p) => drive.seek(p),
         release(commit) {
           drive.release(commit);
-          void t.done.then(() => {
-            if (!commit) return done();
-            // Out of sight until it comes back (or goes, removed).
+          if (!commit) return void t.done.then(done);
+          /** Out of sight until it comes back (or goes, removed). */
+          const out = () => {
             el.style.transform = translate(-w).transform;
             if (strip) strip.style.transform = `translateX(calc(100% - ${w}px))`;
-            const restore = () => {
-              el.style.transform = '';
-              back();
-            };
-            if (does === 'queue') return void setTimeout(restore, 100);
-            // Removed: the strip closes up as the rows below move up into the row's place (the list's own change, same clock).
-            const closes = new MutationObserver(() => {
-              if (el.isConnected) return;
-              closes.disconnect();
-              clearTimeout(refused);
-              if (!strip?.isConnected) return done();
-              const at = strip.style.transform;
-              strip.style.transformOrigin = 'top';
-              void new Transition([{ el: strip, frames: [{ transform: `${at} scaleY(1)` }, { transform: `${at} scaleY(0)` }] }]).play(1).then(done);
-            });
-            if (box) closes.observe(box, { childList: true });
-            const refused = setTimeout(() => {
+          };
+          const restore = () => {
+            el.style.transform = '';
+            back();
+          };
+          if (does === 'queue') return void t.done.then(() => (out(), setTimeout(restore, 100)));
+          // Removed: the strip closes up as the rows below move up into the row's place (the list's own change, same
+          // clock), from where it is drawn: the row can go while it is still sliding out (a short swipe).
+          let refused: ReturnType<typeof setTimeout> | undefined;
+          const closes = new MutationObserver(() => {
+            if (el.isConnected) return;
+            closes.disconnect();
+            clearTimeout(refused);
+            if (!strip?.isConnected) return done();
+            const at = getComputedStyle(strip).transform;
+            strip.style.transformOrigin = 'top';
+            void new Transition([{ el: strip, frames: [{ transform: `${at} scaleY(1)` }, { transform: `${at} scaleY(0)` }] }]).play(1).then(done);
+          });
+          if (box) closes.observe(box, { childList: true });
+          void t.done.then(() => {
+            if (!el.isConnected) return;
+            out();
+            refused = setTimeout(() => {
               closes.disconnect();
               if (el.isConnected) restore();
               else done();

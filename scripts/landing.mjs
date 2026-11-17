@@ -712,6 +712,29 @@ async function queue(label) {
   await sleep(2000);
   const over = await run("motifOverlap");
   if (over > 1) failures.push(`${label}: a removed row's strip covered the next row by ${over.toFixed(0)}px`);
+  // A short, quick swipe: the row can be removed while it is still sliding out.
+  await run(`window.motifOverlap = 0; { const first = document.querySelector('.sheet .queue-slot ol li'); const t0 = performance.now(); const tick = () => {
+    const strip = document.querySelector('.swipe-strip');
+    const next = document.querySelector('.sheet .queue-slot ol li');
+    if (strip && next && !first.isConnected) motifOverlap = Math.max(motifOverlap, strip.getBoundingClientRect().bottom - next.getBoundingClientRect().top);
+    if (performance.now() - t0 < 2000) requestAnimationFrame(tick);
+  }; requestAnimationFrame(tick); } 0`);
+  {
+    const [x, y] = await run("(() => { const r = document.querySelector('.sheet .queue-slot ol li .entry').getBoundingClientRect(); return [r.x + r.width * 0.6, r.y + r.height / 2]; })()");
+    if (phone) await drag(x, y, x - 90, y);
+    else {
+      const at = (i) => [{ x: x - (90 * i) / 4, y, id: 1 }];
+      await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(0) });
+      for (let i = 1; i <= 4; i++) {
+        await sleep(16);
+        await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(i) });
+      }
+      await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    }
+  }
+  await sleep(2000);
+  const short = await run("motifOverlap");
+  if (short > 1) failures.push(`${label}: a row removed by a short swipe left its strip over the next row by ${short.toFixed(0)}px`);
   await run("document.querySelector('.sheet .queue-slot .heading .link')?.click()");
 }
 
