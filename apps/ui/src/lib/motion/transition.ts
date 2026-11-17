@@ -10,8 +10,22 @@ export const DURATION = 260;
 /** With reduced motion: fades only, quicker. */
 const STILL_DURATION = 120;
 
+type Point = [number, number];
+const lerp = (a: Point, b: Point, t: number): Point => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+/** The part of the cubic Bézier `p` from parameter `s0` to `s1` (de Casteljau), itself a cubic Bézier. */
+function part(p: Point[], s0: number, s1: number): Point[] {
+  const split = (q: Point[], t: number) => {
+    const [a, b, c] = [lerp(q[0], q[1], t), lerp(q[1], q[2], t), lerp(q[2], q[3], t)];
+    const [d, e] = [lerp(a, b, t), lerp(b, c, t)];
+    const f = lerp(d, e, t);
+    return { left: [q[0], a, d, f], right: [f, e, c, q[3]] };
+  };
+  const left = split(p, s1).left;
+  return s1 > 0 ? split(left, s0 / s1).right : left;
+}
+
 /** A cubic Bézier timing curve with its inverse, so progress and time convert both ways. */
-function bezier(x1: number, y1: number, x2: number, y2: number) {
+function bezier(x1: number, y1: number, x2: number, y2: number): Curve {
   const b = (a: number, c: number, s: number) => 3 * a * s * (1 - s) ** 2 + 3 * c * s * s * (1 - s) + s ** 3;
   /** The curve's parameter where `f` reaches `v` (f rises from 0 to 1). */
   const solve = (f: (s: number) => number, v: number) => {
@@ -33,7 +47,37 @@ function bezier(x1: number, y1: number, x2: number, y2: number) {
     at: (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : y(solve(x, clamp(t)))),
     /** The time (0 to 1) at which progress reaches `p`. */
     inverse: (p: number) => (p <= 0 ? 0 : p >= 1 ? 1 : x(solve(y, clamp(p)))),
+    /**
+     * The curve between progress `a` and `b`, stretched to fill its own box:
+     * a track over that span with this easing is linear in progress, so a
+     * finger draws it exactly and it plays the same either way.
+     */
+    segment(a: number, b: number): Curve {
+      if (a <= 0 && b >= 1) return this;
+      const [s0, s1] = [a <= 0 ? 0 : solve(y, a), b >= 1 ? 1 : solve(y, b)];
+      const q = part(
+        [
+          [0, 0],
+          [x1, y1],
+          [x2, y2],
+          [1, 1],
+        ],
+        s0,
+        s1,
+      );
+      const [w, h] = [q[3][0] - q[0][0], q[3][1] - q[0][1]];
+      const n = (k: number): Point => [(q[k][0] - q[0][0]) / w, (q[k][1] - q[0][1]) / h];
+      const [c1, c2] = [n(1), n(2)];
+      return bezier(c1[0], c1[1], c2[0], c2[1]);
+    },
   };
+}
+
+interface Curve {
+  css: string;
+  at(t: number): number;
+  inverse(p: number): number;
+  segment(a: number, b: number): Curve;
 }
 
 export const CURVE = bezier(0.2, 0.8, 0.2, 1);
@@ -56,16 +100,23 @@ export interface Drive {
 export const still = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
- * Tracks as paused Web Animations on one clock of `DURATION`, eased by
- * `CURVE`. A span in progress becomes a stretch of that clock through the
- * curve's inverse, so seeking to `p` draws exactly `p` of the way (linear
- * with the finger), and playing on decelerates along the curve.
+ * Tracks as paused Web Animations on one clock of `DURATION`. A span in
+ * progress becomes a stretch of that clock through the curve's inverse, and
+ * its easing is that stretch of the curve (`segment`), so every track is
+ * linear in progress: seeking to `p` draws exactly `p` of the way (linear
+ * with the finger). A clock eases out the way it travels: forwards it plays
+ * the tracks on; backwards (closing, a tap back, a drag springing back) it
+ * plays the mirrored tracks (frames reversed, spans mirrored) on from the
+ * mirrored progress, which draw the same path, so it never eases in.
  */
 export class Transition implements Drive {
   /** Dev builds (`?dev-scrub=0.3`): the next transition stops there instead of playing. */
   static hold: number | null = null;
 
-  readonly #animations: Animation[] = [];
+  readonly #tracks: Track[] = [];
+  #animations: Animation[] = [];
+  /** Drawn by the mirrored tracks: their progress is 1 less ours. */
+  #mirrored = false;
   readonly #still = still();
   readonly #length = this.#still ? STILL_DURATION : DURATION;
   #cleanup?: () => void;
@@ -87,7 +138,8 @@ export class Transition implements Drive {
   get progress() {
     const a = this.#animations[0];
     if (!a || a.currentTime === null) return this.#at;
-    return CURVE.at(Number(a.currentTime) / this.#length);
+    const q = CURVE.at(Number(a.currentTime) / this.#length);
+    return this.#mirrored ? 1 - q : q;
   }
 
   /** Where it is heading once released (null: not yet). */
@@ -95,30 +147,37 @@ export class Transition implements Drive {
     return this.#to;
   }
 
-  /** Joins a track (one whose element came late, a card loaded in) where the others are now. */
-  add({ el, frames, span = [0, 1] }: Track) {
-    const kept = this.#still ? frames.map(({ transform: _, ...rest }) => rest) : frames;
-    const [a, b] = span.map((p) => CURVE.inverse(p) * this.#length);
-    const animation = el.animate(kept, { delay: a, duration: Math.max(1, b - a), endDelay: this.#length - b, fill: 'both', easing: CURVE.css });
-    animation.pause();
-    animation.currentTime = this.#time();
-    if (this.#to !== null && !this.#ended) {
-      animation.playbackRate = this.#to ? 1 : -1;
-      animation.play();
-    }
-    this.#animations.push(animation);
+  /** The clock's time that draws progress `p`. */
+  #time(p: number) {
+    return CURVE.inverse(this.#mirrored ? 1 - p : p) * this.#length;
   }
 
-  #time() {
-    const a = this.#animations[0];
-    return a && a.currentTime !== null ? Number(a.currentTime) : CURVE.inverse(this.#at) * this.#length;
+  /** One track as an animation the way it is drawn now (mirrored or not), at the time that draws `p`. */
+  #animate({ el, frames, span = [0, 1] }: Track, p: number) {
+    const kept = this.#still ? frames.map(({ transform: _, ...rest }) => rest) : frames;
+    const [from, to] = this.#mirrored ? [1 - span[1], 1 - span[0]] : span;
+    const keys = this.#mirrored ? [...kept].reverse().map((k) => (k.offset == null ? k : { ...k, offset: 1 - Number(k.offset) })) : kept;
+    const [a, b] = [from, to].map((q) => CURVE.inverse(q) * this.#length);
+    const animation = el.animate(keys, { delay: a, duration: Math.max(1, b - a), endDelay: this.#length - b, fill: 'both', easing: CURVE.segment(from, to).css });
+    animation.pause();
+    animation.currentTime = this.#time(p);
+    return animation;
+  }
+
+  /** Joins a track (one whose element came late, a card loaded in) where the others are now. */
+  add(track: Track) {
+    const p = this.progress;
+    this.#tracks.push(track);
+    const animation = this.#animate(track, p);
+    if (this.#to !== null && !this.#ended) animation.play();
+    this.#animations.push(animation);
   }
 
   /** Draws progress `p` (a finger). Pauses a transition that was playing, where it is. */
   seek(p: number) {
     if (this.#to !== null) return;
     this.#at = Math.min(1, Math.max(0, p));
-    const time = CURVE.inverse(this.#at) * this.#length;
+    const time = this.#time(this.#at);
     for (const a of this.#animations) {
       if (a.playState !== 'paused') a.pause();
       a.currentTime = time;
@@ -141,15 +200,18 @@ export class Transition implements Drive {
     const play = ++this.#play;
     const finish = () => play === this.#play && this.#finish(to);
     // Already there (a swipe let go at the end): playing would rewind it and run it again.
-    const time = this.#time();
-    if (to ? time >= this.#length - 0.5 : time <= 0.5) {
+    const p = this.progress;
+    if (Math.abs(p - to) < 0.5 / this.#length) {
       void Promise.resolve().then(finish);
       return this.done;
     }
-    for (const a of this.#animations) {
-      a.playbackRate = to ? 1 : -1;
-      a.play();
+    // The way it travels decides which tracks draw it, so the clock eases out towards `to`.
+    if (this.#mirrored !== (to === 0)) {
+      for (const a of this.#animations) a.cancel();
+      this.#mirrored = to === 0;
+      this.#animations = this.#tracks.map((t) => this.#animate(t, p));
     }
+    for (const a of this.#animations) a.play();
     // Cancelled ones (their element gone) count as finished.
     void Promise.allSettled(this.#animations.map((a) => a.finished)).then(finish);
     return this.done;

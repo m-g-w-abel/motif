@@ -20,6 +20,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 
 const base = process.argv[2] ?? "http://localhost:5173";
 const chrome = process.env.CHROME ?? "chromium";
@@ -28,12 +29,45 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let browser;
 let profile;
 let target;
+/**
+ * Closes headless Chromium (its whole process group, so no helper outlives it)
+ * and removes its profile: always, whether the run passes, fails, throws or is
+ * interrupted. Safe to call more than once.
+ */
+function closeBrowser() {
+  if (browser && browser.exitCode === null && browser.signalCode === null) {
+    try {
+      process.kill(-browser.pid, "SIGKILL");
+    } catch {
+      browser.kill("SIGKILL");
+    }
+  }
+  if (profile) fs.rmSync(profile, { recursive: true, force: true });
+  profile = undefined;
+}
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+  process.on(signal, () => {
+    closeBrowser();
+    process.exit(130);
+  });
+process.on("uncaughtException", (e) => {
+  closeBrowser();
+  console.error(e);
+  process.exit(1);
+});
+process.on("unhandledRejection", (e) => {
+  closeBrowser();
+  console.error(e);
+  process.exit(1);
+});
+process.on("exit", closeBrowser);
 if (phone) {
   target = (await (await fetch(`${phone}/json/list`)).json()).find((t) => t.type === "page");
   if (!target) throw new Error(`no page at ${phone}`);
 } else {
   profile = fs.mkdtempSync(path.join(os.tmpdir(), "motif-landing-"));
-  browser = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--disable-features=OverscrollHistoryNavigation", "about:blank"], { stdio: "ignore" });
+  // Its own process group, so closing it takes every Chromium process with it.
+  browser = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--disable-features=OverscrollHistoryNavigation", "about:blank"], { stdio: "ignore", detached: true });
   let port;
   for (let i = 0; i < 100 && !port; i++) {
     await sleep(100);
@@ -149,6 +183,7 @@ const settled = `(() => {
     && !screens.some((s) => (!s.inert && getComputedStyle(s).visibility === 'hidden') || s.getAnimations().length)
     && !document.querySelector('.motion-layer')?.children.length
     && !document.querySelector('.sheet .leaving')?.children.length
+    && !document.querySelector('.sheet .behind')?.children.length
     && ![...document.querySelectorAll('.sheet, .bar')].some((e) => e.getAnimations({ subtree: true }).some((a) => a.effect?.getTiming().fill === 'both'));
 })()`;
 const failures = [];
@@ -256,6 +291,18 @@ async function sheet(label) {
   await until(settled);
   await startsInPlace(`${label}: lyrics start in place`, tap("document.querySelector('.lyrics-button')"));
   await startsInPlace(`${label}: lyrics back to now playing starts in place`, tap("document.querySelector('.mini .step')"));
+  // Each change held at its first, middle and last frames.
+  await heldFrames(`${label}: now playing to the half queue, held`, tap("document.querySelector('.more .step')"));
+  await heldFrames(`${label}: half to the full queue, held`, tap("document.querySelector('.queue-slot > .step')"));
+  await heldFrames(`${label}: full back to half, held`, tap("document.querySelector('.mini .step')"));
+  // A drag, let go: its clock is held where the finger left it, and set from there like the others'.
+  await heldFrames(`${label}: half back to now playing, held`, () => dragBy(".queue-slot > .step", 200));
+  await heldFrames(`${label}: lyrics, held`, tap("document.querySelector('.lyrics-button')"));
+  await heldFrames(`${label}: lyrics back to now playing, held`, tap("document.querySelector('.mini .step')"));
+  await heldFrames(`${label}: close, held`, () => run("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))"));
+  await heldFrames(`${label}: open, held`, () => run(tapBar));
+  await heldFrames(`${label}: close with the title scrolled, held`, () => run("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))"), true);
+  await run(tapBar);
   await check(`${label}: close from the full queue`, async () => {
     await run("document.querySelector('.more .step').click()");
     await until(settled);
@@ -267,6 +314,165 @@ async function sheet(label) {
   }, 4);
 }
 const tap = (selector) => () => run(`${selector}.click()`);
+
+/** A screenshot as RGBA pixels (`Page.captureScreenshot`'s PNG: 8 bits, not interlaced). */
+async function pixels() {
+  const { data } = await send("Page.captureScreenshot", { format: "png" });
+  const png = Buffer.from(data, "base64");
+  let at = 8;
+  let width = 0;
+  let height = 0;
+  let type = 0;
+  const idat = [];
+  while (at < png.length) {
+    const len = png.readUInt32BE(at);
+    const kind = png.toString("ascii", at + 4, at + 8);
+    const body = png.subarray(at + 8, at + 8 + len);
+    if (kind === "IHDR") [width, height, type] = [body.readUInt32BE(0), body.readUInt32BE(4), body[9]];
+    if (kind === "IDAT") idat.push(body);
+    at += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const bpp = type === 6 ? 4 : 3;
+  const stride = width * bpp;
+  const out = Buffer.alloc(width * height * 4);
+  let prev = Buffer.alloc(stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const row = Buffer.from(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)));
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? row[i - bpp] : 0;
+      const b = prev[i];
+      const c = i >= bpp ? prev[i - bpp] : 0;
+      const pa = Math.abs(b - c);
+      const pb = Math.abs(a - c);
+      const pc = Math.abs(a + b - 2 * c);
+      const add = [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][filter];
+      row[i] = (row[i] + add) & 255;
+    }
+    for (let x = 0; x < width; x++) for (let k = 0; k < 3; k++) out[(y * width + x) * 4 + k] = row[x * bpp + k];
+    prev = row;
+  }
+  return { width, height, out, png };
+}
+
+/**
+ * How many pixels of two screenshots differ clearly: none of the other's
+ * within `r` pixels (a CSS pixel) is close, so words drawn a pixel off (a copy
+ * and its original rasterise their letters a little differently) don't count.
+ */
+function differ(a, b, r = 1) {
+  const { width: w, height: h } = a;
+  // Clearly: a drawing popping in or out on the dark sheet differs by far more; the same words rasterised a little differently by a scaled copy, less.
+  const near = (i, j) => Math.abs(a.out[i] - b.out[j]) + Math.abs(a.out[i + 1] - b.out[j + 1]) + Math.abs(a.out[i + 2] - b.out[j + 2]) <= 300;
+  let n = 0;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (near(i, i)) continue;
+      let found = false;
+      for (let dy = -r; dy <= r && !found; dy++)
+        for (let dx = -r; dx <= r && !found; dx++) {
+          const [X, Y] = [x + dx, y + dy];
+          if (X >= 0 && Y >= 0 && X < w && Y < h) found = near(i, (Y * w + X) * 4);
+        }
+      if (!found) n++;
+    }
+  return n;
+}
+/** More clearly different pixels than a few glyphs' edges: something popped, vanished or changed places in the stack. */
+const POPPED = 400;
+
+/** What is drawn, by what it shows (words, an image, an icon), with where and how opaque: originals and copies alike. */
+const drawings = `(() => {
+  const out = [];
+  // The open sheet covers the bar.
+  const covered = document.querySelector('.sheet.open');
+  for (const el of document.querySelectorAll(covered ? '.sheet *, .motion-layer *' : '.sheet *, .bar *, .motion-layer *')) {
+    const img = el.tagName === 'IMG';
+    const words = !el.children.length && el.textContent.trim();
+    if (!img && !words) continue;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
+    let o = 1;
+    for (let e = el; e && o > 0.02; e = e.parentElement) {
+      const s = getComputedStyle(e);
+      if (s.visibility === 'hidden' || s.display === 'none') o = 0;
+      o *= Number(s.opacity);
+    }
+    if (o > 0.05) out.push(img ? 'image ' + el.src.split('/').pop().slice(0, 40) : 'words ' + words.slice(0, 30));
+  }
+  return [...new Set(out)];
+})()`;
+
+/**
+ * A sheet change held at its first, middle and last frames (its animations'
+ * clock stopped and set): the first frame must look exactly like before the
+ * change and the last exactly like after it (nothing pops in, vanishes or
+ * swaps places in the stack as it starts or hands over), what is drawn both
+ * before and after must be drawn in the middle too, and nothing may change
+ * once it has settled.
+ */
+async function heldFrames(name, act, scrolled = false) {
+  const r = Math.round(await run("devicePixelRatio"));
+  await until(settled);
+  // A long title's marquee scrolls on its own clock, not a change's: wait until it has stopped, and stays
+  // stopped past the delay before it starts (`WAIT` in marquee.ts), so it doesn't start inside the case.
+  const still = "!document.getAnimations().some((a) => a.playState === 'running' && a.effect?.target?.classList?.contains('marquee')) && ![...document.querySelectorAll('.marquee')].some((m) => m.style.transform)";
+  await until(still, 45000).catch(() => {});
+  await sleep(2500);
+  await until(still, 45000).catch(() => {});
+  if (scrolled) {
+    // Or a change that starts from a scrolled title: tapped, it scrolls at once; caught paused at its end.
+    await run("document.querySelector('.sheet .hero h1').click()");
+    await until("!!document.querySelector('.sheet .hero h1 .marquee').style.transform && !document.getAnimations().some((a) => a.playState === 'running' && a.effect?.target?.classList?.contains('marquee'))", 45000);
+  }
+  await sleep(200);
+  const before = await pixels();
+  const drawnBefore = await run(drawings);
+  await send("Animation.enable");
+  await send("Animation.setPlaybackRate", { playbackRate: 0 });
+  const at = (ms) => run(`(() => { for (const a of document.getAnimations()) if (a.effect?.getTiming().fill === 'both') { a.pause(); a.currentTime = ${ms}; } })()`);
+  const bad = [];
+  let middle = [];
+  let last;
+  let firstShot;
+  try {
+    await act();
+    await sleep(400);
+    await at(0);
+    await sleep(100);
+    firstShot = await pixels();
+    const first = differ(before, firstShot, r);
+    if (first > POPPED) bad.push(`its first frame differs from before it (${first} px)`);
+    await at(40);
+    await sleep(100);
+    middle = await run(drawings);
+    await at(259.9);
+    await sleep(100);
+    last = await pixels();
+  } finally {
+    await send("Animation.setPlaybackRate", { playbackRate: 1 });
+    await run("(() => { for (const a of document.getAnimations()) if (a.effect?.getTiming().fill === 'both') a.play(); })()");
+  }
+  await sleep(300);
+  await until(settled);
+  await sleep(200);
+  const after = await pixels();
+  const drawnAfter = await run(drawings);
+  const end = differ(last, after, r);
+  if (end > POPPED) bad.push(`its last frame differs from after it (${end} px)`);
+  const lost = drawnBefore.filter((d) => drawnAfter.includes(d) && !middle.includes(d));
+  if (lost.length) bad.push(`not drawn in the middle: ${lost.slice(0, 4).join(", ")}`);
+  await sleep(500);
+  const late = differ(after, await pixels(), r);
+  if (late > POPPED) bad.push(`changed after it settled (${late} px)`);
+  for (const b of bad) failures.push(`${name}: ${b}`);
+  // Debugging: DUMP=dir saves a failing case's frames (before, first, last, after).
+  if (bad.length && process.env.DUMP)
+    for (const [k, f] of Object.entries({ before, first: firstShot, last, after })) fs.writeFileSync(path.join(process.env.DUMP, `${name.replace(/\W+/g, "-")}-${k}.png`), f.png);
+  console.log(`${bad.length ? "FAIL" : "ok  "} ${name}${bad.map((b) => `\n       ${b}`).join("")}`);
+}
 
 /** The most a row may move in a frame's time (16.7 ms) when nothing jumps: a 260 ms glide of a row's height moves under 20 px in its fastest frame. */
 const ROW_STEP = 30;
@@ -462,12 +668,8 @@ try {
     await forget();
     await send("Page.navigate", { url: home });
   }
-}
-ws.close();
-if (browser) {
-  browser.kill();
-  await new Promise((r) => browser.once("exit", r));
-  fs.rmSync(profile, { recursive: true, force: true });
+  ws.close();
+  closeBrowser();
 }
 if (failures.length) {
   console.log(`\n${failures.length} failed:\n${failures.join("\n")}`);

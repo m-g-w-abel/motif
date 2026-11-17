@@ -127,7 +127,8 @@ export function plan(before: Part[], after: Part[], stage: Box, spans: Record<st
     const y = b.box.top - a.box.top;
     if (Math.abs(x - outer.x) < 0.5 && Math.abs(y - outer.y) < 0.5) return void shown.set(i, outer);
     shown.set(i, { x, y });
-    for (let c = a.parent; c !== undefined; c = after[c].parent)
+    // Declared parts only: a container between parts (a whole list) moving in its scroller is clipped by it, as it is at rest.
+    for (let c = a.parent; c !== undefined && !a.implicit; c = after[c].parent)
       if (after[c].clips && cut(i, c)) {
         fly.push({ before: kept[i], after: i });
         flownTo.add(i);

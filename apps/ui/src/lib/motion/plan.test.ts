@@ -123,6 +123,9 @@ describe('plan', () => {
     expect(p.place).toEqual([]);
     // The line moving with it, or a move that stays inside it: in place.
     expect(plan([clip(500), before[1]], [clip(200), after[1]], STAGE).fly).toEqual([]);
+    // A container between parts (implicit) moving out of it is clipped by it, as at rest, not copied whole.
+    const list = [clip(500), part('list', box(0, 500, 200, 40), { implicit: true, parent: 0 })];
+    expect(plan(list, [clip(500), part('list', box(0, 200, 200, 40), { implicit: true, parent: 0 })], STAGE).place.map((m) => m.after)).toEqual([1]);
     const wide = (top: number) => part('body', box(0, 0, 400, 800), { implicit: true, clips: true });
     expect(plan([wide(0), before[1]], [wide(0), after[1]], STAGE).place.map((m) => m.after)).toEqual([1]);
   });

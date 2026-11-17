@@ -135,3 +135,26 @@ describe('fitted', () => {
     near(fitted(box(0, 0, 100, 50), box(0, 0, 40, 40), 'even'), box(25, 0, 50, 50));
   });
 });
+
+describe('textFlight in clipping boxes', () => {
+  it('clips to what shows of each end (its visible box), while the words keep their path', () => {
+    // A long title in a marquee line: the element runs past the line that clips it.
+    const from = box(10, 600, 500, 20);
+    const fromView = box(10, 600, 200, 20);
+    const to = box(16, 300, 900, 40);
+    const toView = box(16, 300, 300, 40);
+    const glyphs = { fromGlyph: box(12, 602, 9, 16), toGlyph: box(18, 304, 18, 32) };
+    const plain = textFlight({ from, to, steps: 8, ...glyphs });
+    const seen = textFlight({ from, to, fromView, toView, steps: 8, ...glyphs });
+    // The clip runs from what showed of the old to what shows of the new.
+    near(apply(seen.clip[0], box(0, 0, toView.width, toView.height)), { ...fromView, left: fromView.left - toView.left, top: fromView.top - toView.top });
+    near2(seen.clip[8], ID);
+    // The words (placed at the element's offset in the clip) are drawn exactly where they were without it, all the way.
+    const d = { x: to.left - toView.left, y: to.top - toView.top };
+    const a = { x: from.left - toView.left, y: from.top - toView.top };
+    for (let i = 0; i <= 8; i++) {
+      near(onScreen(toView, seen.clip[i], d, seen.dest[i], box(0, 0, 10, 10)), onScreen(to, plain.clip[i], { x: 0, y: 0 }, plain.dest[i], box(0, 0, 10, 10)));
+      near(onScreen(toView, seen.clip[i], a, seen.source[i], box(0, 0, 10, 10)), onScreen(to, plain.clip[i], { x: from.left - to.left, y: from.top - to.top }, plain.source[i], box(0, 0, 10, 10)));
+    }
+  });
+});

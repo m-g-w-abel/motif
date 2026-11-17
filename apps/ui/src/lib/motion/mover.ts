@@ -33,6 +33,11 @@ const LOOK = [
   'padding-right',
   'padding-bottom',
   'padding-left',
+  'flex-direction',
+  'flex-wrap',
+  'gap',
+  'justify-content',
+  'align-items',
 ];
 /** Differences that show between two drawings of the same words. */
 const STYLE = ['color', 'font-weight', 'font-style', 'font-family'];
@@ -42,7 +47,42 @@ const LANDING = [...STYLE, 'font-size'];
 const STEPS = 8;
 
 /** An element as it was seen: where, what it looks like, how sharp its image is. */
-export type Seen = { el: HTMLElement; box: DOMRect; glyph: DOMRect; ink: number; text: boolean; look: Record<string, string>; cut: boolean; res: number };
+export type Seen = {
+  el: HTMLElement;
+  box: DOMRect;
+  /** What shows of it: its box cut by the boxes that clip it (a marquee's line), where it rests. */
+  view: DOMRect;
+  glyph: DOMRect;
+  ink: number;
+  text: boolean;
+  look: Record<string, string>;
+  cut: boolean;
+  res: number;
+  /** A copy made while it was drawn (`cloneOf`), for when a change takes it away before it flies. */
+  copy?: HTMLElement;
+  /** It lay behind its stage's content (`behind`), seen while it was drawn. */
+  behind?: boolean;
+};
+
+/** Whether `el` lies behind the content of the stage `root`: it or a box it is in has a negative z-index there (the half queue's cover). */
+export function behind(el: HTMLElement, root: HTMLElement) {
+  for (let e: HTMLElement | null = el; e && e !== root; e = e.parentElement) {
+    const s = getComputedStyle(e);
+    if (s.position !== 'static' && parseInt(s.zIndex) < 0) return true;
+  }
+  return false;
+}
+
+/** Whether all of `el`'s words sit on one line. */
+function oneLine(el: Element) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const lines = new Set([...range.getClientRects()].map((q) => Math.round(q.top)));
+  return lines.size === 1;
+}
+
+/** Copies of images in the motion layer: they travel under words. */
+const pictures = new WeakSet<Element>();
 
 /** The box of the first letter or digit, or of the element without one. */
 export function glyph(el: HTMLElement): DOMRect {
@@ -81,7 +121,19 @@ export function see(el: HTMLElement, box = el.getBoundingClientRect()): Seen {
   const glyphAt = new DOMRect(g.x + box.x - raw.x, g.y + box.y - raw.y, g.width, g.height);
   const range = document.createRange();
   range.selectNodeContents(el);
-  return { el, box, glyph: glyphAt, ink: range.getBoundingClientRect().width, text, look, cut: el.scrollWidth > el.clientWidth + 1, res: resolution(el) };
+  // Cut by every box that clips it, shifted like the box when that was corrected for a moving screen.
+  let [l, t, r, b] = [box.left, box.top, box.right, box.bottom];
+  for (let up = el.parentElement; up && up !== document.body; up = up.parentElement) {
+    const s = getComputedStyle(up);
+    if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+    const c = up.getBoundingClientRect();
+    if (s.overflowX !== 'visible') [l, r] = [Math.max(l, c.left + box.x - raw.x), Math.min(r, c.right + box.x - raw.x)];
+    if (s.overflowY !== 'visible') [t, b] = [Math.max(t, c.top + box.y - raw.y), Math.min(b, c.bottom + box.y - raw.y)];
+  }
+  const view = r > l && b > t ? new DOMRect(l, t, r - l, b - t) : box;
+  // Words on one line stay on one line in a copy, whose width is a fraction of a pixel off the original's.
+  if (oneLine(el) && look['white-space'] === 'normal') look['white-space'] = 'nowrap';
+  return { el, box, view, glyph: glyphAt, ink: range.getBoundingClientRect().width, text, look, cut: el.scrollWidth > el.clientWidth + 1, res: resolution(el) };
 }
 
 let layer: HTMLElement | undefined;
@@ -112,7 +164,48 @@ export function rootZoom() {
 }
 
 /** What a copy's insides keep of how they look (the copy's own box takes all of `LOOK`). */
-const INNER = ['display', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-transform', 'color', 'white-space'];
+const INNER = [
+  'display',
+  'visibility',
+  'opacity',
+  'font-family',
+  'font-size',
+  'font-weight',
+  'font-style',
+  'line-height',
+  'letter-spacing',
+  'text-transform',
+  'text-align',
+  'color',
+  'white-space',
+  'background-color',
+  'background-image',
+  'border-radius',
+  // Its layout, so it is laid out as it was (a row centred by a rule on the sheet).
+  'box-sizing',
+  'width',
+  'height',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'gap',
+  'flex-direction',
+  'flex-wrap',
+  'flex-grow',
+  'flex-shrink',
+  'flex-basis',
+  'justify-content',
+  'align-items',
+  'grid-template-columns',
+  'grid-template-rows',
+  // As drawn now: a marquee mid-scroll is where its transition has got to, not where it is going.
+  'transform',
+];
 /** Past this many elements inside, a copy keeps only its own rules (a long list: its rows' rules are their own). */
 const MOST_INSIDE = 300;
 
@@ -123,20 +216,25 @@ const MOST_INSIDE = 300;
  */
 export function cloneOf(el: HTMLElement): HTMLElement {
   const c = el.cloneNode(true) as HTMLElement;
+  // A copy only moves as its transition draws it: no CSS transitions or `@starting-style` fades of its own.
+  c.style.setProperty('transition', 'none');
   const inside = el.querySelectorAll<HTMLElement>('*');
   if (inside.length > MOST_INSIDE) return c;
   const copies = c.querySelectorAll<HTMLElement>('*');
   inside.forEach((o, i) => {
     const n = copies[i];
-    if (!o.getClientRects().length) return void n.style.setProperty('display', 'none');
+    n.style.setProperty('transition', 'none');
     const style = getComputedStyle(o);
+    // Undrawn insides stay undrawn (a box of `display: contents` has no boxes of its own, but its insides draw).
+    if (style.display !== 'contents' && !o.getClientRects().length) return void n.style.setProperty('display', 'none');
     for (const p of INNER) n.style.setProperty(p, style.getPropertyValue(p));
+    if (oneLine(o) && style.whiteSpace === 'normal') n.style.setProperty('white-space', 'nowrap');
   });
   return c;
 }
 
 /** A copy of `s.el` (or `clone`, made of it earlier), looking as it does there, at `at` (absolute in its parent, or fixed on screen). */
-export function copyOf(s: Seen, at: Box, fixed: boolean, clone = cloneOf(s.el)) {
+export function copyOf(s: Seen, at: Box, fixed: boolean, clone = (s.copy?.cloneNode(true) as HTMLElement | undefined) ?? cloneOf(s.el)) {
   const c = clone;
   for (const n of [c, ...c.querySelectorAll('[data-move], [data-enter]')]) n.removeAttribute('data-move'), n.removeAttribute('data-enter');
   // The original's lazy, async image would decode afresh and draw nothing for a frame.
@@ -184,7 +282,17 @@ export const landings: { name: string; box: number; look: string[] }[] | null = 
  * so nothing ever draws empty; at the end the new element shows once its own
  * image has decoded (a second at most), then the copies go.
  */
-export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
+/**
+ * Where a change's copies travel, besides the motion layer above everything:
+ * `back`, a layer behind the stage's content (above its backdrop), for an
+ * end that lies behind it (`behind`).
+ */
+export interface Layers {
+  root: HTMLElement;
+  back?: HTMLElement;
+}
+
+export function fly(from: Seen, to: HTMLElement, toBox: DOMRect, layers?: Layers): Flight {
   const dest = see(to, toBox);
   // Copies are placed in CSS pixels, which the root's zoom scales; boxes are measured on screen.
   const z = rootZoom();
@@ -193,6 +301,8 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
   const root = motionLayer();
   const tracks: Track[] = [];
   const copies: HTMLElement[] = [];
+  /** Where each copy travels, when not in the motion layer. */
+  const layerOf = new Map<HTMLElement, HTMLElement>();
   /** The copies that start where `from` is and end where `to` is. */
   let starts!: HTMLElement;
   let lands!: HTMLElement;
@@ -203,25 +313,27 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
     // In the same font, the sizes' ratio is exact; glyph boxes are whole pixels (a 5% hop on small text).
     const sizes = [from, dest].map((x) => parseFloat(x.look['font-size']));
     const scale = from.look['font-family'] === dest.look['font-family'] && sizes[0] && sizes[1] ? sizes[0] / sizes[1] : undefined;
-    const f = textFlight({ from: fb, fromGlyph: fg, to: tb, toGlyph: tg, steps: STEPS, ink, scale });
+    // The clip runs between what shows of each end (a marquee's line cuts a long title), the words where they are drawn.
+    const [fv, tv] = [px(from.view), px(dest.view)];
+    const f = textFlight({ from: fb, fromGlyph: fg, to: tb, toGlyph: tg, fromView: fv, toView: tv, steps: STEPS, ink, scale });
     const clip = document.createElement('div');
     Object.assign(clip.style, {
       position: 'fixed',
-      left: `${tb.left}px`,
-      top: `${tb.top}px`,
-      width: `${tb.width}px`,
-      height: `${tb.height}px`,
+      left: `${tv.left}px`,
+      top: `${tv.top}px`,
+      width: `${tv.width}px`,
+      height: `${tv.height}px`,
       overflow: 'hidden',
       transformOrigin: '0 0',
     });
-    const words = copyOf(dest, { left: 0, top: 0, width: tb.width, height: tb.height }, false);
+    const words = copyOf(dest, { left: tb.left - tv.left, top: tb.top - tv.top, width: tb.width, height: tb.height }, false);
     clip.append(words);
     // Another colour or weight, or cut off or wrapped differently: the old drawing travels locked onto
     // the words and they crossfade all the way, so each end is exactly one drawing and the look changes gradually.
     const differ = from.cut !== dest.cut || STYLE.some((p) => from.look[p] !== dest.look[p]) || Math.abs(fb.height / fg.height - tb.height / tg.height) > 0.5;
     tracks.push({ el: clip, frames: f.clip.map((m) => ({ transform: css(m) })) }, { el: words, frames: f.dest.map((m, k) => ({ transform: css(m), ...(differ && { opacity: k / STEPS }) })) });
     if (differ) {
-      const old = copyOf(from, { left: fb.left - tb.left, top: fb.top - tb.top, width: fb.width, height: fb.height }, false);
+      const old = copyOf(from, { left: fb.left - tv.left, top: fb.top - tv.top, width: fb.width, height: fb.height }, false);
       clip.append(old);
       tracks.push({ el: old, frames: f.source.map((m, k) => ({ transform: css(m), opacity: 1 - k / STEPS })) });
     }
@@ -238,12 +350,17 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
     const c = copyOf(s, own === 'from' ? a : b, true);
     // Two drawings of other shapes and no image (the bar's thin seek bar and the sheet's waveform): the old
     // travels too, stretched the same way, and they crossfade all the way, so neither look shows at the wrong end.
-    const differ = !from.res && !dest.res && !from.el.querySelector('img') && shape(from.el) !== shape(to);
+    // Each end at its place in the stage's stack: one behind the content travels behind it (so titles and
+    // shades stay over a cover); ends at different places travel as two drawings, one at each, crossfading.
+    const [fromBack, toBack] = layers?.back ? [!!from.behind, behind(to, layers.root)] : [false, false];
+    const differ = fromBack !== toBack || (!from.res && !dest.res && !from.el.querySelector('img') && shape(from.el) !== shape(to));
+    if (toBack) layerOf.set(c, layers!.back!);
     tracks.push({ el: c, frames: boxFlight(a, b, own).frames.map((m, k) => ({ transform: css(m), ...(differ && { opacity: k }) })) });
     copies.push(c);
     lands = starts = c;
     if (differ) {
       const old = copyOf(from, fb, true);
+      if (fromBack) layerOf.set(old, layers!.back!);
       tracks.push({ el: old, frames: boxFlight(fb, tb, 'from').frames.map((m, k) => ({ transform: css(m), opacity: 1 - k })) });
       copies.unshift(old);
       starts = old;
@@ -251,7 +368,13 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect): Flight {
   }
   for (const c of copies) {
     c.style.visibility = 'hidden';
-    root.append(c);
+    const layer = layerOf.get(c);
+    if (layer) layer.append(c);
+    else if (c.querySelector('img') || c.tagName === 'IMG') {
+      // Images under words: before the first copy that isn't one.
+      pictures.add(c);
+      root.insertBefore(c, [...root.children].find((k) => !pictures.has(k)) ?? null);
+    } else root.append(c);
   }
   // Shown with the originals hidden in one go, once decoded. Loaded already (the copies decode as they
   // paint): at once, so the real element is never drawn a frame where it isn't yet (a row moving up).

@@ -59,6 +59,10 @@ export function boxFlight(from: Box, to: Box, copy: 'from' | 'to') {
  *   stretch (sampled, since that isn't linear);
  * - `source`: the old drawing (placed at `from`'s offset from `to`), locked
  *   onto the new words, to fade out over them where the two look different.
+ * With `fromView` and `toView` (what shows of each element, cut by the boxes
+ * that clip it: a marquee's line), the clip runs between those instead and
+ * sits at `toView`, the new words at the element's offset in it and the old
+ * at `from`'s, drawn where they would be without them.
  * With `ink` (each drawing's words' width, when neither is cut off), the two
  * also stretch a little across, so that in another weight their words span
  * the same width all the way: the old at its own width at the start, the new
@@ -69,6 +73,8 @@ export function textFlight({
   fromGlyph,
   to,
   toGlyph,
+  fromView = from,
+  toView = to,
   steps,
   ink,
   scale,
@@ -77,6 +83,8 @@ export function textFlight({
   fromGlyph: Box;
   to: Box;
   toGlyph: Box;
+  fromView?: Box;
+  toView?: Box;
   steps: number;
   ink?: { from: number; to: number };
   /** How much larger the old words are drawn (their font sizes'), when known: glyph boxes are rounded to whole pixels. */
@@ -105,7 +113,17 @@ export function textFlight({
     dest.push(compose(invert(o), compose(words, across(w / k, b.left))));
     source.push(compose(invert(at), compose(invert(o), compose(words, compose(old, across(w, fromGlyph.left - from.left))))));
   }
-  return { clip, dest, source };
+  if (fromView === from && toView === to) return { clip, dest, source };
+  // The same drawings, in a clip between the visible boxes: each word map conjugated into its new place in the clip.
+  const d = shift(to.left - toView.left, to.top - toView.top);
+  const ad = compose(d, at);
+  const view0 = onto(local(toView, toView), local(fromView, toView));
+  const seen = clip.map((_, i) => lerp(view0, ID, i / steps));
+  return {
+    clip: seen,
+    dest: dest.map((m, i) => compose(invert(d), compose(invert(seen[i]), compose(d, compose(clip[i], m))))),
+    source: source.map((m, i) => compose(invert(ad), compose(invert(seen[i]), compose(d, compose(clip[i], compose(at, m)))))),
+  };
 }
 
 /** How a shared element's old box maps onto its new one (`data-fit`). */

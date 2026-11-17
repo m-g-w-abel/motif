@@ -26,7 +26,8 @@
   }
 
   /** Hero names that don't fit one line (phones) scroll once per track while the sheet is open. */
-  const scrolling = $derived(style === 'hero' && playing && sheet.rest && track ? track.id : null);
+  // Held where it is while the sheet moves (its change starts from the text as drawn), put back once it is closed.
+  const scrolling = $derived(style === 'hero' && playing && track ? (sheet.rest ? track.id : sheet.moving ? false : null) : null);
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(

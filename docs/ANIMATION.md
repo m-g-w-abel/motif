@@ -56,7 +56,9 @@ progress `p`, from 0 (before) to 1 (after). Nothing else moves anything.
   their time.
 - Progress has a **clock domain**: time `τ` from 0 to `DURATION`, and
   `p = CURVE(τ)`. Every track lives in time; a span `[a, b]` in progress
-  becomes the delay and duration `[CURVE⁻¹(a), CURVE⁻¹(b)] · DURATION`.
+  becomes the delay and duration `[CURVE⁻¹(a), CURVE⁻¹(b)] · DURATION`, and
+  its easing is that stretch of the curve (`CURVE.segment(a, b)`, itself a
+  cubic Bézier), so **every track is linear in progress** within its span.
 - **A clock drives it** (a tap, a button, a key): `play(1)` plays the paused
   animations on from where they are. They run on the compositor; no script
   per frame.
@@ -64,6 +66,14 @@ progress `p`, from 0 (before) to 1 (after). Nothing else moves anything.
   to `CURVE⁻¹(p)`, so what is drawn is exactly `p` of the way: linear with
   the finger. `release(commit)` plays on to 1 or back to 0 from there,
   decelerating along the curve.
+- **A clock eases out the way it travels.** Closing mirrors opening in its
+  path and its states, not its timing: played backwards, an ease-out curve
+  is an ease-in (it starts slowly and arrives fast). So `play(0)` (closing,
+  a tap back, a drag let go to spring back) draws the transition with its
+  **mirrored tracks** (frames reversed, spans mirrored, which draw the same
+  path since each track is linear in progress) and plays them forwards from
+  the mirrored progress: it eases out towards 0 as opening eases out towards
+  1. A finger still seeks linearly either way.
 - **Backwards is free.** Closing is the opening transition built in the same
   direction, seeked to 1 and played to 0. A tap back and a swipe back are the
   same transition, one clocked and one dragged.
@@ -155,7 +165,16 @@ t.play(1);           // a tap
      go on their own;
    - a kept part whose move would take it outside a box that clips it (a
      title in its marquee's line, the last row of a list that shrank) travels
-     as a **copy** instead, like a shared element, so it is never cut off.
+     as a **copy** instead, like a shared element, so it is never cut off
+     (declared parts only: a whole list moving in its scroller is clipped by
+     it, as at rest);
+   - a kept box that clips and changes size stops clipping while the change
+     runs: a transform moves its clip but can't resize it, so its old clip
+     would be its new size in its old place, cutting off what it holds;
+   - **nothing pops**: an element the change shows that no part declares (a
+     part's insides it brings) fades in over the `enter` span. (One the
+     change takes away without a declaration still goes at once: the DOM has
+     dropped it before it could be copied; declare it with `data-enter`.)
 
 The planner works on plain data (names, boxes, nesting, declared enter/leave),
 so the rules are tested without a browser. The DOM layer around it only
@@ -252,7 +271,8 @@ progress.
 - *No clipping.* A long title is clipped differently at each end (ellipsis
   in the bar, full width or a marquee in the sheet). The travelling copy sits
   in a **clip box** that moves from the old element's visible box to the new
-  one's, and the text inside is counter-scaled so it is never squashed. The
+  one's (its box cut by every box that clips it: a long title's marquee line),
+  and the text inside is counter-scaled so it is never squashed. The
   clip box's scale and the text's counter-scale are sampled into keyframes
   (8 steps), since the inverse of a linear scale isn't linear. Transform only.
   The copy is the new element at its own size (its own ellipsis or
@@ -291,6 +311,18 @@ copy never draws empty; when every image in the copies has loaded already,
 the copies show and the originals hide at once, so a real element is never
 drawn for a frame at its new place before its copy takes over.
 
+**Stacking.** Each copy travels at its end's place in the stage's stack.
+An end that lies behind the stage's content (a negative `z-index` inside
+the stage, like the half queue's cover, under the title and its shade)
+travels in the stage's **back layer** (`Options.back`: the sheet's
+`.behind`, just above its backdrop), so what lies over it at rest lies over
+its copy too; every other end travels in the motion layer, above everything.
+When the two ends sit at different places (the cover from the carousel to
+behind the half queue's title), each end's drawing travels at its own place
+and the two crossfade over the move, so neither the start nor the hand-over
+changes what is on top. In the motion layer images travel under words, so
+a title moving over a cover stays over it.
+
 **Other drawings.** Two ends that aren't the same image and are made
 differently (the bar's thin seek strip and the sheet's waveform): the old
 drawing travels too, stretched the same way, and the two crossfade over the
@@ -300,10 +332,18 @@ whole move, so the waveform isn't there from the start.
 through its ancestors (a phone rule hiding the album's name in the sheet, a
 font set on the sheet) don't reach its copy in the motion layer or the
 sheet's leaving layer, so a copy (`cloneOf`) carries its insides' display,
-font and colour inline (up to 300 elements; a longer list's rows keep their
-own rules). The destination stays hidden until its own image has
-decoded (at most a second), then takes over. Artwork never shows a blank or
-placeholder frame mid-flight.
+visibility, opacity, font, colours, backgrounds and layout (size, margins,
+padding, flex and grid) inline, up to 300 elements (a longer list's rows
+keep their own rules); a box of `display: contents` stays one. Words on
+one line stay on one line (a copy's width is a fraction of a pixel off).
+A copy runs no CSS transitions or `@starting-style` fades of its own: it
+moves only as its transition draws it. What flies from a part the change
+takes away (the half queue's cover) is copied from the snapshot, made while
+it was still drawn.
+
+The destination stays hidden until its own image has decoded (at most a
+second), then takes over. Artwork never shows a blank or placeholder frame
+mid-flight.
 
 ## Where it is used
 
@@ -476,6 +516,16 @@ before the rest (Checking).
   removing a row must glide: no row may move more than 30 px in a frame's
   time. The queue section queues three songs by swiping them on an album
   page and clears the queue at the end.
+  **Held frames:** every change of the sheet (each step, by tap and by drag,
+  lyrics, open and close, and closing with the title's marquee scrolled) is
+  held with its animations' clock stopped and set to its first, a middle and
+  its last frame. The first must look like the screen before it and the last
+  like the screen after it, pixel for pixel within a CSS pixel (nothing pops
+  in, vanishes or swaps places in the stack as it starts or hands over);
+  what is drawn both before and after must be drawn in the middle (a cover
+  whose copy drew nothing); and nothing may change in the half second after
+  it settles. Marquees, which scroll on their own clock, are waited out
+  first. `DUMP=dir` saves a failing case's frames.
 - **At another zoom and font:** the phone scenarios run again at Scale
   125% (`?dev-scale=125`), which caught boxes measured on screen but placed
   in CSS pixels, and in DejaVu Sans (`?dev-font=`), whose glyphs, like
@@ -511,6 +561,15 @@ before the rest (Checking).
   about 12, then the sheet's re-render), and sometimes a 50–67 ms frame
   with no script, painting the copies for the first time. Nothing jumps
   there any more (`follow` starts from what is drawn), but the frames drop.
+  After the stacking, easing and no-pop round (2026-11-17, same method):
+  opening by tap 16.9–17.3/23–40/1; the step changes by tap 16.7–17.2/17–34
+  with at most one frame over 20 ms; the step drags 17.1–17.5/33–34/1–2;
+  lyrics 16.8–17.2/20–37/1, back 16.7/17/0; opening by drag 16.7–17.1/17–34/
+  0–1; closing by Escape 16.7/17/0; closing by drag 18.0–18.5/33–50/2–4.
+  The step changes now drop a frame where they dropped none: the snapshot
+  does more (every drawn element listed for the default fade, and copies
+  carry about 40 properties of their insides), about a frame's work at the
+  start; to look into (narrow the drawn list to the parts' children).
 - **A frozen frame** (`?dev-scrub=0.3`, dev builds): the next transition
   stops at that progress instead of playing, to inspect on the phone or in
   WebKitGTK; the next change ends it.

@@ -12,6 +12,12 @@ grouped by phase of the plan.
   controls, title or queue rows jump; reordering the queue moves the other
   songs aside smoothly, and letting go glides the song into place. The seek
   bar fades into the waveform as it grows instead of turning into it at once.
+- **Now playing closes as smoothly as it opens**: closing, going back and
+  letting go of a drag now slow down as they arrive, like opening, instead of
+  speeding up at the end. Changing between now playing, the queue and the
+  lyrics no longer hides the cover on the way, keeps the title and the shade
+  over the cover in the half queue, and nothing (lyrics, the shade, a long
+  title) pops in or jumps as a change starts or ends.
 - **Headers scroll with their lists**: the title and buttons at the top of
   Albums, All Songs, Playlists and the recent lists now scroll away with the
   list, so going back to an album never leaves its cover cut off under them.

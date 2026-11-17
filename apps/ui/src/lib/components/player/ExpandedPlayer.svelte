@@ -26,6 +26,7 @@
   let backdrop = $state<HTMLElement>();
   let tint = $state<HTMLElement>();
   let leaving = $state<HTMLElement>();
+  let back = $state<HTMLElement>();
   setViewState({ source: 'library', layoutId: 'now-playing', browse: layout.browseState('now-playing') });
 
   /**
@@ -62,7 +63,7 @@
       flushSync();
       return new Transition([{ el: section, frames: [{ opacity: 0 }, { opacity: 1 }] }]);
     }
-    const t = change(section, () => flushSync(), { from: origin, spans: SPANS, under: leaving });
+    const t = change(section, () => flushSync(), { from: origin, spans: SPANS, under: leaving, back });
     const z = rootZoom();
     const box = (r: DOMRect) => ({ left: r.left / z, top: r.top / z, width: r.width / z, height: r.height / z });
     const [o, b] = [box(origin.getBoundingClientRect()), box(backdrop.getBoundingClientRect())];
@@ -93,6 +94,7 @@
       },
       {
         under: leaving,
+        back,
         ended: (landed) => {
           if (stepping === t) stepping = null;
           if (landed || !undo) return;
@@ -202,6 +204,8 @@
   inert={!sheet.open}
 >
   <div class="backdrop" bind:this={backdrop}><div class="tint" bind:this={tint}></div></div>
+  <!-- Copies travelling to or from what lies behind the sheet's content (the half queue's cover): titles and shades stay over them. -->
+  <div class="behind" bind:this={back} aria-hidden="true"></div>
   <!-- Copies of the parts a change takes away, going behind the rest. -->
   <div class="leaving" bind:this={leaving} aria-hidden="true"></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -254,7 +258,7 @@
         <div class="keep" hidden={sheet.lyrics}><ArtworkWidget expands={false} playing hidden={sheet.step !== 'now'} /></div>
       </div>
       <div class="details" data-enter="rise">
-        <p class="album-title" data-enter="fade" use:marquee={sheet.rest ? (engine.current?.track.id ?? null) : null}>
+        <p class="album-title" data-enter="fade" use:marquee={sheet.rest ? (engine.current?.track.id ?? null) : sheet.moving ? false : null}>
           <span class="marquee" data-move="album:now">{album}</span>
         </p>
         <TrackInfo style="hero" playing>
@@ -315,6 +319,14 @@
     inset: 0;
     background: var(--surface);
     opacity: 0;
+  }
+
+  /* Before the content's own layers behind it (z-index -1, later in the page), so they draw over it. */
+  .behind {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
   }
 
   /* Not clipped: the bar's parts can lie outside the sheet (desktop). */
