@@ -322,9 +322,6 @@
     <div class="head">
       <div class="title-row">
         <h1>{title}</h1>
-        <button class="tool" aria-label="More" title="More" aria-haspopup="menu" onclick={(e) => openBelow(e, libraryMenu(engine))}>
-          <Icon name="more" size={18} />
-        </button>
       </div>
     </div>
   {/if}
