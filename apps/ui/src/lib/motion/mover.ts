@@ -207,9 +207,13 @@ export function cloneOf(el: HTMLElement): HTMLElement {
   // A copy only moves as its transition draws it: no CSS transitions or `@starting-style` fades of its own.
   c.style.setProperty('transition', 'none');
   const inside = el.querySelectorAll<HTMLElement>('*');
+  const copies = c.querySelectorAll<HTMLElement>('*');
+  // A copy starts at the top of what scrolls: where each part of it was scrolled, put back once it is in the page (`rescroll`).
+  [el, ...inside].forEach((o, i) => {
+    if (o.scrollTop || o.scrollLeft) (i ? copies[i - 1] : c).dataset.scroll = `${o.scrollLeft} ${o.scrollTop}`;
+  });
   if (inside.length > MOST_INSIDE) return c;
   looked.add(c);
-  const copies = c.querySelectorAll<HTMLElement>('*');
   inside.forEach((o, i) => {
     const n = copies[i];
     n.style.setProperty('transition', 'none');
@@ -218,11 +222,21 @@ export function cloneOf(el: HTMLElement): HTMLElement {
     if (style.display !== 'contents' && !o.getClientRects().length) return void n.style.setProperty('display', 'none');
     const display = style.display;
     const props = [...INNER, ...(display.startsWith('inline') && !laysOut(display) ? [] : BOX), ...(laysOut(display) ? FLEX : []), ...(o.parentElement && laysOut(getComputedStyle(o.parentElement).display) ? ITEM : [])];
-    for (const p of props) n.style.setProperty(p, style.getPropertyValue(p));
+    // Visible is inherited, not set: a part hidden in the copy (one that flies) hides what it holds too.
+    for (const p of props) if (p !== 'visibility' || style.visibility !== 'visible') n.style.setProperty(p, style.getPropertyValue(p));
     // Words of its own on one line stay on one line.
     if (style.whiteSpace === 'normal' && [...o.childNodes].some((c) => c.nodeType === Node.TEXT_NODE && c.textContent!.trim()) && oneLine(o)) n.style.setProperty('white-space', 'nowrap');
   });
   return c;
+}
+
+/** Scrolls a copy that is now in the page as its original was scrolled (`cloneOf`). */
+export function rescroll(copy: HTMLElement) {
+  for (const n of [copy, ...copy.querySelectorAll<HTMLElement>('[data-scroll]')]) {
+    if (!n.dataset.scroll) continue;
+    const [left, top] = n.dataset.scroll.split(' ').map(Number);
+    Object.assign(n, { scrollLeft: left, scrollTop: top });
+  }
 }
 
 /** A copy of `s.el` (or `clone`, made of it earlier), looking as it does there, at `at` (absolute in its parent, or fixed on screen). */
@@ -367,6 +381,7 @@ export function fly(from: Seen, to: HTMLElement, toBox: DOMRect, layers?: Layers
       pictures.add(c);
       root.insertBefore(c, [...root.children].find((k) => !pictures.has(k)) ?? null);
     } else root.append(c);
+    rescroll(c);
   }
   // Shown with the originals hidden in one go, once decoded. Loaded already (the copies decode as they
   // paint): at once, so the real element is never drawn a frame where it isn't yet (a row moving up).

@@ -113,7 +113,8 @@
     void settings.current.density;
     const frame = requestAnimationFrame(() => {
       cardHeight = list?.querySelector('li')?.offsetHeight ?? 0;
-      listTop = list && scroller ? list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop : 0;
+      // In CSS pixels like scrollTop (the scroller is its offset parent); a rect would carry the root's zoom and any move.
+      listTop = list?.offsetTop ?? 0;
     });
     return () => cancelAnimationFrame(frame);
   });
@@ -340,6 +341,7 @@
   }
 
   .scroll {
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;

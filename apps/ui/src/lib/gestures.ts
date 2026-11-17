@@ -203,13 +203,40 @@ export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Swipe {
               el.style.transform = '';
               back();
             };
-            if (does === 'queue') setTimeout(restore, 100);
-            else setTimeout(() => (el.isConnected ? restore() : done()), 1000);
+            if (does === 'queue') return void setTimeout(restore, 100);
+            // Removed: the strip closes up as the rows below move up into the row's place (the list's own change, same clock).
+            const closes = new MutationObserver(() => {
+              if (el.isConnected) return;
+              closes.disconnect();
+              clearTimeout(refused);
+              if (!strip?.isConnected) return done();
+              const at = strip.style.transform;
+              strip.style.transformOrigin = 'top';
+              void new Transition([{ el: strip, frames: [{ transform: `${at} scaleY(1)` }, { transform: `${at} scaleY(0)` }] }]).play(1).then(done);
+            });
+            if (box) closes.observe(box, { childList: true });
+            const refused = setTimeout(() => {
+              closes.disconnect();
+              if (el.isConnected) restore();
+              else done();
+            }, 1000);
           });
         },
       },
     };
   };
+}
+
+/**
+ * Makes the touch under way ours alone until the returned function is
+ * called: the browser's own handling of a drag ends in a fling, and
+ * Chromium drops the next tap while one runs (nothing could be tapped for
+ * half a second after a drag), even where `touch-action` rules out panning.
+ */
+export function ownTouch(): () => void {
+  const own = (ev: TouchEvent) => ev.cancelable && ev.preventDefault();
+  window.addEventListener('touchmove', own, { passive: false });
+  return () => window.removeEventListener('touchmove', own);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { css, ID, type Box } from './fit';
-import { behind, cloneOf, copyOf, fly, full, motionLayer, rootZoom, see, type Flight, type Seen } from './mover';
+import { behind, cloneOf, copyOf, fly, full, motionLayer, rescroll, rootZoom, see, type Flight, type Seen } from './mover';
 import { plan, type Enter, type Frame, type Part } from './plan';
 import { Transition, type Span, type Track } from './transition';
 
@@ -23,6 +23,8 @@ export interface Options {
   ended?: (landed: boolean) => void;
   /** Whether parts that went play their way out; without, they are gone at once (a row swiped out already). */
   leaves?: boolean;
+  /** Left as it is drawn, with what it holds: a row a finger drags while the others make way. */
+  still?: HTMLElement;
 }
 
 /** `distance`: how far things move on screen (px), for a finger to drive it by. */
@@ -143,7 +145,7 @@ const waiting = new Map<HTMLElement, Snapshot>();
 const running = new Map<Change, HTMLElement>();
 
 function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
-  const { spans, under, back, ended, leaves = true } = options;
+  const { spans, under, back, ended, leaves = true, still } = options;
   // One change at a time in a stage: one still running in it (rows still sliding when the next update
   // comes) ends, and this one starts from where that left things drawn, as `before` measured them.
   for (const [c, r] of running) if (root.contains(r)) c.end();
@@ -179,8 +181,12 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     const was = before.parts[j].box;
     if (Math.abs(was.width - a.box.width) < 1 && Math.abs(was.height - a.box.height) < 1) return;
     const el = after.els[i];
-    unclipped.set(el, el.style.overflow);
-    el.style.overflow = 'visible';
+    // A scrolled box keeps its own clipping: without it, it isn't a scroller and loses its position (what it
+    // holds would jump by it). shortcut: one that shrinks is cut to its new size at once; the clip path still grows one.
+    if (!el.scrollTop && !el.scrollLeft) {
+      unclipped.set(el, el.style.overflow);
+      el.style.overflow = 'visible';
+    }
     tracks.push({ el, frames: [{ clipPath: rect(was.width, was.height) }, { clipPath: rect(a.box.width, a.box.height) }] });
   });
   for (const m of p.enter) animate(after.els[m.after], m.frames, m.span);
@@ -239,6 +245,7 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     c.inert = true;
     if (under) under.append(c);
     else motionLayer().append(c);
+    rescroll(c);
     copies.push(c);
     tracks.push({ el: c, frames: m.frames.map(frame), span: m.span });
   }
@@ -262,6 +269,7 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     c.inert = true;
     if (under) under.append(c);
     else motionLayer().append(c);
+    rescroll(c);
     copies.push(c);
     tracks.push({ el: c, frames: [{ opacity: 1 }, { opacity: 0 }], span: spans?.leave });
   }
@@ -279,12 +287,13 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     c.inert = true;
     if (under) under.append(c);
     else motionLayer().append(c);
+    rescroll(c);
     copies.push(c);
     tracks.push({ el: c, frames: [{ transform: 'none', opacity: 1 }, { transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)`, opacity: 0 }] });
     tracks.push({ el: el as HTMLElement, frames: [{ opacity: 0 }, { opacity: 1 }] });
   }
 
-  const t = new Transition(tracks, () => {
+  const t = new Transition(still ? tracks.filter((k) => !still.contains(k.el)) : tracks, () => {
     const landed = t.heading === 1;
     for (const f of flights) f.done(landed);
     for (const c of copies) c.remove();

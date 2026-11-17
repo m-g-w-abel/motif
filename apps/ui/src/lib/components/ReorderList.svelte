@@ -42,13 +42,21 @@
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
 
-  /** Changes the rows' places by `apply`, drawn as a change from where they are. */
-  function moving(apply: () => void) {
+  /**
+   * Changes the rows' places by `apply`, drawn as a change from where they
+   * are; `held` (the row being dragged) stays with the finger. Nothing leaves
+   * a reorder, so no copies are made.
+   */
+  function moving(apply: () => void, held?: HTMLElement) {
     if (!list) return apply();
-    void change(list, () => {
-      apply();
-      flushSync();
-    }).play(1);
+    void change(
+      list,
+      () => {
+        apply();
+        flushSync();
+      },
+      { leaves: false, still: held },
+    ).play(1);
   }
 
   function moved(e: PointerEvent) {
@@ -57,7 +65,7 @@
     const to = dropIndex(mids, drag.from, startMid + dy);
     const next = { ...drag, dy, to };
     if (to === drag.to) drag = next;
-    else moving(() => (drag = next));
+    else moving(() => (drag = next), rows()[drag.from]);
   }
 
   function up() {

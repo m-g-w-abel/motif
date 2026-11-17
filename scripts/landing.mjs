@@ -216,6 +216,47 @@ const watch = `{
 /** The most a dragged change may move in a frame's time, 16.7 ms (the finger itself moves up to about 0.1 in one here); a dropped frame is slow, not a jump. */
 const STEP = 0.15;
 
+/** Something moving: a change's tracks (filled both ways) in the page. */
+const moving = "document.getAnimations().some((a) => a.effect?.getTiming().fill === 'both')";
+/** A visible button where the change ended (the sheet's when it is open, else the screen's): its centre, unless something covers it there. */
+const pressable = `(() => {
+  const sheet = document.querySelector('.sheet.open');
+  const area = sheet ?? document.querySelector('main > .screen:not([inert])');
+  // Not a handle: its press steps the sheet as well as clicking.
+  for (const b of area?.querySelectorAll('button:not(.step)') ?? []) {
+    const r = b.getBoundingClientRect();
+    const [x, y] = [r.x + r.width / 2, r.y + r.height / 2];
+    if (r.width < 16 || r.height < 16 || y < 40 || y > innerHeight - 100 || x < 0 || x > innerWidth) continue;
+    if (!b.contains(document.elementFromPoint(x, y))) continue;
+    return [x, y];
+  }
+  return null;
+})()`;
+
+/**
+ * As soon as a change stops moving, a real finger taps a button it left in
+ * view: the click must arrive (it is swallowed here, so nothing happens).
+ * Chromium drops taps while a fling it started runs, and a part still
+ * hidden for its hand-over can't be pressed: either leaves buttons dead
+ * just after a change.
+ */
+async function tapsRightAfter(name) {
+  const end = Date.now() + 3000;
+  while ((await run(moving)) && Date.now() < end) await sleep(10);
+  const at = await run(pressable);
+  if (!at) return;
+  await run(`window.motifClicked = false; addEventListener('click', (e) => { window.motifClicked = true; e.preventDefault(); e.stopPropagation(); }, { capture: true, once: true }); 0`);
+  if (phone) {
+    const k = await run("devicePixelRatio");
+    execFileSync("adb", ["shell", "input", "tap", ...at.map((v) => String(Math.round(v * k)))]);
+  } else {
+    await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: at[0], y: at[1], id: 2 }] });
+    await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  }
+  await sleep(300);
+  if (!(await run("window.motifClicked"))) failures.push(`${name}: a tap right after it ended was lost`);
+}
+
 /** Runs `act`, waits for the change to settle, then checks its landings (at least `least` of them); `dragged`: a finger drives it. */
 async function check(name, act, least = 1, dragged = false) {
   await run("window.motifLandings.length = 0");
@@ -223,6 +264,7 @@ async function check(name, act, least = 1, dragged = false) {
   await act();
   // The change begins a frame or two later (the new screen is laid out first).
   await sleep(150);
+  await tapsRightAfter(name);
   try {
     await until(settled);
   } catch {
@@ -640,10 +682,36 @@ async function queue(label) {
     const [x, y] = await run(handle);
     await drag(x, y, x, y + pitch * 0.4);
   });
+  // The dragged row stays under the finger while the rows it passes make way.
+  {
+    const [x, y] = await run(handle);
+    const top = await run("document.querySelector('.sheet .queue-slot ol li').getBoundingClientRect().top");
+    await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
+    let off = 0;
+    for (let i = 1; i <= 30; i++) {
+      await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + i * 5, id: 1 }] });
+      await sleep(20);
+      const now = await run("document.querySelector('.sheet .queue-slot ol li.dragging')?.getBoundingClientRect().top ?? null");
+      if (now !== null) off = Math.max(off, Math.abs(now - top - i * 5));
+    }
+    await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    if (off > 1) failures.push(`${label}: a dragged queue row fell ${off.toFixed(0)}px behind the finger`);
+    await sleep(600);
+    await until(settled);
+  }
+  // A swiped-out row's strip closes up as the rows below move into its place, never covering them.
+  await run(`window.motifOverlap = 0; { const first = document.querySelector('.sheet .queue-slot ol li'); const t0 = performance.now(); const tick = () => {
+    const strip = document.querySelector('.swipe-strip');
+    if (strip && !first.isConnected) motifOverlap = Math.max(motifOverlap, strip.getBoundingClientRect().bottom - document.querySelector('.sheet .queue-slot ol li').getBoundingClientRect().top);
+    if (performance.now() - t0 < 2000) requestAnimationFrame(tick);
+  }; requestAnimationFrame(tick); } 0`);
   await rowsGlide(`${label}: remove from the queue by a swipe`, async () => {
     const [x, y] = await run("(() => { const r = document.querySelector('.sheet .queue-slot ol li .entry').getBoundingClientRect(); return [r.x + r.width * 0.6, r.y + r.height / 2]; })()");
     await drag(x, y, Math.max(4, x - 300), y);
   });
+  await sleep(2000);
+  const over = await run("motifOverlap");
+  if (over > 1) failures.push(`${label}: a removed row's strip covered the next row by ${over.toFixed(0)}px`);
   await run("document.querySelector('.sheet .queue-slot .heading .link')?.click()");
 }
 
@@ -698,6 +766,17 @@ try {
       [100, "DejaVu Sans"],
     ]) {
       const phone_ = `phone${scale === 100 ? "" : ` ${scale}%`}${font ? ` ${font}` : ""}`;
+      // Albums scrolled to the end: the rows at the top of the view are drawn (at any zoom).
+      await open("dev-view=albums", 384, 820);
+      await until(`!!${card}`);
+      const gap = await run(`(async () => {
+        const s = document.querySelector('main > .screen:not([inert]) .album-grid .scroll');
+        s.scrollTop = s.scrollHeight;
+        await new Promise((r) => setTimeout(r, 300));
+        const first = s.querySelector('li')?.getBoundingClientRect();
+        return first ? first.top - s.getBoundingClientRect().top : null;
+      })()`);
+      if (gap === null || gap > 1) failures.push(`${phone_}: albums scrolled to the end left ${gap?.toFixed(0) ?? "all"}px empty at the top`);
       // Phone: a category from the Library home and back by its back button; desktop has no home screen.
       await open("dev-view=home", 384, 820);
       await check(`${phone_}: open a category`, tap("document.querySelectorAll('main > .screen:not([inert]) .categories button')[1]"), 2);

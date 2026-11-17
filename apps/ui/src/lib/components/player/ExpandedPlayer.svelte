@@ -1,6 +1,6 @@
 <script lang="ts">
   import { flushSync } from 'svelte';
-  import { SLOP } from '../../gestures';
+  import { ownTouch, SLOP } from '../../gestures';
   import { released, stepTo } from '../../sheet.svelte';
   import { getApp, setViewState } from '../../context';
   import { mapped } from '../../gestures';
@@ -29,6 +29,9 @@
   let back = $state<HTMLElement>();
   setViewState({ source: 'library', layoutId: 'now-playing', browse: layout.browseState('now-playing') });
 
+  /** The carousel's other images, under the cover on phones: gone before the cover's copies crossfade over them. */
+  const COVERED: Span = [0, 0.05];
+
   /**
    * The open/close transition's stretches for what comes and goes
    * (docs/ANIMATION.md): the bar's own parts go first (`leave`); the sheet's
@@ -38,6 +41,7 @@
    */
   const SPANS: Record<string, Span> = {
     leave: [0, 0.1],
+    covered: COVERED,
     enter: [0.6, 1],
     queue: [0.5, 1],
     fall: [0, 0.5],
@@ -95,6 +99,7 @@
       {
         under: leaving,
         back,
+        spans: { covered: COVERED },
         ended: (landed) => {
           if (stepping === t) stepping = null;
           if (landed || !undo) return;
@@ -126,10 +131,12 @@
     let drive: Drive | null = null;
     /** Where the press became a drag: the step moves from there, never by the slop. */
     let y1 = y0;
+    let owned: (() => void) | undefined;
     const move = (ev: PointerEvent) => {
       const dy = ev.clientY - y0;
       if (!way) {
         if (Math.abs(dy) < SLOP) return;
+        if (e.pointerType !== 'mouse') owned = ownTouch();
         y1 = ev.clientY;
         way = dy < 0 ? 'up' : 'back';
         const to = stepTo(from, way);
@@ -147,6 +154,7 @@
       if (t) drive?.seek(((way === 'up' ? -1 : 1) * (ev.clientY - y1)) / t.distance);
     };
     const stop = () => {
+      owned?.();
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
@@ -226,7 +234,8 @@
     </button>
   </header>
 
-  <!-- Phones, full queue and lyrics: the playing track in a strip whose drag or tap steps back. -->
+  <!-- Phones, full queue and lyrics: the playing track in a strip whose drag or tap steps back. Each step
+       shows one handle (`handle:now`: here, above the queue, under the controls), which moves between them. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="mini" data-enter="above" onpointerdown={(e) => !(e.target as Element).closest('.transport') && stepDrag(e, () => sheet.back())}>
     <div class="mini-row">
@@ -237,7 +246,7 @@
       </span>
       <Transport compact size={22} />
     </div>
-    <button class="step" aria-label={sheet.lyrics ? 'Back to now playing' : 'Show less of the queue'} onclick={(e) => keyed(e, () => sheet.back())}></button>
+    <button class="step" data-move="handle:now" aria-label={sheet.lyrics ? 'Back to now playing' : 'Show less of the queue'} onclick={(e) => keyed(e, () => sheet.back())}></button>
   </div>
 
   <div class="body" bind:this={body}>
@@ -272,13 +281,14 @@
         <!-- Phones: the handle at the bottom; a tap or drag up shows the queue. -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="more" data-enter="fade" onpointerdown={(e) => stepDrag(e, () => sheet.up())}>
-          <button class="step" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
+          <button class="step" data-move="handle:now" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
         </div>
       </div>
     </div>
     <div class="queue-slot" data-enter="below" data-span="queue">
       <button
         class="step"
+        data-move="handle:now"
         aria-label="Show all of the queue"
         onpointerdown={(e) => stepDrag(e, () => sheet.up())}
         onclick={(e) => keyed(e, () => sheet.up())}

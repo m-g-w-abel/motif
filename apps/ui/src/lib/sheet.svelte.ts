@@ -1,4 +1,4 @@
-import { SLOP } from './gestures';
+import { ownTouch, SLOP } from './gestures';
 import { follow, type Drive, type Transition } from './motion/transition';
 
 /**
@@ -151,6 +151,8 @@ export class PlayerSheet {
     let fromY = startY;
     let start = 0;
     let p = 0;
+    // From the press: a drag handed over mid-move (now playing's, once it heads for closing) stays ours.
+    const owned = touch ? ownTouch() : undefined;
 
     const move = (ev: PointerEvent) => {
       const dy = ev.clientY - startY;
@@ -179,6 +181,7 @@ export class PlayerSheet {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
+      owned?.();
       if (!moved) {
         if (!swiped) onTap?.();
         return;

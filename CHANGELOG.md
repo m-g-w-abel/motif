@@ -5,6 +5,17 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Phone fixes for now playing and the queue**: buttons respond straight
+  after dragging now playing open or closed or dragging a handle, instead of
+  ignoring taps for a moment. The album's other images no longer show through
+  the cover on the way to the half queue; going to the full queue no longer
+  shows two play buttons, and the handle moves to the top instead of a new one
+  appearing. A partly scrolled queue no longer jumps when the view changes.
+  Dragging a song in the queue keeps it under your finger as it passes others,
+  and a song swiped away no longer leaves its red strip over the next one: the
+  strip closes up as the songs below move up. Albums no longer go missing at
+  the top of the screen when you scroll a long list with a larger Scale or
+  system font size.
 - **Smoother now playing and queue**: pulling now playing up or a handle
   starts moving under your finger straight away instead of pausing and then
   jumping, and everything moves from the start of the animation. Changing

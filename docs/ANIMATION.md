@@ -180,7 +180,10 @@ t.play(1);           // a tap
      transform moves a clip but can't resize it, so its old clip would be its
      new size in its old place (cutting off what it held, or showing what it
      hid). The one property besides transform and opacity a change animates,
-     only there and only for the change's 260 ms;
+     only there and only for the change's 260 ms. A box scrolled away from
+     its start keeps its own clipping (set aside, it would stop being a
+     scroller and lose its position, so what it holds would jump); copies
+     are scrolled as their originals were (`rescroll`);
    - **nothing pops**: an element the change shows that no part declares (a
      part's insides it brings) fades in over the `enter` span, and one it
      takes away while its part stays fades out over the `leave` span, drawn
@@ -417,7 +420,11 @@ ends the swipe after its first move. `main`'s `pan-y` alone isn't enough, as
 sideways, and desktop's layouts keep wide tables' panning. Once a press is
 a sideways swipe, `gesture()` also cancels the browser's own handling of
 the touch (`touchmove`), or it ends in a fling and Chromium drops the next
-tap while that runs (nothing could be tapped for half a second). While two
+tap while that runs (nothing could be tapped for half a second). The
+sheet's drags and its handles' do the same once they move (`ownTouch`), even
+on surfaces whose `touch-action` is `none`: Chromium still took them for a
+pan and dropped the next tap. The landing check taps a button with a real
+finger as each change stops moving to catch this. While two
 screens are up, the one that isn't the state's is `inert`; the stage never
 sets `pointer-events: none`, which would cancel the finger driving it.
 
@@ -434,14 +441,20 @@ else declares how it comes and goes (`data-enter`), and the choreography
 is the sheet's span table (`ExpandedPlayer.svelte`). Parts that a change
 takes away leave as copies in the sheet's `.leaving` layer, behind the
 rest. The carousel keeps its size while hidden (half queue, lyrics), so the
-cover lands on it the moment it shows again.
+cover lands on it the moment it shows again; on phones its other images lie
+under the cover and go at the very start of a step (`covered`), before the
+cover's two drawings crossfade over them. Each step shows one handle
+(`handle:now`: under the controls, above the queue, at the top of the full
+queue), which moves between steps.
 
 **Menus, dialogs, the selection bar.** `transition:surface`. The scrim dims.
 
 **Rows and the bar's swipes.** A row's swipe is a transition with the row's
 slide and its + / × strip; the finger seeks it, release commits or springs
 back. "Queued" then plays a second transition (out and back in); "removed"
-leaves the row out and lets `flip` close the gap. The bar's and artwork's
+leaves the row out and lets `flip` close the gap, and its strip closes up
+with it (on the same clock, from the bottom), never covering the row moving
+into its place. The bar's and artwork's
 track change is the same: the old track slides out with the finger and the
 next comes in from the other side.
 
@@ -450,7 +463,8 @@ queue). Content that is replaced wholesale (search results, Songs/Albums)
 uses `use:swap`. A reorder (`ReorderList`) is a change too: the rows making
 way, the dropped row going to its place and a row let go where it started
 all glide from where they are drawn, while the dragged row follows the
-finger.
+finger: the change leaves it alone (`still`), and makes no copies, since
+nothing leaves a reorder.
 
 ## Performance
 
