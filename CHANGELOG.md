@@ -5,6 +5,10 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Cleaner album covers**: albums and playlists sit straight on the background,
+  with no card border or fill and fully rounded covers; hover, focus and the
+  playing album show on the cover. With titles and artists hidden there is no
+  extra space under the covers.
 - **Phone fixes for now playing and the queue**: buttons respond straight
   after dragging now playing open or closed or dragging a handle, instead of
   ignoring taps for a moment. The album's other images no longer show through

@@ -540,7 +540,7 @@
               {/if}
             </button>
           {:else}
-            <div class="card loading" aria-hidden="true">
+            <div class="card loading" aria-hidden="true" style:min-height={grid && !titles && !artists ? "0" : undefined}>
               {#if mode !== 'list'}<Artwork track={undefined} art={null} size={grid ? undefined : 40} />{/if}
             </div>
           {/if}
@@ -595,26 +595,26 @@
     display: flex;
     flex-direction: column;
     width: 100%;
-    padding: 0 0 var(--space-2);
-    /* A border, not a box-shadow: blurred shadows are slow to repaint when
-       WebKitGTK draws on the CPU, and the grid repaints on every scroll. */
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--surface);
+    padding: 0;
+    border: 0;
+    background: none;
     text-align: left;
     cursor: pointer;
+  }
+
+  /* Hover, focus and playing show on the cover, as an outline (not a blurred
+     box-shadow: those are slow to repaint when WebKitGTK draws on the CPU). */
+  .cover {
+    display: block;
+    flex: none;
+    border-radius: var(--radius-sm);
     outline: 2px solid transparent;
     outline-offset: 1px;
   }
 
-  .cover {
-    display: block;
-    flex: none;
-  }
-
   .card :global(.art) {
     width: 100%;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    border-radius: var(--radius-sm);
   }
 
   .rows {
@@ -627,9 +627,8 @@
     gap: var(--space-3);
     height: 48px;
     padding: 0 var(--space-3);
-    border: 0;
     border-radius: 0;
-    background: none;
+    outline: 2px solid transparent;
     outline-offset: -2px;
   }
 
@@ -666,20 +665,28 @@
     min-height: 0;
   }
 
-  .card:hover {
+  .card:hover .cover,
+  .rows .card:hover {
     outline-color: var(--border);
   }
 
-  .card.focused {
+  .card.focused .cover,
+  .rows .card.focused {
     outline-color: var(--text-muted);
   }
 
-  .card.playing {
+  .card.playing .cover,
+  .rows .card.playing {
     outline-color: var(--accent);
   }
 
   .card:focus-visible {
-    outline-color: var(--text);
+    outline: none;
+  }
+
+  .card:focus-visible .cover,
+  .rows .card:focus-visible {
+    outline: 2px solid var(--text);
   }
 
   .title,
