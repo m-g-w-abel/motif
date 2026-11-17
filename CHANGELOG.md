@@ -5,6 +5,10 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Cover colours pick background and accent separately**: the background
+  comes from the colour covering most of the cover, the accent from its
+  strongest other colour. A mostly white cover with a blue streak now gives a
+  light, neutral interface with a blue accent instead of a pale blue one.
 - **Phone fixes for now playing and the queue**: buttons respond straight
   after dragging now playing open or closed or dragging a handle, instead of
   ignoring taps for a moment. The album's other images no longer show through

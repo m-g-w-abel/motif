@@ -23,39 +23,72 @@ function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   return [h, s, l];
 }
 
-/** Lightness (0 to 1) of a `#rgb` or `#rrggbb` colour. */
-function lightnessOf(color: string): number {
+type Rgb = [number, number, number];
+
+function rgbOf(color: string): Rgb {
   let h = color.slice(1);
   if (h.length === 3) h = [...h].map((c) => c + c).join('');
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
-  return rgbToHsl(r, g, b)[2];
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as Rgb;
+}
+
+/** Lightness (0 to 1) of a `#rgb` or `#rrggbb` colour. */
+const lightnessOf = (color: string) => rgbToHsl(...rgbOf(color))[2];
+
+const chromaOf = ([r, g, b]: Rgb) => Math.max(r, g, b) - Math.min(r, g, b);
+
+/** OKLab of an sRGB colour, for grouping colours as people see them. */
+function oklab(r: number, g: number, b: number): Rgb {
+  const lin = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  [r, g, b] = [lin(r), lin(g), lin(b)];
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787995 * b);
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
 }
 
 const BUCKETS = 12;
+// Below this spread between channels a pixel counts as grey.
+const GREY = 24;
 
 /**
- * The cover's main colour and its mean brightness. The hue is the heaviest
- * of twelve hue buckets (weighted to the colourful pixels), averaged within
- * that bucket only: averaging across hues turns blue and yellow into green.
- * `hsl` is null for a greyscale or empty image.
+ * The cover's colours. `area` is the mean of the coarse OKLab bucket covering
+ * most of the image, greys and whites included: the background. `hues` are the
+ * colourful pixels in twelve hue buckets (weighted by saturation²), heaviest
+ * first, each averaged within its bucket only: averaging across hues turns blue
+ * and yellow into green. `area` is null and `hues` empty for an empty image.
  */
-export function dominant(pixels: ArrayLike<number>): { hsl: [number, number, number] | null; brightness: number } {
+export function dominant(pixels: ArrayLike<number>): { area: Rgb | null; hues: Rgb[] } {
   const sums = Array.from({ length: BUCKETS }, () => [0, 0, 0, 0]);
-  let luma = 0, n = 0;
+  const areas = new Map<number, number[]>();
   for (let i = 0; i + 3 < pixels.length; i += 4) {
     const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
     if (pixels[i + 3] < 128) continue;
-    luma += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-    n++;
-    const sat = Math.max(r, g, b) - Math.min(r, g, b);
-    if (sat < 24) continue;
+    const [L, A, B] = oklab(r, g, b);
+    const key = Math.min(5, Math.floor(L * 6)) * 400 + Math.round(A / 0.08 + 10) * 20 + Math.round(B / 0.08 + 10);
+    const area = areas.get(key) ?? areas.set(key, [0, 0, 0, 0]).get(key)!;
+    area[0] += r; area[1] += g; area[2] += b; area[3]++;
+    const sat = chromaOf([r, g, b]);
+    if (sat < GREY) continue;
     const w = sat * sat;
     const bucket = sums[Math.floor(((rgbToHsl(r, g, b)[0] + 360 / BUCKETS / 2) % 360) / (360 / BUCKETS))];
     bucket[0] += r * w; bucket[1] += g * w; bucket[2] += b * w; bucket[3] += w;
   }
-  const brightness = n ? luma / n : 0.5;
-  const [r, g, b, w] = sums.reduce((best, s) => (s[3] > best[3] ? s : best));
-  return { hsl: w ? rgbToHsl(r / w, g / w, b / w) : null, brightness };
+  const mean = ([r, g, b, w]: number[]): Rgb => [r / w, g / w, b / w];
+  const top = [...areas.values()].reduce<number[] | null>((best, a) => (!best || a[3] > best[3] ? a : best), null);
+  return { area: top && mean(top), hues: sums.filter((s) => s[3]).sort((a, b) => b[3] - a[3]).map(mean) };
+}
+
+/**
+ * The accent's colour: the heaviest hue not too close to the background's
+ * (a cover of one hue keeps it; `accentOn` then moves its lightness). Null
+ * for a greyscale cover: the theme's own accent is better than a grey one.
+ */
+function accentHsl(hues: Rgb[], bg: Rgb): [number, number, number] | null {
+  const bgHue = rgbToHsl(...bg)[0];
+  // Only a clearly colourful background rules out its hue: orange still reads on dull brown.
+  const far = (c: Rgb) => chromaOf(bg) < 2 * GREY || 180 - Math.abs(Math.abs(rgbToHsl(...c)[0] - bgHue) - 180) > 40;
+  const pick = hues.find(far) ?? hues[0];
+  return pick ? rgbToHsl(...pick) : null;
 }
 
 /** Moves `l` toward lighter or darker until the colour reaches `min` contrast on every one of `bgs`. */
@@ -75,11 +108,10 @@ function accentOn([h, s, l]: [number, number, number], bg: string): string {
 
 /**
  * An accent colour for RGBA `pixels` (a small thumbnail), readable (at least
- * 3:1) against `bg`. Null for a greyscale or empty image: the theme's own
- * accent is better than a grey one.
+ * 3:1) against `bg`. Null for a greyscale or empty image.
  */
 export function accentFromPixels(pixels: ArrayLike<number>, bg: string): string | null {
-  const { hsl } = dominant(pixels);
+  const hsl = accentHsl(dominant(pixels).hues, rgbOf(bg));
   return hsl && accentOn(hsl, bg);
 }
 
@@ -100,24 +132,32 @@ export interface ArtPalette {
 }
 
 /**
- * The interface colours for a cover. `tint` keeps the theme's light or dark
- * and shifts its backgrounds toward the cover's hue; `full` takes the
- * backgrounds and text from the cover, light or dark by its brightness.
- * Text stays readable (4.5:1, muted 3:1) on every background. Null when the
- * cover gives nothing to use: `tint` of a greyscale image changes nothing.
+ * The interface colours for a cover. The backgrounds come from the colour
+ * covering most of the cover, the accent from its strongest other hue. `tint`
+ * keeps the theme's light or dark and shifts its backgrounds toward that
+ * colour; `full` takes the backgrounds and text from it, light or dark by its
+ * brightness. Text stays readable (4.5:1, muted 3:1) on every background.
+ * Null when the cover gives nothing to use: `tint` of a greyscale image
+ * changes nothing.
  */
 export function artPalette(pixels: ArrayLike<number>, theme: Pick<Theme, 'scheme' | 'tokens'>, mode: 'tint' | 'full'): ArtPalette | null {
-  const { hsl, brightness } = dominant(pixels);
-  if (!hsl && mode === 'tint') return null;
-  const h = hsl?.[0] ?? 0;
-  // A full theme shows a bold cover's colour in the background itself.
-  const sat = !hsl ? 0 : mode === 'full' ? Math.min(0.7, Math.max(0.15, hsl[1])) : Math.min(0.4, Math.max(0.12, hsl[1] * 0.5));
-  const scheme = mode === 'tint' ? theme.scheme : brightness > 0.5 ? 'light' : 'dark';
+  const { area, hues } = dominant(pixels);
+  if (!area || (!hues.length && mode === 'tint')) return null;
+  const [h] = rgbToHsl(...area);
+  // The background's colourfulness, kept as its lightness changes: a near-white cover stays near neutral.
+  const chroma = chromaOf(area) / 255;
+  const satAt = (l: number) => {
+    const s = chroma / Math.max(0.01, 1 - Math.abs(2 * l - 1));
+    return mode === 'full' ? Math.min(0.7, s) : Math.min(0.4, s * 0.5);
+  };
+  const scheme = mode === 'tint' ? theme.scheme : (0.2126 * area[0] + 0.7152 * area[1] + 0.0722 * area[2]) / 255 > 0.5 ? 'light' : 'dark';
   const lighter = scheme === 'dark';
   const tokens: Partial<Tokens> = {};
   for (const key of SURFACES) {
-    tokens[key] = hslToHex(h, sat, mode === 'full' ? FULL_L[scheme][key] : lightnessOf(theme.tokens[key]));
+    const l = mode === 'full' ? FULL_L[scheme][key] : lightnessOf(theme.tokens[key]);
+    tokens[key] = hslToHex(h, satAt(l), l);
   }
+  const sat = satAt(lightnessOf(tokens.bg!));
   const bgs = [tokens.bg!, tokens.surface!, tokens['surface-2']!];
   if (mode === 'full') {
     tokens.hover = lighter ? 'rgb(255 255 255 / 0.05)' : 'rgb(0 0 0 / 0.06)';
@@ -131,5 +171,6 @@ export function artPalette(pixels: ArrayLike<number>, theme: Pick<Theme, 'scheme
       if (bgs.some((bg) => contrast(c, bg) < min)) tokens[key] = readable(h, 0, lightnessOf(c), bgs, min, lighter);
     }
   }
-  return { scheme, tokens, accent: hsl && accentOn(hsl, tokens.bg!) };
+  const accent = accentHsl(hues, area);
+  return { scheme, tokens, accent: accent && accentOn(accent, tokens.bg!) };
 }
