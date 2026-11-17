@@ -11,8 +11,8 @@ grouped by phase of the plan.
   the cover on the way to the half queue; going to the full queue no longer
   shows two play buttons, and the handle moves to the top instead of a new one
   appearing. A partly scrolled queue no longer jumps when the view changes.
-  Dragging a song in the queue keeps it under your finger as it passes others,
-  and a song swiped away no longer leaves its red strip over the next one: the
+  Dragging a song in the queue keeps it under your finger as it passes others
+  and it settles without a stutter when you let go, and a song swiped away no longer leaves its red strip over the next one: the
   strip closes up as the songs below move up. Albums no longer go missing at
   the top of the screen when you scroll a long list with a larger Scale or
   system font size.

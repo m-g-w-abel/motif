@@ -192,7 +192,7 @@ const INNER = [
 const BOX = ['box-sizing', 'width', 'height', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
 /** How a flex or grid box lays out its insides (a row centred by a rule on the sheet), and how its items take part. */
 const FLEX = ['gap', 'flex-direction', 'flex-wrap', 'justify-content', 'align-items', 'grid-template-columns', 'grid-template-rows'];
-const ITEM = ['flex-grow', 'flex-shrink', 'flex-basis'];
+const ITEM = ['flex-grow', 'flex-shrink', 'flex-basis', 'order'];
 const laysOut = (display: string) => /flex|grid/.test(display);
 /** Past this many elements inside, a copy keeps only its own rules (a long list: its rows' rules are their own). */
 const MOST_INSIDE = 300;
