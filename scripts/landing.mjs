@@ -510,6 +510,59 @@ async function rowsGlide(name, act) {
   console.log(`${jumps.length ? "FAIL" : "ok  "} ${name}`);
 }
 
+/**
+ * Nothing pops, in the motion system itself: on a test stage built in the page with
+ * its own `change()`, an element that no part declares fades out when a change takes
+ * it away (its drawing still there, opaque, at the start; gone by the end) and fades
+ * in when a change brings it.
+ */
+async function undeclared() {
+  const result = await run(`(async () => {
+    const { change } = await import('/src/lib/motion/change.ts');
+    const root = document.createElement('div');
+    root.style.cssText = 'position: fixed; left: 0; top: 0; width: 300px; height: 200px; background: #000; z-index: 99';
+    root.innerHTML = '<div data-enter="fade" style="height: 100px"><span class="gone" style="color: #fff">Going</span> <span>Staying</span></div>';
+    document.body.append(root);
+    const part = root.firstElementChild;
+    const gone = part.querySelector('.gone');
+    const box = gone.getBoundingClientRect();
+    /** What draws the words "Going" where they were, and how opaque it is at progress p. */
+    const drawn = (t, p) => {
+      t.seek(p);
+      for (const el of document.querySelectorAll('body *')) {
+        if (el.children.length || el.textContent !== 'Going' || el === gone) continue;
+        const r = el.getBoundingClientRect();
+        if (Math.abs(r.left - box.left) > 1 || Math.abs(r.top - box.top) > 1) continue;
+        let o = 1;
+        for (let e = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity);
+        return o;
+      }
+      return 0;
+    };
+    const out = {};
+    const t = change(root, () => gone.remove());
+    out.goneStart = drawn(t, 0);
+    out.goneEnd = drawn(t, 1);
+    t.end();
+    const come = document.createElement('span');
+    come.textContent = 'Coming';
+    const u = change(root, () => part.append(come));
+    u.seek(0);
+    out.comeStart = Number(getComputedStyle(come).opacity);
+    u.seek(1);
+    out.comeEnd = Number(getComputedStyle(come).opacity);
+    u.end();
+    root.remove();
+    return JSON.stringify(out);
+  })()`).then(JSON.parse);
+  const bad = [];
+  if (result.goneStart < 0.95) bad.push(`an undeclared element taken away vanished at once (drawn at ${result.goneStart.toFixed(2)} at the start)`);
+  if (result.goneEnd > 0.05) bad.push(`an undeclared element taken away was still drawn at the end (${result.goneEnd.toFixed(2)})`);
+  if (result.comeStart > 0.05 || result.comeEnd < 0.95) bad.push(`an undeclared element brought in popped (${result.comeStart.toFixed(2)} at the start, ${result.comeEnd.toFixed(2)} at the end)`);
+  for (const b of bad) failures.push(`motion: ${b}`);
+  console.log(`${bad.length ? "FAIL" : "ok  "} motion: undeclared elements fade${bad.map((b) => `\n       ${b}`).join("")}`);
+}
+
 /** The queue in the phone sheet (it needs one): reordering by the handle, a reorder let go where it started, removing by a swipe. */
 async function queue(label) {
   await open("dev-view=albums", 384, 820);
@@ -586,7 +639,7 @@ async function startsInPlace(name, act) {
 
 try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
-  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card });
+  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared });
   else {
     // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size),
     // and in a font whose glyphs sit differently in their line than the default's (Roboto's on phones do).
@@ -659,6 +712,8 @@ try {
   }
   if (!process.env.STEPS) {
     [scale, font] = [100, ""];
+    await open("dev-view=albums", 384, 820);
+    await undeclared();
     await open("dev-settings=interface", 384, 820);
     await check("phone: Settings section back to the list", () => swipe(20, 300, 400), 0);
     await check("phone: Settings list to a section", tap("document.querySelector('main > .screen:not([inert]) .phone-list button')"), 0);

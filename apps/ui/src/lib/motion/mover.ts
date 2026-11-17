@@ -163,6 +163,10 @@ export function rootZoom() {
   return zoom.value;
 }
 
+/** Copies whose insides keep their look (`cloneOf`), so a part inside one can be copied from it. */
+const looked = new WeakSet<Element>();
+export const full = (copy: Element) => looked.has(copy);
+
 /** What a copy's insides keep of how they look (the copy's own box takes all of `LOOK`). */
 const INNER = [
   'display',
@@ -181,31 +185,15 @@ const INNER = [
   'background-color',
   'background-image',
   'border-radius',
-  // Its layout, so it is laid out as it was (a row centred by a rule on the sheet).
-  'box-sizing',
-  'width',
-  'height',
-  'margin-top',
-  'margin-right',
-  'margin-bottom',
-  'margin-left',
-  'padding-top',
-  'padding-right',
-  'padding-bottom',
-  'padding-left',
-  'gap',
-  'flex-direction',
-  'flex-wrap',
-  'flex-grow',
-  'flex-shrink',
-  'flex-basis',
-  'justify-content',
-  'align-items',
-  'grid-template-columns',
-  'grid-template-rows',
   // As drawn now: a marquee mid-scroll is where its transition has got to, not where it is going.
   'transform',
 ];
+/** Its box, so it is laid out as it was (a row a rule on the sheet sizes): for what isn't inline. */
+const BOX = ['box-sizing', 'width', 'height', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
+/** How a flex or grid box lays out its insides (a row centred by a rule on the sheet), and how its items take part. */
+const FLEX = ['gap', 'flex-direction', 'flex-wrap', 'justify-content', 'align-items', 'grid-template-columns', 'grid-template-rows'];
+const ITEM = ['flex-grow', 'flex-shrink', 'flex-basis'];
+const laysOut = (display: string) => /flex|grid/.test(display);
 /** Past this many elements inside, a copy keeps only its own rules (a long list: its rows' rules are their own). */
 const MOST_INSIDE = 300;
 
@@ -220,6 +208,7 @@ export function cloneOf(el: HTMLElement): HTMLElement {
   c.style.setProperty('transition', 'none');
   const inside = el.querySelectorAll<HTMLElement>('*');
   if (inside.length > MOST_INSIDE) return c;
+  looked.add(c);
   const copies = c.querySelectorAll<HTMLElement>('*');
   inside.forEach((o, i) => {
     const n = copies[i];
@@ -227,8 +216,11 @@ export function cloneOf(el: HTMLElement): HTMLElement {
     const style = getComputedStyle(o);
     // Undrawn insides stay undrawn (a box of `display: contents` has no boxes of its own, but its insides draw).
     if (style.display !== 'contents' && !o.getClientRects().length) return void n.style.setProperty('display', 'none');
-    for (const p of INNER) n.style.setProperty(p, style.getPropertyValue(p));
-    if (oneLine(o) && style.whiteSpace === 'normal') n.style.setProperty('white-space', 'nowrap');
+    const display = style.display;
+    const props = [...INNER, ...(display.startsWith('inline') && !laysOut(display) ? [] : BOX), ...(laysOut(display) ? FLEX : []), ...(o.parentElement && laysOut(getComputedStyle(o.parentElement).display) ? ITEM : [])];
+    for (const p of props) n.style.setProperty(p, style.getPropertyValue(p));
+    // Words of its own on one line stay on one line.
+    if (style.whiteSpace === 'normal' && [...o.childNodes].some((c) => c.nodeType === Node.TEXT_NODE && c.textContent!.trim()) && oneLine(o)) n.style.setProperty('white-space', 'nowrap');
   });
   return c;
 }

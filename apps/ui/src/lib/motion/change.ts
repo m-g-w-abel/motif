@@ -1,5 +1,5 @@
-import { css, type Box } from './fit';
-import { behind, cloneOf, copyOf, fly, motionLayer, rootZoom, see, type Flight, type Seen } from './mover';
+import { css, ID, type Box } from './fit';
+import { behind, cloneOf, copyOf, fly, full, motionLayer, rootZoom, see, type Flight, type Seen } from './mover';
 import { plan, type Enter, type Frame, type Part } from './plan';
 import { Transition, type Span, type Track } from './transition';
 
@@ -30,7 +30,9 @@ export type Change = Transition & { distance: number };
 /** Drawn: laid out and not hidden. */
 const shows = (el: HTMLElement) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
 
-type Snapshot = { parts: Part[]; els: HTMLElement[]; seen: Seen[]; clones: (HTMLElement | null)[]; drawn: Set<Element> };
+/** Where a drawn element was (CSS pixels), and where it sits in its nearest part's copy (that part, and the path of child indices). */
+type Place = { box: Box; part?: number; path: number[] };
+type Snapshot = { parts: Part[]; els: HTMLElement[]; seen: Seen[]; clones: (HTMLElement | null)[]; drawn: Map<Element, Place> };
 
 /** The stage's parts as they are now, in CSS pixels, each with a copy to stand in for it if the change takes it away. */
 function snapshot(root: HTMLElement, copies: boolean): Snapshot {
@@ -41,7 +43,12 @@ function snapshot(root: HTMLElement, copies: boolean): Snapshot {
   for (const el of declared)
     for (let up = el.parentElement; up && up !== root && !all.has(up); up = up.parentElement) if (!up.matches('[data-move], [data-enter]') && shows(up)) all.add(up);
   const els = [...all].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
-  const seen = els.map((el) => see(el));
+  // Containers between parts (implicit) only ever move in place: their box is all that is needed.
+  const seen = els.map((el): Seen => {
+    if (el.matches('[data-move], [data-enter]')) return see(el);
+    const box = el.getBoundingClientRect();
+    return { el, box, view: box, glyph: box, ink: 0, text: false, look: {}, cut: false, res: 0 };
+  });
   const parts = els.map((el, i): Part => {
     const b = seen[i].box;
     let parent: number | undefined;
@@ -58,14 +65,44 @@ function snapshot(root: HTMLElement, copies: boolean): Snapshot {
       clips: style.overflowX !== 'visible' || style.overflowY !== 'visible',
     };
   });
-  // Only declared parts ever leave, so only they need a copy.
-  const clones = els.map((el, i) => (copies && !parts[i].implicit ? cloneOf(el) : null));
+  // A part inside another part is copied as that part of its copy, not afresh (when the outer copy kept its insides' look).
+  const clones: (HTMLElement | null)[] = [];
+  els.forEach((el, i) => {
+    clones[i] = null;
+    if (!copies || parts[i].implicit) return;
+    let outer = parts[i].parent;
+    while (outer !== undefined && parts[outer].implicit) outer = parts[outer].parent;
+    const from = outer === undefined ? null : clones[outer];
+    clones[i] = (from && full(from) && within(els[outer!], el, from)) || cloneOf(el);
+  });
   // What flies from a part the change takes away is copied from these, made while it was drawn.
   clones.forEach((c, i) => c && (seen[i].copy = c));
   for (const s of seen) s.behind = behind(s.el, root);
-  // Everything drawn, to find what a change shows that nothing declared (`draw`).
-  const drawn = new Set([...root.querySelectorAll('*')].filter((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden'));
+  // Everything drawn, to find what a change shows or takes away that nothing declared (`draw`): where each
+  // was, and where it sits in its part's copy, to stand in for it as it fades out.
+  const index = new Map(els.map((el, i) => [el, i]));
+  const drawn = new Map<Element, Place>();
+  for (const el of root.querySelectorAll('*')) {
+    if (!el.getClientRects().length || getComputedStyle(el).visibility === 'hidden') continue;
+    const path: number[] = [];
+    let e: Element = el;
+    while (e !== root && !(index.has(e as HTMLElement) && !parts[index.get(e as HTMLElement)!].implicit)) {
+      path.unshift([...e.parentElement!.children].indexOf(e));
+      e = e.parentElement!;
+    }
+    const b = el.getBoundingClientRect();
+    drawn.set(el, { box: { left: b.left / z, top: b.top / z, width: b.width / z, height: b.height / z }, part: e === root ? undefined : index.get(e as HTMLElement), path });
+  }
   return { parts, els, seen, clones, drawn };
+}
+
+/** The node in `copy` (a deep copy of `outer`) that stands where `el` stands in `outer`. */
+function within(outer: Element, el: Element, copy: Element): HTMLElement | null {
+  const path: number[] = [];
+  for (let e: Element = el; e !== outer; e = e.parentElement!) path.unshift([...e.parentElement!.children].indexOf(e));
+  let at: Element | undefined = copy;
+  for (const k of path) at = at?.children[k];
+  return (at as HTMLElement | undefined) ?? null;
 }
 
 const frame = ({ map, opacity }: Frame): Keyframe => ({ transform: css(map), ...(opacity !== undefined && { opacity }) });
@@ -118,7 +155,7 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
   const tracks: Track[] = [];
   /** Inline transform origins to put back (keyframes scale about the top left). */
   const origins = new Map<HTMLElement, string>();
-  const own = (el: HTMLElement, frames: [Frame, Frame], span?: Span) => {
+  const animate = (el: HTMLElement, frames: [Frame, Frame], span?: Span) => {
     // Its own shift (a row a reorder moved aside) stays under the move, which would otherwise replace it.
     // shortcut: only a plain shift is kept (one with a scale would scale about the new origin); none has one yet.
     const m = new DOMMatrix(getComputedStyle(el).transform === 'none' ? undefined : getComputedStyle(el).transform);
@@ -127,7 +164,7 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     el.style.transformOrigin = '0 0';
     tracks.push({ el, frames: frames.map((f) => ({ ...frame(f), transform: css(f.map) + base })), span });
   };
-  for (const m of p.place) own(after.els[m.after], m.frames);
+  for (const m of p.place) animate(after.els[m.after], m.frames);
   // A box that clips and changes size can't have its clip moved by a transform (its old clip would be its new
   // size in its old place, cutting off what it held): it stops clipping while the change runs.
   const unclipped = new Map<HTMLElement, string>();
@@ -140,13 +177,32 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     unclipped.set(el, el.style.overflow);
     el.style.overflow = 'visible';
   });
-  for (const m of p.enter) own(after.els[m.after], m.frames, m.span);
+  for (const m of p.enter) animate(after.els[m.after], m.frames, m.span);
+
+  // Every other drawn element the change keeps moves from where it was too, by its own share (what the nearest
+  // kept element it is in doesn't already show): the skip buttons of a row the change made narrower, re-spaced
+  // in it, slide to their places instead of jumping.
+  const isPart = new Set<Element>(after.els);
+  const shiftOf = (el: Element) => {
+    const [b, a] = [before.drawn.get(el)!.box, after.drawn.get(el)!.box];
+    return { x: b.left - a.left, y: b.top - a.top };
+  };
+  const arriving = [...p.enter.map((m) => after.els[m.after]), ...p.fly.map((f) => after.els[f.after])];
+  for (const el of options.from ? [] : after.drawn.keys()) {
+    if (isPart.has(el) || !before.drawn.has(el) || !(el instanceof HTMLElement || el instanceof SVGElement) || arriving.some((c) => c.contains(el))) continue;
+    let up = el.parentElement;
+    while (up && up !== root && !(before.drawn.has(up) && after.drawn.has(up))) up = up.parentElement;
+    const own = shiftOf(el);
+    const outer = up && up !== root ? shiftOf(up) : { x: 0, y: 0 };
+    if (Math.abs(own.x - outer.x) < 0.5 && Math.abs(own.y - outer.y) < 0.5) continue;
+    animate(el as HTMLElement, [{ map: { sx: 1, sy: 1, x: own.x - outer.x, y: own.y - outer.y } }, { map: ID }]);
+  }
 
   // Shown by the change but declared nowhere (a part's insides it brings): faded in, never popping in.
   // What comes in or flies has its own way in; what it holds comes with it.
   const coming = [...p.enter.map((m) => after.els[m.after]), ...p.fly.map((f) => after.els[f.after])];
   const before_ = options.from ? null : before.drawn;
-  for (const el of before_ ? after.drawn : []) {
+  for (const el of before_ ? after.drawn.keys() : []) {
     if (before_!.has(el) || (el.parentElement && after.drawn.has(el.parentElement) && !before_!.has(el.parentElement)) || !(el instanceof HTMLElement || el instanceof SVGElement)) continue;
     if (coming.some((c) => c.contains(el)) || el.closest('[data-move], [data-enter]') === el) continue;
     tracks.push({ el: el as HTMLElement, frames: [{ opacity: 0 }, { opacity: 1 }], span: spans?.enter });
@@ -175,6 +231,29 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     else motionLayer().append(c);
     copies.push(c);
     tracks.push({ el: c, frames: m.frames.map(frame), span: m.span });
+  }
+
+  // Taken away by the change but declared nowhere (a part's insides it hides), while its part stays: its drawing,
+  // from the part's copy made while it was drawn, fades out where it was, never vanishing at once.
+  const going = new Set([...p.leave.map((m) => m.before), ...p.fly.map((f) => f.before)]);
+  const gone = (j: number | undefined): boolean => j !== undefined && (going.has(j) || gone(before.parts[j].parent));
+  for (const [el, place] of before_ ?? []) {
+    if (after.drawn.has(el) || place.part === undefined || gone(place.part) || !place.path.length) continue;
+    const up = el.parentElement;
+    if (up && before_!.has(up) && !after.drawn.has(up) && before_!.get(up)!.part === place.part) continue;
+    const copy = before.clones[place.part];
+    if (!copy || !full(copy)) continue;
+    let node: Element | undefined = copy;
+    for (const k of place.path) node = node?.children[k];
+    if (!(node instanceof HTMLElement)) continue;
+    const c = node.cloneNode(true) as HTMLElement;
+    const b = place.box;
+    Object.assign(c.style, { position: at ? 'absolute' : 'fixed', left: `${at ? b.left - at.left / z : b.left}px`, top: `${at ? b.top - at.top / z : b.top}px`, width: `${b.width}px`, height: `${b.height}px`, margin: '0', boxSizing: 'border-box' });
+    c.inert = true;
+    if (under) under.append(c);
+    else motionLayer().append(c);
+    copies.push(c);
+    tracks.push({ el: c, frames: [{ opacity: 1 }, { opacity: 0 }], span: spans?.leave });
   }
 
   const t = new Transition(tracks, () => {
