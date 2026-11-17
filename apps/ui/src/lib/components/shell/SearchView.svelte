@@ -22,7 +22,6 @@
 
   const FILTERS = ['All', 'Songs', 'Albums', 'Artists', 'Album Artists', 'Folders', 'Playlists'] as const;
   let filter = $state<(typeof FILTERS)[number]>('All');
-  let selecting = $state(false);
 
   // The field shows what is typed at once; the results follow when typing pauses.
   let query = $state(untrack(() => area.browse.search));
@@ -230,7 +229,7 @@
           class:on={filter === name}
           onclick={() => {
             filter = name;
-            selecting = false;
+            views.selecting = false;
           }}>{name}</button
         >
       {/each}
@@ -245,7 +244,7 @@
         </button>
       {/if}
       {#if songsHere}
-        <button class="tool text" class:active={selecting} aria-pressed={selecting} disabled={!searched} onclick={() => (selecting = !selecting)}>Select</button>
+        <button class="tool text" class:active={views.selecting} aria-pressed={views.selecting} disabled={!searched} onclick={() => (views.selecting = !views.selecting)}>Select</button>
       {/if}
       <span class="grow"></span>
       <button class="tool" aria-label="Search options" title="More" aria-haspopup="menu" disabled={!searched} onclick={openMore}>
@@ -262,7 +261,7 @@
       {#key filter}
         <SongList
           bind:this={songList}
-          bind:selecting
+          bind:selecting={views.selecting}
           data={songs}
           mode="covers"
           header={filter === 'All' ? allHeader : undefined}

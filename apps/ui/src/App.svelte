@@ -401,6 +401,7 @@
       { open: settingsView.scanning, close: () => void import('@tauri-apps/plugin-barcode-scanner').then((s) => s.cancel()) },
       { open: contextMenu.items.length > 0, close: escape },
       { open: views.options, close: () => (views.options = false) },
+      { open: views.selecting, close: () => (views.selecting = false) },
       { open: views.sorting, close: () => (views.sorting = false) },
       { open: !!playlists.asking, close: () => playlists.answer(null) },
       { open: helpOpen || views.changelog || settingsView.pairing || settingsView.addingEngine, close: escape },

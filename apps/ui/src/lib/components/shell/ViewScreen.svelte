@@ -94,7 +94,6 @@
   let grid = $state<AlbumGrid>();
   let songList = $state<SongList>();
   let shownColumns = $state(1);
-  let selecting = $state(false);
 
   // Search in the view: the view's own search, which outlives the view (cleared on closing the box).
   const searchable = view.kind !== 'played';
@@ -190,7 +189,7 @@
         </button>
       {/if}
       {#if songView}
-        <button class="tool text" class:active={selecting} aria-pressed={selecting} onclick={() => (selecting = !selecting)}>Select</button>
+        <button class="tool text" class:active={views.selecting} aria-pressed={views.selecting} onclick={() => (views.selecting = !views.selecting)}>Select</button>
       {/if}
     {/if}
     <span class="grow"></span>
@@ -262,7 +261,7 @@
             onclick={() => {
               show = value;
               lastShown.set(view.kind, value);
-              selecting = false;
+              views.selecting = false;
             }}>{label}</button
           >
         {/each}
@@ -367,7 +366,7 @@
       <SongList
         bind:this={songList}
         bind:shownColumns
-        bind:selecting
+        bind:selecting={views.selecting}
         data={songs}
         mode={options.mode}
         columns={options.columns ?? undefined}
