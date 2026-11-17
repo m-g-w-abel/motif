@@ -22,7 +22,8 @@ everything here:
 - Closing mirrors opening: it is the same transition played backwards.
 - No harsh changes: nothing jumps, flashes, clips or changes colour or weight
   at once.
-- `transform` and `opacity` only, short (260 ms), nothing running while idle,
+- `transform` and `opacity` only (one exception: a clipping box that changes
+  size during a change, below), short (260 ms), nothing running while idle,
   no blur on anything that moves or scrolls, no long-running animations
   (they stall WebKitGTK's GPU renderer). Reduced motion respected.
 
@@ -115,7 +116,12 @@ interface Drive { seek(p: number): void; release(commit: boolean): void }
 ```
 
 `Drive` is what `gesture()`, `backSwipe` (Android's predictive back), the
-sheet's drags and the step handles all talk to.
+sheet's drags and the step handles all talk to. **Distances are on screen:**
+a finger moves in screen pixels (the root's zoom included: the Scale
+setting, Android's font size), so a change's `distance` and a swipe's are
+screen pixels too (an element's `getBoundingClientRect()`, not its
+`offsetWidth`); in CSS pixels, a step dragged at 125% ran ahead of the
+finger by the zoom.
 
 **Following the finger: `follow()`.** Every drive goes through
 `follow(build, { early, from })` (`transition.ts`), so no gesture can jump.
@@ -168,13 +174,25 @@ t.play(1);           // a tap
      as a **copy** instead, like a shared element, so it is never cut off
      (declared parts only: a whole list moving in its scroller is clipped by
      it, as at rest);
-   - a kept box that clips and changes size stops clipping while the change
-     runs: a transform moves its clip but can't resize it, so its old clip
-     would be its new size in its old place, cutting off what it holds;
+   - a kept box that clips and changes size has its clip animated from its
+     old size to its new one, as a `clip-path` polygon in its own coordinates
+     (which its move carries), its own clipping set aside until the end: a
+     transform moves a clip but can't resize it, so its old clip would be its
+     new size in its old place (cutting off what it held, or showing what it
+     hid). The one property besides transform and opacity a change animates,
+     only there and only for the change's 260 ms;
    - **nothing pops**: an element the change shows that no part declares (a
-     part's insides it brings) fades in over the `enter` span. (One the
-     change takes away without a declaration still goes at once: the DOM has
-     dropped it before it could be copied; declare it with `data-enter`.)
+     part's insides it brings) fades in over the `enter` span, and one it
+     takes away while its part stays fades out over the `leave` span, drawn
+     from its part's copy made before the change (the snapshot records where
+     each drawn element was and where it sits in its part);
+   - **every kept element moves**: any drawn element the change keeps moves
+     from where it was by its own share (what the nearest kept element it is
+     in doesn't already show), so the skip buttons of a row the change made
+     narrower slide to their new places; words the change wraps differently
+     (a queue row that got wider) crossfade from their old drawing (from
+     their part's copy, travelling with them) to their new one. A box's own
+     background still takes its new size at once.
 
 The planner works on plain data (names, boxes, nesting, declared enter/leave),
 so the rules are tested without a browser. The DOM layer around it only
@@ -525,7 +543,19 @@ before the rest (Checking).
   what is drawn both before and after must be drawn in the middle (a cover
   whose copy drew nothing); and nothing may change in the half second after
   it settles. Marquees, which scroll on their own clock, are waited out
-  first. `DUMP=dir` saves a failing case's frames.
+  first. `DUMP=dir` saves a failing case's frames. On the phone the frames
+  are the display itself (`adb screencap`, without its system bars, which
+  change on their own): the WebView's DevTools capture draws animated layers
+  wrongly while the animations' clock is stopped (a frozen first frame that
+  the display shows exactly as before, 0 pixels off, it captured 32,000
+  device pixels off). Differences are counted in CSS pixels. The display
+  shows what the OS draws on top too: a notification arriving during a case
+  fails it (seen once each on two runs); run it again.
+  **A finger followed one to one:** at every zoom, a change's distance and a
+  swipe's must be the screen distance of what moves (a test stage in the page).
+  **Undeclared elements:** a test stage built in the page with `change()`
+  itself fails if an element no part declares vanishes or pops when a change
+  takes it away or brings it.
 - **At another zoom and font:** the phone scenarios run again at Scale
   125% (`?dev-scale=125`), which caught boxes measured on screen but placed
   in CSS pixels, and in DejaVu Sans (`?dev-font=`), whose glyphs, like
@@ -570,6 +600,25 @@ before the rest (Checking).
   does more (every drawn element listed for the default fade, and copies
   carry about 40 properties of their insides), about a frame's work at the
   start; to look into (narrow the drawn list to the parts' children).
+  Narrowed (2026-11-17): containers between parts are only measured, a part
+  inside a copied part is taken from that copy, and copies read box, flex
+  and item properties only where they apply. Building a step change at 6x
+  CPU throttle (headless): 72–117 ms before, 59–94 ms after. On the phone the
+  build now takes 27–40 ms (copies of the parts 5–14, Svelte applying the
+  step 3–10, the flights about 5); frames: step taps 16.7–17.1/17–34/0–1,
+  step drags 17.1–17.2/33–34/1, lyrics 16.8/19–21/0–1, lyrics back
+  16.7–17.1/17–33/0–1, opening by tap 16.8–17.3/22–39/1, by drag
+  17.1–17.6/33–34/1–2, closing by Escape 16.7/17/0, by drag 18.5–19.5/34–67/3–5.
+  A tap still drops a frame about half the time: the "before" snapshot
+  (mostly its copies, which are needed only for parts the change takes away,
+  unknown until it happens) runs inside the tap. Taking it at pointer-down,
+  before the click arrives, would move it out of the frame; to do.
+  With every kept element moving and rewrapped words crossfading (same day):
+  step taps 16.7–17.1/17–34/0–1, step drags 16.7–17.2/17–34/0–2, lyrics
+  16.7–17.2/17–36/0–1, back 16.7/17/0, opening by tap 16.8–17.2/21–38/1–2,
+  by drag 16.7–17.1/17–34/0–1, closing by Escape 16.7/17/0, by drag
+  18.5–19.0/33–50/3–4. The build in the tap: 27–39 ms (the narrower
+  snapshot's saving spent on the new moves).
 - **A frozen frame** (`?dev-scrub=0.3`, dev builds): the next transition
   stops at that progress instead of playing, to inspect on the phone or in
   WebKitGTK; the next change ends it.

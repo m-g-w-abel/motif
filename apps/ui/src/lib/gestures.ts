@@ -115,7 +115,8 @@ export type Handlers = Partial<Record<Once, () => void> & Record<Follow, () => (
 
 /**
  * Draws a sideways swipe as it goes: for its way (-1 left, 1 right), a
- * transition the finger drives across `distance` px, then releases (null:
+ * transition the finger drives across `distance` px on screen (where the finger
+ * moves, the root's zoom included), then releases (null:
  * nothing moves that way).
  */
 export type Swipe = (way: -1 | 1) => { drive: Drive; distance: number } | null;
@@ -133,7 +134,7 @@ export function slide(el: HTMLElement): Swipe {
     const t = new Transition([{ el, frames: [translate(0), translate(way * w)] }]);
     const drive = follow(t);
     return {
-      distance: w,
+      distance: el.getBoundingClientRect().width,
       drive: {
         seek: (p) => drive.seek(p),
         release(commit) {
@@ -188,7 +189,7 @@ export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Swipe {
     const t = move(0, -w);
     const drive = follow(t);
     return {
-      distance: w,
+      distance: el.getBoundingClientRect().width,
       drive: {
         seek: (p) => drive.seek(p),
         release(commit) {

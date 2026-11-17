@@ -62,12 +62,19 @@
     const el = target;
     if (!el) return;
     el.classList.add('custom-scrollbar');
+    // Shown for a scroll, not for the content changing size under it (a step of the sheet clamping its position).
+    let height = el.scrollHeight;
     const onScroll = () => {
       update();
+      const resized = el.scrollHeight !== height;
+      height = el.scrollHeight;
+      if (resized) return;
       scrolling = true;
       settle();
     };
-    const enter = () => {
+    // A mouse over the list shows the bar; a finger touching it doesn't (a drag on the sheet's handle).
+    const enter = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse') return;
       hovered = true;
       measure();
     };

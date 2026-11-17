@@ -25,6 +25,7 @@ export interface Options {
   leaves?: boolean;
 }
 
+/** `distance`: how far things move on screen (px), for a finger to drive it by. */
 export type Change = Transition & { distance: number };
 
 /** Drawn: laid out and not hidden. */
@@ -166,8 +167,12 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
   };
   for (const m of p.place) animate(after.els[m.after], m.frames);
   // A box that clips and changes size can't have its clip moved by a transform (its old clip would be its new
-  // size in its old place, cutting off what it held): it stops clipping while the change runs.
+  // size in its old place, cutting off what it held, or showing what it hid): its clip goes from its old size
+  // to its new one instead, as a clip path in its own coordinates (which its move carries), and its own
+  // clipping returns at the end. The one property besides transform and opacity that a change animates; only
+  // here, for the 260 ms of a change.
   const unclipped = new Map<HTMLElement, string>();
+  const rect = (w: number, h: number) => `polygon(0px 0px, ${w}px 0px, ${w}px ${h}px, 0px ${h}px)`;
   after.parts.forEach((a, i) => {
     const j = before.parts.findIndex((b) => b.el === a.el);
     if (!a.clips || j < 0) return;
@@ -176,6 +181,7 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     const el = after.els[i];
     unclipped.set(el, el.style.overflow);
     el.style.overflow = 'visible';
+    tracks.push({ el, frames: [{ clipPath: rect(was.width, was.height) }, { clipPath: rect(a.box.width, a.box.height) }] });
   });
   for (const m of p.enter) animate(after.els[m.after], m.frames, m.span);
 
@@ -188,8 +194,12 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     return { x: b.left - a.left, y: b.top - a.top };
   };
   const arriving = [...p.enter.map((m) => after.els[m.after]), ...p.fly.map((f) => after.els[f.after])];
+  /** Words the change wraps differently (a row that got wider): a move can't get them there, so they crossfade (below). */
+  const rewrapped: Element[] = [];
   for (const el of options.from ? [] : after.drawn.keys()) {
     if (isPart.has(el) || !before.drawn.has(el) || !(el instanceof HTMLElement || el instanceof SVGElement) || arriving.some((c) => c.contains(el))) continue;
+    const [was, now] = [before.drawn.get(el)!.box, after.drawn.get(el)!.box];
+    if ((Math.abs(was.width - now.width) > 1 || Math.abs(was.height - now.height) > 1) && [...el.childNodes].some((c) => c.nodeType === Node.TEXT_NODE && c.textContent!.trim())) rewrapped.push(el);
     let up = el.parentElement;
     while (up && up !== root && !(before.drawn.has(up) && after.drawn.has(up))) up = up.parentElement;
     const own = shiftOf(el);
@@ -256,6 +266,24 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     tracks.push({ el: c, frames: [{ opacity: 1 }, { opacity: 0 }], span: spans?.leave });
   }
 
+  // Rewrapped words: the old drawing (from its part's copy) travels with them and fades out as the new fades in.
+  for (const el of rewrapped) {
+    const place = before.drawn.get(el)!;
+    const copy = place.part === undefined ? null : before.clones[place.part];
+    let node: Element | undefined | null = copy && full(copy) ? copy : null;
+    for (const k of node ? place.path : []) node = node?.children[k];
+    if (!(node instanceof HTMLElement)) continue;
+    const c = node.cloneNode(true) as HTMLElement;
+    const [b, a] = [place.box, after.drawn.get(el)!.box];
+    Object.assign(c.style, { position: at ? 'absolute' : 'fixed', left: `${at ? b.left - at.left / z : b.left}px`, top: `${at ? b.top - at.top / z : b.top}px`, width: `${b.width}px`, height: `${b.height}px`, margin: '0', boxSizing: 'border-box', transformOrigin: '0 0' });
+    c.inert = true;
+    if (under) under.append(c);
+    else motionLayer().append(c);
+    copies.push(c);
+    tracks.push({ el: c, frames: [{ transform: 'none', opacity: 1 }, { transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)`, opacity: 0 }] });
+    tracks.push({ el: el as HTMLElement, frames: [{ opacity: 0 }, { opacity: 1 }] });
+  }
+
   const t = new Transition(tracks, () => {
     const landed = t.heading === 1;
     for (const f of flights) f.done(landed);
@@ -265,7 +293,8 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     running.delete(t);
     ended?.(landed);
   }) as Change;
-  t.distance = p.distance;
+  // On screen, where the finger moves: boxes are in CSS pixels, which the root's zoom scales.
+  t.distance = p.distance * z;
   running.set(t, root);
   return t;
 }

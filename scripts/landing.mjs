@@ -315,10 +315,25 @@ async function sheet(label) {
 }
 const tap = (selector) => () => run(`${selector}.click()`);
 
-/** A screenshot as RGBA pixels (`Page.captureScreenshot`'s PNG: 8 bits, not interlaced). */
+/** The phone's system bars (device pixel rows), which change on their own (the clock): left out of comparisons. */
+let bars;
+function systemBars() {
+  if (bars) return bars;
+  const window = execFileSync("adb", ["shell", "dumpsys", "window"], { encoding: "utf8", maxBuffer: 64 << 20 });
+  const frame = (type) => window.match(new RegExp(`type=${type} frame=\\[\\d+,(\\d+)\\]\\[\\d+,(\\d+)\\]`))?.slice(1).map(Number);
+  bars = { top: frame("statusBars")?.[1] ?? 0, bottom: frame("navigationBars")?.[0] ?? Infinity };
+  return bars;
+}
+
+/**
+ * A screenshot as RGBA pixels (a PNG: 8 bits, not interlaced). On the phone, the
+ * display itself (`adb screencap`) without its system bars: the WebView's DevTools
+ * capture draws animated layers wrongly while the animations' clock is stopped (a
+ * frozen first frame that the display shows exactly as before captured 32,000
+ * pixels off), so it can't be trusted for held frames.
+ */
 async function pixels() {
-  const { data } = await send("Page.captureScreenshot", { format: "png" });
-  const png = Buffer.from(data, "base64");
+  const png = phone ? execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 << 20 }) : Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64");
   let at = 8;
   let width = 0;
   let height = 0;
@@ -350,7 +365,8 @@ async function pixels() {
       const add = [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][filter];
       row[i] = (row[i] + add) & 255;
     }
-    for (let x = 0; x < width; x++) for (let k = 0; k < 3; k++) out[(y * width + x) * 4 + k] = row[x * bpp + k];
+    const hidden = phone && (y < systemBars().top || y >= systemBars().bottom);
+    if (!hidden) for (let x = 0; x < width; x++) for (let k = 0; k < 3; k++) out[(y * width + x) * 4 + k] = row[x * bpp + k];
     prev = row;
   }
   return { width, height, out, png };
@@ -380,7 +396,7 @@ function differ(a, b, r = 1) {
     }
   return n;
 }
-/** More clearly different pixels than a few glyphs' edges: something popped, vanished or changed places in the stack. */
+/** More clearly different CSS pixels than a few glyphs' edges: something popped, vanished or changed places in the stack. */
 const POPPED = 400;
 
 /** What is drawn, by what it shows (words, an image, an icon), with where and how opaque: originals and copies alike. */
@@ -444,7 +460,7 @@ async function heldFrames(name, act, scrolled = false) {
     await sleep(100);
     firstShot = await pixels();
     const first = differ(before, firstShot, r);
-    if (first > POPPED) bad.push(`its first frame differs from before it (${first} px)`);
+    if (first > POPPED * r * r) bad.push(`its first frame differs from before it (${first} px)`);
     await at(40);
     await sleep(100);
     middle = await run(drawings);
@@ -461,12 +477,12 @@ async function heldFrames(name, act, scrolled = false) {
   const after = await pixels();
   const drawnAfter = await run(drawings);
   const end = differ(last, after, r);
-  if (end > POPPED) bad.push(`its last frame differs from after it (${end} px)`);
+  if (end > POPPED * r * r) bad.push(`its last frame differs from after it (${end} px)`);
   const lost = drawnBefore.filter((d) => drawnAfter.includes(d) && !middle.includes(d));
   if (lost.length) bad.push(`not drawn in the middle: ${lost.slice(0, 4).join(", ")}`);
   await sleep(500);
   const late = differ(after, await pixels(), r);
-  if (late > POPPED) bad.push(`changed after it settled (${late} px)`);
+  if (late > POPPED * r * r) bad.push(`changed after it settled (${late} px)`);
   for (const b of bad) failures.push(`${name}: ${b}`);
   // Debugging: DUMP=dir saves a failing case's frames (before, first, last, after).
   if (bad.length && process.env.DUMP)
@@ -563,6 +579,39 @@ async function undeclared() {
   console.log(`${bad.length ? "FAIL" : "ok  "} motion: undeclared elements fade${bad.map((b) => `\n       ${b}`).join("")}`);
 }
 
+/**
+ * A finger is followed one to one at any zoom (the Scale setting; Android's font
+ * size): fingers move in screen pixels, so the distance a drive spreads its progress
+ * over is in screen pixels too (a change's `distance`, a swipe's).
+ */
+async function fingerScale(label) {
+  const r = await run(`(async () => {
+    const { change } = await import('/src/lib/motion/change.ts');
+    const { slide } = await import('/src/lib/gestures.ts');
+    const root = document.createElement('div');
+    root.style.cssText = 'position: fixed; left: 0; top: 0; width: 200px; height: 300px; z-index: 99';
+    root.innerHTML = '<div data-move="x" style="height: 20px; width: 50px"></div>';
+    document.body.append(root);
+    const part = root.firstElementChild;
+    const z = part.getBoundingClientRect().width / 50;
+    const t = change(root, () => (part.style.marginTop = '150px'));
+    const moved = part.getBoundingClientRect().top;
+    const out = { z, change: t.distance, moved: (moved + (t.end(), 0)) };
+    const swipe = slide(part)(-1);
+    out.swipe = swipe.distance;
+    out.width = part.getBoundingClientRect().width;
+    swipe.drive.release(false);
+    root.remove();
+    return JSON.stringify(out);
+  })()`).then(JSON.parse);
+  const bad = [];
+  // The part moves 150 CSS pixels: that many times the zoom on screen.
+  if (Math.abs(r.change - 150 * r.z) > 1) bad.push(`a change spreads its progress over ${r.change.toFixed(1)} px for a move of ${(150 * r.z).toFixed(1)} on screen`);
+  if (Math.abs(r.swipe - r.width) > 1) bad.push(`a swipe spreads its progress over ${r.swipe.toFixed(1)} px for an element ${r.width.toFixed(1)} wide on screen`);
+  for (const b of bad) failures.push(`${label}: ${b}`);
+  console.log(`${bad.length ? "FAIL" : "ok  "} ${label}: a finger is followed one to one${bad.map((b) => `\n       ${b}`).join("")}`);
+}
+
 /** The queue in the phone sheet (it needs one): reordering by the handle, a reorder let go where it started, removing by a swipe. */
 async function queue(label) {
   await open("dev-view=albums", 384, 820);
@@ -639,7 +688,7 @@ async function startsInPlace(name, act) {
 
 try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
-  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared });
+  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared, heldFrames, tapBar, fingerScale });
   else {
     // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size),
     // and in a font whose glyphs sit differently in their line than the default's (Roboto's on phones do).
@@ -699,6 +748,7 @@ try {
       await check(`${phone_}: swipe back to the scrolled grid`, () => swipe(20, 300, 600), 2, true);
       const covered = await run(`(() => { const c = ${card}; const r = c.getBoundingClientRect(); return [[r.left + 10, r.top + 10], [r.right - 10, r.top + 10], [r.left + 10, r.bottom - 10], [r.right - 10, r.bottom - 10]].filter(([x, y]) => !c.contains(document.elementFromPoint(x, y))).length; })()`);
       if (covered) failures.push(`${phone_}: back on the scrolled grid, ${covered} corners of the card the cover flew to are hidden`);
+      await fingerScale(phone_);
       await sheet(phone_);
       if (scale === 100 && !font) await queue(phone_);
     }

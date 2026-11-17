@@ -386,7 +386,7 @@
   /** The same, for a touch swipe right. */
   const swipeBackDrag: Swipe = (way) => {
     const drive = way > 0 ? backDrag() : undefined;
-    return drive ? { drive, distance: stageEl?.offsetWidth || innerWidth } : null;
+    return drive ? { drive, distance: stageEl?.getBoundingClientRect().width || innerWidth } : null;
   };
   /** Back by a swipe that is driving the change (it lets go), or at once. */
   const back = () => {
