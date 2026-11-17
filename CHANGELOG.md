@@ -5,6 +5,8 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Simpler Library home on phones**: the Library home no longer has a ⋮ menu
+  beside its title; Add folder and Rescan are in Settings → Library.
 - **Phone fixes for now playing and the queue**: buttons respond straight
   after dragging now playing open or closed or dragging a handle, instead of
   ignoring taps for a moment. The album's other images no longer show through
