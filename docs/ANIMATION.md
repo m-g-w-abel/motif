@@ -22,7 +22,8 @@ everything here:
 - Closing mirrors opening: it is the same transition played backwards.
 - No harsh changes: nothing jumps, flashes, clips or changes colour or weight
   at once.
-- `transform` and `opacity` only, short (260 ms), nothing running while idle,
+- `transform` and `opacity` only (one exception: a clipping box that changes
+  size during a change, below), short (260 ms), nothing running while idle,
   no blur on anything that moves or scrolls, no long-running animations
   (they stall WebKitGTK's GPU renderer). Reduced motion respected.
 
@@ -56,7 +57,9 @@ progress `p`, from 0 (before) to 1 (after). Nothing else moves anything.
   their time.
 - Progress has a **clock domain**: time `τ` from 0 to `DURATION`, and
   `p = CURVE(τ)`. Every track lives in time; a span `[a, b]` in progress
-  becomes the delay and duration `[CURVE⁻¹(a), CURVE⁻¹(b)] · DURATION`.
+  becomes the delay and duration `[CURVE⁻¹(a), CURVE⁻¹(b)] · DURATION`, and
+  its easing is that stretch of the curve (`CURVE.segment(a, b)`, itself a
+  cubic Bézier), so **every track is linear in progress** within its span.
 - **A clock drives it** (a tap, a button, a key): `play(1)` plays the paused
   animations on from where they are. They run on the compositor; no script
   per frame.
@@ -64,6 +67,14 @@ progress `p`, from 0 (before) to 1 (after). Nothing else moves anything.
   to `CURVE⁻¹(p)`, so what is drawn is exactly `p` of the way: linear with
   the finger. `release(commit)` plays on to 1 or back to 0 from there,
   decelerating along the curve.
+- **A clock eases out the way it travels.** Closing mirrors opening in its
+  path and its states, not its timing: played backwards, an ease-out curve
+  is an ease-in (it starts slowly and arrives fast). So `play(0)` (closing,
+  a tap back, a drag let go to spring back) draws the transition with its
+  **mirrored tracks** (frames reversed, spans mirrored, which draw the same
+  path since each track is linear in progress) and plays them forwards from
+  the mirrored progress: it eases out towards 0 as opening eases out towards
+  1. A finger still seeks linearly either way.
 - **Backwards is free.** Closing is the opening transition built in the same
   direction, seeked to 1 and played to 0. A tap back and a swipe back are the
   same transition, one clocked and one dragged.
@@ -105,7 +116,24 @@ interface Drive { seek(p: number): void; release(commit: boolean): void }
 ```
 
 `Drive` is what `gesture()`, `backSwipe` (Android's predictive back), the
-sheet's drags and the step handles all talk to. Each turns its distance into
+sheet's drags and the step handles all talk to. **Distances are on screen:**
+a finger moves in screen pixels (the root's zoom included: the Scale
+setting, Android's font size), so a change's `distance` and a swipe's are
+screen pixels too (an element's `getBoundingClientRect()`, not its
+`offsetWidth`); in CSS pixels, a step dragged at 125% ran ahead of the
+finger by the zoom.
+
+**Following the finger: `follow()`.** Every drive goes through
+`follow(build, { early, from })` (`transition.ts`), so no gesture can jump.
+The transition may still be being built when the finger moves (the screen
+beneath laid out, its first data awaited, everything measured), or its build
+may have held the main thread while the finger moved on. Meanwhile `early`
+draws what it can, exactly with the finger (the screen on top sliding);
+the transition then takes over where the drawing was left (else at `from`)
+on its first frame and catches up with the finger over `CATCH` (120 ms),
+after which it follows it exactly. Letting go plays on from what is drawn,
+built or not. Each drive also measures from where the press became a drag,
+never from the press, so nothing jumps by the slop. Each turns its distance into
 progress (`dx / width`, `dy / distance`) and its commit decision (`Press.swipe`,
 `released`, flick velocity) into `release`. Recognising gestures stays in
 `gestures.ts`; drawing them lives here. A sideways swipe is a `Swipe`: for
@@ -129,11 +157,45 @@ t.play(1);           // a tap
 4. **Plan** (pure, unit-tested): pair elements by name across the two
    snapshots and decide each one's tracks:
    - in both → **move** from the old box to the new (shared element);
+     a move always runs the whole transition (it has no span: everything
+     that moves starts moving at the start);
    - only after → **enter** as it declares;
    - only before → **leave** as it declares (a copy, since the DOM dropped it);
    - inside something that moves → its own move less its parent's (the
      "lift"), so nested parts don't double up; inside something coming,
-     going or flying → nothing of its own, it rides along.
+     going or flying → nothing of its own, it rides along;
+   - the elements between parts and up to the stage (a row holding the
+     play button and the skip buttons, the line holding the times) are
+     **implicit parts**: kept, they move like any part, so what they hold
+     moves with them instead of jumping to its new place; they never come or
+     go on their own;
+   - a kept part whose move would take it outside a box that clips it (a
+     title in its marquee's line, the last row of a list that shrank) travels
+     as a **copy** instead, like a shared element, so it is never cut off
+     (declared parts only: a whole list moving in its scroller is clipped by
+     it, as at rest);
+   - a kept box that clips and changes size has its clip animated from its
+     old size to its new one, as a `clip-path` polygon in its own coordinates
+     (which its move carries), its own clipping set aside until the end: a
+     transform moves a clip but can't resize it, so its old clip would be its
+     new size in its old place (cutting off what it held, or showing what it
+     hid). The one property besides transform and opacity a change animates,
+     only there and only for the change's 260 ms. A box scrolled away from
+     its start keeps its own clipping (set aside, it would stop being a
+     scroller and lose its position, so what it holds would jump); copies
+     are scrolled as their originals were (`rescroll`);
+   - **nothing pops**: an element the change shows that no part declares (a
+     part's insides it brings) fades in over the `enter` span, and one it
+     takes away while its part stays fades out over the `leave` span, drawn
+     from its part's copy made before the change (the snapshot records where
+     each drawn element was and where it sits in its part);
+   - **every kept element moves**: any drawn element the change keeps moves
+     from where it was by its own share (what the nearest kept element it is
+     in doesn't already show), so the skip buttons of a row the change made
+     narrower slide to their new places; words the change wraps differently
+     (a queue row that got wider) crossfade from their old drawing (from
+     their part's copy, travelling with them) to their new one. A box's own
+     background still takes its new size at once.
 
 The planner works on plain data (names, boxes, nesting, declared enter/leave),
 so the rules are tested without a browser. The DOM layer around it only
@@ -143,7 +205,12 @@ The sheet's open/close is the same with both states always in the DOM: the
 "before" snapshot is the player bar (`from`), the "after" is the sheet.
 State that changes outside a callback (the queue, from the engine) uses the
 two halves: `measure(root)` before, and the function it returns once the
-DOM has changed.
+DOM has changed. **One change at a time per stage:** a change drawn on a
+stage ends any change still running inside it, starting from where that one
+left things drawn (rows still sliding when the next update comes), and a
+second `measure` before the first is drawn (two updates in one tick) starts
+from the first's snapshot. A part's own transform (a row a reorder has moved
+aside) stays under its move.
 
 ## Declaring it
 
@@ -153,17 +220,20 @@ Elements opt in with attributes; no per-element code.
 |---|---|---|
 | `data-move="name"` | A shared element: anything with the same name on the other side is the same thing, and it moves there. Names are unique per side (`cover:album:<key>`, `title:album:<key>`, `title:now`). | `use:shared`, `MORPH` pairs, `ROLES` |
 | `data-enter="right\|left\|below\|above\|rise\|fade\|grow"` | How it comes in when it has no counterpart, and (mirrored) how it goes. `rise` is a short lift (40 px) with a fade; `below` is from beyond the stage's bottom edge; `grow` is the dialog's scale-and-fade. | `FADE`, `rising`, `STEPPED` fresh/gone, `LEAVE`, `FADING`, `rise`, `pop` |
-| `data-span="name"` | The part of the transition it runs in, from the stage's named spans (below). | `OUT`, `MOVE`, `IN`, `RISE`, `MOVE_UNDER`, `ALBUM_MOVE` |
+| `data-span="name"` | For parts that come or go: the part of the transition they run in, from the stage's named spans (below). Moves have none. | `OUT`, `IN`, `RISE` |
 | `data-fit="box\|even\|text\|line"` | How a shared element's old box maps onto its new one (stretch, scale evenly, match the words, stretch across only). Default: `text` for an element with only text, `even` for artwork, else `box`. | `Mode` |
 
 A **stage** is the root a transition is built in, with its named spans:
 
 ```ts
-const SHEET_SPANS = { out: [0, 0.1], move: [0.1, 0.85], under: [0.4, 0.85], in: [0.85, 1], rise: [0.6, 1] };
+const SPANS = { leave: [0, 0.1], enter: [0.6, 1], queue: [0.5, 1], fall: [0, 0.5] };
 ```
 
 A stage's choreography (that the sheet's controls rise after the movers
-arrive) lives in its span table and its markup, not in code.
+arrive) lives in its span table and its markup, not in code. Spans are
+only for what comes and goes; everything that moves starts at the start and
+runs the whole way (a delayed move sat still, then rushed, and under a
+finger it looked like a jump).
 
 Components that only need a small part of this use actions:
 
@@ -222,7 +292,8 @@ progress.
 - *No clipping.* A long title is clipped differently at each end (ellipsis
   in the bar, full width or a marquee in the sheet). The travelling copy sits
   in a **clip box** that moves from the old element's visible box to the new
-  one's, and the text inside is counter-scaled so it is never squashed. The
+  one's (its box cut by every box that clips it: a long title's marquee line),
+  and the text inside is counter-scaled so it is never squashed. The
   clip box's scale and the text's counter-scale are sampled into keyframes
   (8 steps), since the inverse of a linear scale isn't linear. Transform only.
   The copy is the new element at its own size (its own ellipsis or
@@ -257,9 +328,43 @@ lets the WebView paint a frame without it). The traveller is whichever end's
 image is already decoded at the higher resolution (the grid's or the page's, the strip's or the cover's).
 Copies of images are made eager and synchronous, and the copy is only shown
 once `img.decode()` has resolved (within a frame for a cached image), so a
-copy never draws empty. The destination stays hidden until its own image has
-decoded (at most a second), then takes over. Artwork never shows a blank or
-placeholder frame mid-flight.
+copy never draws empty; when every image in the copies has loaded already,
+the copies show and the originals hide at once, so a real element is never
+drawn for a frame at its new place before its copy takes over.
+
+**Stacking.** Each copy travels at its end's place in the stage's stack.
+An end that lies behind the stage's content (a negative `z-index` inside
+the stage, like the half queue's cover, under the title and its shade)
+travels in the stage's **back layer** (`Options.back`: the sheet's
+`.behind`, just above its backdrop), so what lies over it at rest lies over
+its copy too; every other end travels in the motion layer, above everything.
+When the two ends sit at different places (the cover from the carousel to
+behind the half queue's title), each end's drawing travels at its own place
+and the two crossfade over the move, so neither the start nor the hand-over
+changes what is on top. In the motion layer images travel under words, so
+a title moving over a cover stays over it.
+
+**Other drawings.** Two ends that aren't the same image and are made
+differently (the bar's thin seek strip and the sheet's waveform): the old
+drawing travels too, stretched the same way, and the two crossfade over the
+whole move, so the waveform isn't there from the start.
+
+**Copies keep their insides' look.** Rules that reach an element's insides
+through its ancestors (a phone rule hiding the album's name in the sheet, a
+font set on the sheet) don't reach its copy in the motion layer or the
+sheet's leaving layer, so a copy (`cloneOf`) carries its insides' display,
+visibility, opacity, font, colours, backgrounds and layout (size, margins,
+padding, flex and grid) inline, up to 300 elements (a longer list's rows
+keep their own rules); a box of `display: contents` stays one. Words on
+one line stay on one line (a copy's width is a fraction of a pixel off).
+A copy runs no CSS transitions or `@starting-style` fades of its own: it
+moves only as its transition draws it. What flies from a part the change
+takes away (the half queue's cover) is copied from the snapshot, made while
+it was still drawn.
+
+The destination stays hidden until its own image has decoded (at most a
+second), then takes over. Artwork never shows a blank or placeholder frame
+mid-flight.
 
 ## Where it is used
 
@@ -284,7 +389,11 @@ of a `{#key}` block with Svelte transitions:
   follows the finger like any other screen.
 
 Each screen restores its own scroll position on mount (albums grid, song
-lists), so a swipe back can fly a cover to its row further down.
+lists), so a swipe back can fly a cover to its row further down. A list's
+head (a category's back, icon, title and toolbar; an album's or playlist's
+cover and title) scrolls with its list rather than staying fixed above it:
+with a fixed head, a card scrolled partly under it took the flying cover
+whole and then lost its top under the head when the copy handed over.
 
 **First data.** A screen coming in is laid out, unseen, for a frame, and
 then waits (at most 250 ms) while anything in it is `aria-busy`: lists
@@ -311,7 +420,11 @@ ends the swipe after its first move. `main`'s `pan-y` alone isn't enough, as
 sideways, and desktop's layouts keep wide tables' panning. Once a press is
 a sideways swipe, `gesture()` also cancels the browser's own handling of
 the touch (`touchmove`), or it ends in a fling and Chromium drops the next
-tap while that runs (nothing could be tapped for half a second). While two
+tap while that runs (nothing could be tapped for half a second). The
+sheet's drags and its handles' do the same once they move (`ownTouch`), even
+on surfaces whose `touch-action` is `none`: Chromium still took them for a
+pan and dropped the next tap. The landing check taps a button with a real
+finger as each change stops moving to catch this. While two
 screens are up, the one that isn't the state's is `inert`; the stage never
 sets `pointer-events: none`, which would cancel the finger driving it.
 
@@ -328,20 +441,30 @@ else declares how it comes and goes (`data-enter`), and the choreography
 is the sheet's span table (`ExpandedPlayer.svelte`). Parts that a change
 takes away leave as copies in the sheet's `.leaving` layer, behind the
 rest. The carousel keeps its size while hidden (half queue, lyrics), so the
-cover lands on it the moment it shows again.
+cover lands on it the moment it shows again; on phones its other images lie
+under the cover and go at the very start of a step (`covered`), before the
+cover's two drawings crossfade over them. Each step shows one handle
+(`handle:now`: under the controls, above the queue, at the top of the full
+queue), which moves between steps.
 
 **Menus, dialogs, the selection bar.** `transition:surface`. The scrim dims.
 
 **Rows and the bar's swipes.** A row's swipe is a transition with the row's
 slide and its + / × strip; the finger seeks it, release commits or springs
 back. "Queued" then plays a second transition (out and back in); "removed"
-leaves the row out and lets `flip` close the gap. The bar's and artwork's
+leaves the row out and lets `flip` close the gap, and its strip closes up
+with it (on the same clock, from the bottom), never covering the row moving
+into its place. The bar's and artwork's
 track change is the same: the old track slides out with the finger and the
 next comes in from the other side.
 
 **Lists.** `flip` for anything that reorders or removes rows in place (the
 queue). Content that is replaced wholesale (search results, Songs/Albums)
-uses `use:swap`.
+uses `use:swap`. A reorder (`ReorderList`) is a change too: the rows making
+way, the dropped row going to its place and a row let go where it started
+all glide from where they are drawn, while the dragged row follows the
+finger: the change leaves it alone (`still`), and makes no copies, since
+nothing leaves a reorder.
 
 ## Performance
 
@@ -414,6 +537,39 @@ before the rest (Checking).
   part must land on its real element, and closing must put each back on
   the bar's (recorded as `name (back)`, as is a swipe that springs back).
   It needs a track loaded on the engine, paused.
+  Each change is also watched frame by frame: anything that moves (a shared
+  element or its copy) must move from the start (no span on a move), and
+  under a finger the drawn progress must start where the change starts and
+  never move more than 0.1 in a frame's time (a dropped frame is slow, not a
+  jump). Every step change of the sheet is held at its start (the clock at
+  0): whatever is still drawn must be exactly where it was before, which
+  catches elements the layout moved that nothing animated. The queue's
+  reorder (by the handle, and one let go where it started) and a swipe
+  removing a row must glide: no row may move more than 30 px in a frame's
+  time. The queue section queues three songs by swiping them on an album
+  page and clears the queue at the end.
+  **Held frames:** every change of the sheet (each step, by tap and by drag,
+  lyrics, open and close, and closing with the title's marquee scrolled) is
+  held with its animations' clock stopped and set to its first, a middle and
+  its last frame. The first must look like the screen before it and the last
+  like the screen after it, pixel for pixel within a CSS pixel (nothing pops
+  in, vanishes or swaps places in the stack as it starts or hands over);
+  what is drawn both before and after must be drawn in the middle (a cover
+  whose copy drew nothing); and nothing may change in the half second after
+  it settles. Marquees, which scroll on their own clock, are waited out
+  first. `DUMP=dir` saves a failing case's frames. On the phone the frames
+  are the display itself (`adb screencap`, without its system bars, which
+  change on their own): the WebView's DevTools capture draws animated layers
+  wrongly while the animations' clock is stopped (a frozen first frame that
+  the display shows exactly as before, 0 pixels off, it captured 32,000
+  device pixels off). Differences are counted in CSS pixels. The display
+  shows what the OS draws on top too: a notification arriving during a case
+  fails it (seen once each on two runs); run it again.
+  **A finger followed one to one:** at every zoom, a change's distance and a
+  swipe's must be the screen distance of what moves (a test stage in the page).
+  **Undeclared elements:** a test stage built in the page with `change()`
+  itself fails if an element no part declares vanishes or pops when a change
+  takes it away or brings it.
 - **At another zoom and font:** the phone scenarios run again at Scale
   125% (`?dev-scale=125`), which caught boxes measured on screen but placed
   in CSS pixels, and in DejaVu Sans (`?dev-font=`), whose glyphs, like
@@ -439,6 +595,44 @@ before the rest (Checking).
   over 20 ms. Closing by dragging now playing down drops 2–4 frames
   (33 ms, once 67 ms): one long frame with no script and little layout, as
   the transition first takes hold under the finger; to look into.
+  After the motion fixes (2026-11-16, four rounds, mean/max ms, frames over
+  20 ms): opening by tap 16.8–16.9/22–23/1; the step changes by tap
+  16.7–17.1/17–34/0–1; dragging to the half queue and back 16.8/19–21/0–1;
+  opening by drag and closing by Escape 16.7/17–18/0. Closing by drag still
+  drops frames in three rounds of four (18.5–19.0/34–50/2–5). Two causes,
+  seen with long-animation-frame entries: the first move builds the
+  transition (about 20 ms of script: the two snapshots about 8, the flights
+  about 12, then the sheet's re-render), and sometimes a 50–67 ms frame
+  with no script, painting the copies for the first time. Nothing jumps
+  there any more (`follow` starts from what is drawn), but the frames drop.
+  After the stacking, easing and no-pop round (2026-11-17, same method):
+  opening by tap 16.9–17.3/23–40/1; the step changes by tap 16.7–17.2/17–34
+  with at most one frame over 20 ms; the step drags 17.1–17.5/33–34/1–2;
+  lyrics 16.8–17.2/20–37/1, back 16.7/17/0; opening by drag 16.7–17.1/17–34/
+  0–1; closing by Escape 16.7/17/0; closing by drag 18.0–18.5/33–50/2–4.
+  The step changes now drop a frame where they dropped none: the snapshot
+  does more (every drawn element listed for the default fade, and copies
+  carry about 40 properties of their insides), about a frame's work at the
+  start; to look into (narrow the drawn list to the parts' children).
+  Narrowed (2026-11-17): containers between parts are only measured, a part
+  inside a copied part is taken from that copy, and copies read box, flex
+  and item properties only where they apply. Building a step change at 6x
+  CPU throttle (headless): 72–117 ms before, 59–94 ms after. On the phone the
+  build now takes 27–40 ms (copies of the parts 5–14, Svelte applying the
+  step 3–10, the flights about 5); frames: step taps 16.7–17.1/17–34/0–1,
+  step drags 17.1–17.2/33–34/1, lyrics 16.8/19–21/0–1, lyrics back
+  16.7–17.1/17–33/0–1, opening by tap 16.8–17.3/22–39/1, by drag
+  17.1–17.6/33–34/1–2, closing by Escape 16.7/17/0, by drag 18.5–19.5/34–67/3–5.
+  A tap still drops a frame about half the time: the "before" snapshot
+  (mostly its copies, which are needed only for parts the change takes away,
+  unknown until it happens) runs inside the tap. Taking it at pointer-down,
+  before the click arrives, would move it out of the frame; to do.
+  With every kept element moving and rewrapped words crossfading (same day):
+  step taps 16.7–17.1/17–34/0–1, step drags 16.7–17.2/17–34/0–2, lyrics
+  16.7–17.2/17–36/0–1, back 16.7/17/0, opening by tap 16.8–17.2/21–38/1–2,
+  by drag 16.7–17.1/17–34/0–1, closing by Escape 16.7/17/0, by drag
+  18.5–19.0/33–50/3–4. The build in the tap: 27–39 ms (the narrower
+  snapshot's saving spent on the new moves).
 - **A frozen frame** (`?dev-scrub=0.3`, dev builds): the next transition
   stops at that progress instead of playing, to inspect on the phone or in
   WebKitGTK; the next change ends it.

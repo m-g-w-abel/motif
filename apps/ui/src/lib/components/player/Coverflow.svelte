@@ -123,7 +123,9 @@
         {@const p = place(i)}
         {@const centre = i === at}
         <!-- The slot places the card; the centre card's face is the `.frame` the sheet's cover
-             travels to (`cover:now`), and the other faces fade in once the sheet is still. -->
+             travels to (`cover:now`), and the other faces fade in once the sheet is still. On phones
+             they lie under the cover, so they go as a change starts (`covered`), before its copies
+             crossfade and would show them through it. -->
         <div
           class="slot"
           class:hidden={p.hidden}
@@ -133,7 +135,7 @@
           style:transform={p.transform}
           style:z-index={p.z}
         >
-          <div class="card" class:frame={centre} data-move={centre ? 'cover:now' : undefined} data-enter={centre ? undefined : 'fade'} class:tap={centre && !alone} use:menu={centre ? items : () => []}>
+          <div class="card" class:frame={centre} data-move={centre ? 'cover:now' : undefined} data-enter={centre ? undefined : 'fade'} data-span={!centre && narrow.current ? 'covered' : undefined} class:tap={centre && !alone} use:menu={centre ? items : () => []}>
             <!-- An empty key is the track's own cover, looked up (and held while the next loads). -->
             <Artwork {track} art={card.key || undefined} size={side} drawn={side * p.scale} />
             {#if !centre}

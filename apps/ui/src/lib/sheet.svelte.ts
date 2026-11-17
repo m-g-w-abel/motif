@@ -1,5 +1,5 @@
-import { SLOP } from './gestures';
-import type { Transition } from './motion/transition';
+import { ownTouch, SLOP } from './gestures';
+import { follow, type Drive, type Transition } from './motion/transition';
 
 /**
  * What the open sheet shows: now playing, the queue under the controls
@@ -146,9 +146,13 @@ export class PlayerSheet {
     let velocity = 0;
     let moved = false;
     let swiped = false;
-    let t: Transition | null = null;
+    let drive: Drive | null = null;
+    /** Where the press became a drag (it moves from there, never by the slop), and the progress drawn then. */
+    let fromY = startY;
     let start = 0;
     let p = 0;
+    // From the press: a drag handed over mid-move (now playing's, once it heads for closing) stays ours.
+    const owned = touch ? ownTouch() : undefined;
 
     const move = (ev: PointerEvent) => {
       const dy = ev.clientY - startY;
@@ -159,12 +163,14 @@ export class PlayerSheet {
       }
       if (!moved && Math.abs(dy) < 8) return;
       if (!moved) {
-        t = this.#take(this.open ? 1 : 0);
+        const t = this.#take(this.open ? 1 : 0);
         start = t?.progress ?? (this.open ? 1 : 0);
+        fromY = ev.clientY;
+        drive = follow(t, { from: start });
       }
       moved = true;
-      p = Math.min(1, Math.max(0, start - dy / height));
-      t?.seek(p);
+      p = Math.min(1, Math.max(0, start - (ev.clientY - fromY) / height));
+      drive?.seek(p);
       const now = performance.now();
       velocity = (ev.clientY - lastY) / Math.max(1, now - lastT);
       lastY = ev.clientY;
@@ -175,6 +181,7 @@ export class PlayerSheet {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
+      owned?.();
       if (!moved) {
         if (!swiped) onTap?.();
         return;
@@ -182,6 +189,8 @@ export class PlayerSheet {
       // A flick decides by direction; a slow drag by how far it got.
       const flick = Math.abs(velocity) > 0.5;
       const open = flick ? velocity < 0 : p > (from === 'bar' ? 0.25 : 0.75);
+      // Plays on from what is drawn (it may still be catching up with the finger).
+      drive?.release(open);
       this.#settle(open);
       if (steps && from === 'sheet' && released(lastY - startY) === 'up') this.up();
     };

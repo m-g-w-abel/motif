@@ -1,13 +1,13 @@
 <script lang="ts">
   import { flushSync } from 'svelte';
-  import { SLOP } from '../../gestures';
+  import { ownTouch, SLOP } from '../../gestures';
   import { released, stepTo } from '../../sheet.svelte';
   import { getApp, setViewState } from '../../context';
   import { mapped } from '../../gestures';
   import { change, type Change } from '../../motion/change';
   import { css, onto } from '../../motion/fit';
   import { rootZoom } from '../../motion/mover';
-  import { still, Transition, type Span } from '../../motion/transition';
+  import { follow, still, Transition, type Drive, type Span } from '../../motion/transition';
   import Icon from '../Icon.svelte';
   import Artwork from './Artwork.svelte';
   import Transport from './Transport.svelte';
@@ -26,26 +26,26 @@
   let backdrop = $state<HTMLElement>();
   let tint = $state<HTMLElement>();
   let leaving = $state<HTMLElement>();
+  let back = $state<HTMLElement>();
   setViewState({ source: 'library', layoutId: 'now-playing', browse: layout.browseState('now-playing') });
 
+  /** The carousel's other images, under the cover on phones: gone before the cover's copies crossfade over them. */
+  const COVERED: Span = [0, 0.05];
+
   /**
-   * The open/close transition's stretches (docs/ANIMATION.md): the bar's
-   * own parts go first (`leave`) and the shared ones travel (`move`); on
-   * phones the names under the artwork wait for it to rise past them
-   * (`under`), and the album's line, which starts under the title in the
-   * bar and ends above it, sets off earlier (`album`). The sheet's other
-   * parts rise once the movers are nearly there (`enter`), the queue from
-   * below (`queue`), and the bar's view buttons fall away (`fall`).
+   * The open/close transition's stretches for what comes and goes
+   * (docs/ANIMATION.md): the bar's own parts go first (`leave`); the sheet's
+   * other parts rise once the movers are nearly there (`enter`), the queue
+   * from below (`queue`), and the bar's view buttons fall away (`fall`).
+   * Shared parts move the whole way, from the start.
    */
-  const spans = (phone: boolean): Record<string, Span> => ({
+  const SPANS: Record<string, Span> = {
     leave: [0, 0.1],
-    move: [0.1, 0.85],
+    covered: COVERED,
     enter: [0.6, 1],
-    under: phone ? [0.4, 0.85] : [0.1, 0.85],
-    album: phone ? [0.2, 0.85] : [0.1, 0.85],
     queue: [0.5, 1],
     fall: [0, 0.5],
-  });
+  };
   /** The background grows until the movers arrive, so they never poke out of it. */
   const GROW: Span = [0, 0.85];
 
@@ -67,7 +67,7 @@
       flushSync();
       return new Transition([{ el: section, frames: [{ opacity: 0 }, { opacity: 1 }] }]);
     }
-    const t = change(section, () => flushSync(), { from: origin, spans: spans(views.phone), under: leaving });
+    const t = change(section, () => flushSync(), { from: origin, spans: SPANS, under: leaving, back });
     const z = rootZoom();
     const box = (r: DOMRect) => ({ left: r.left / z, top: r.top / z, width: r.width / z, height: r.height / z });
     const [o, b] = [box(origin.getBoundingClientRect()), box(backdrop.getBoundingClientRect())];
@@ -98,6 +98,8 @@
       },
       {
         under: leaving,
+        back,
+        spans: { covered: COVERED },
         ended: (landed) => {
           if (stepping === t) stepping = null;
           if (landed || !undo) return;
@@ -126,10 +128,16 @@
     const from = sheet.step;
     let way: 'up' | 'back' | null = null;
     let t: Change | null = null;
+    let drive: Drive | null = null;
+    /** Where the press became a drag: the step moves from there, never by the slop. */
+    let y1 = y0;
+    let owned: (() => void) | undefined;
     const move = (ev: PointerEvent) => {
       const dy = ev.clientY - y0;
       if (!way) {
         if (Math.abs(dy) < SLOP) return;
+        if (e.pointerType !== 'mouse') owned = ownTouch();
+        y1 = ev.clientY;
         way = dy < 0 ? 'up' : 'back';
         const to = stepTo(from, way);
         if (to === 'closed' && closing) {
@@ -141,10 +149,12 @@
           () => (sheet.step = to),
           () => (sheet.step = from),
         );
+        drive = follow(t);
       }
-      t?.seek((way === 'up' ? -dy : dy) / t.distance);
+      if (t) drive?.seek(((way === 'up' ? -1 : 1) * (ev.clientY - y1)) / t.distance);
     };
     const stop = () => {
+      owned?.();
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
@@ -152,7 +162,7 @@
     const end = (ev: PointerEvent) => {
       stop();
       const what = ev.type === 'pointercancel' ? null : released(ev.clientY - y0);
-      if (t) return void t.release(what === way);
+      if (drive) return void drive.release(what === way);
       if (what === 'tap') onTap();
       else if (what === 'up') sheet.up();
       else if (what === 'back') sheet.back();
@@ -202,6 +212,8 @@
   inert={!sheet.open}
 >
   <div class="backdrop" bind:this={backdrop}><div class="tint" bind:this={tint}></div></div>
+  <!-- Copies travelling to or from what lies behind the sheet's content (the half queue's cover): titles and shades stay over them. -->
+  <div class="behind" bind:this={back} aria-hidden="true"></div>
   <!-- Copies of the parts a change takes away, going behind the rest. -->
   <div class="leaving" bind:this={leaving} aria-hidden="true"></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -222,7 +234,8 @@
     </button>
   </header>
 
-  <!-- Phones, full queue and lyrics: the playing track in a strip whose drag or tap steps back. -->
+  <!-- Phones, full queue and lyrics: the playing track in a strip whose drag or tap steps back. Each step
+       shows one handle (`handle:now`: here, above the queue, under the controls), which moves between them. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="mini" data-enter="above" onpointerdown={(e) => !(e.target as Element).closest('.transport') && stepDrag(e, () => sheet.back())}>
     <div class="mini-row">
@@ -233,7 +246,7 @@
       </span>
       <Transport compact size={22} />
     </div>
-    <button class="step" aria-label={sheet.lyrics ? 'Back to now playing' : 'Show less of the queue'} onclick={(e) => keyed(e, () => sheet.back())}></button>
+    <button class="step" data-move="handle:now" aria-label={sheet.lyrics ? 'Back to now playing' : 'Show less of the queue'} onclick={(e) => keyed(e, () => sheet.back())}></button>
   </div>
 
   <div class="body" bind:this={body}>
@@ -254,8 +267,8 @@
         <div class="keep" hidden={sheet.lyrics}><ArtworkWidget expands={false} playing hidden={sheet.step !== 'now'} /></div>
       </div>
       <div class="details" data-enter="rise">
-        <p class="album-title" data-enter="fade" use:marquee={sheet.rest ? (engine.current?.track.id ?? null) : null}>
-          <span class="marquee" data-move="album:now" data-span="album">{album}</span>
+        <p class="album-title" data-enter="fade" use:marquee={sheet.rest ? (engine.current?.track.id ?? null) : sheet.moving ? false : null}>
+          <span class="marquee" data-move="album:now">{album}</span>
         </p>
         <TrackInfo style="hero" playing>
           {#snippet aside()}
@@ -268,13 +281,14 @@
         <!-- Phones: the handle at the bottom; a tap or drag up shows the queue. -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="more" data-enter="fade" onpointerdown={(e) => stepDrag(e, () => sheet.up())}>
-          <button class="step" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
+          <button class="step" data-move="handle:now" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
         </div>
       </div>
     </div>
     <div class="queue-slot" data-enter="below" data-span="queue">
       <button
         class="step"
+        data-move="handle:now"
         aria-label="Show all of the queue"
         onpointerdown={(e) => stepDrag(e, () => sheet.up())}
         onclick={(e) => keyed(e, () => sheet.up())}
@@ -315,6 +329,14 @@
     inset: 0;
     background: var(--surface);
     opacity: 0;
+  }
+
+  /* Before the content's own layers behind it (z-index -1, later in the page), so they draw over it. */
+  .behind {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
   }
 
   /* Not clipped: the bar's parts can lie outside the sheet (desktop). */

@@ -4,6 +4,8 @@
  * animations). It waits `WAIT` after the text changes; a tap replays it.
  */
 
+import { CURVE, DURATION } from './motion/transition';
+
 /** Pixels a second. */
 export const SPEED = 40;
 /** The shortest scroll, so a few pixels don't jerk. */
@@ -21,24 +23,33 @@ export function scrollPlan(overflow: number): { distance: number; ms: number } |
 /**
  * Svelte action on a clipping one-line box whose first child holds the text
  * (an inline-block). `key` names what is shown (the track); a new key plays
- * it again after `WAIT`, and null stops it (the sheet is closed).
+ * it again after `WAIT`; `false` holds it where it is (the sheet moving: a
+ * change starts from the text as drawn), and null stops it and puts it back
+ * (the sheet closed, unseen).
  */
-export function marquee(node: HTMLElement, key: string | null) {
+export function marquee(node: HTMLElement, key: string | false | null) {
   let timers: ReturnType<typeof setTimeout>[] = [];
   const text = () => node.firstElementChild as HTMLElement | null;
 
-  function stop() {
+  /** Stops scrolling; `reset` also puts the text back at once (else it stays where it is, as a change measured it). */
+  function stop(reset: boolean) {
     timers.forEach(clearTimeout);
     timers = [];
     const el = text();
-    if (el) {
+    if (el && reset) {
       el.style.transition = '';
       el.style.transform = '';
     }
   }
 
   function play(delay: number) {
-    stop();
+    stop(false);
+    // Left scrolled (it stopped as the sheet moved): it glides back first, never jumping.
+    const el = text();
+    if (el?.style.transform) {
+      el.style.transition = `transform ${DURATION}ms ${CURVE.css}`;
+      el.style.transform = '';
+    }
     timers.push(
       setTimeout(() => {
         const el = text();
@@ -51,19 +62,19 @@ export function marquee(node: HTMLElement, key: string | null) {
     );
   }
 
-  const tap = () => key !== null && play(0);
+  const tap = () => typeof key === 'string' && play(0);
   node.addEventListener('click', tap);
-  if (key !== null) play(WAIT);
+  if (typeof key === 'string') play(WAIT);
 
   return {
-    update(next: string | null) {
+    update(next: string | false | null) {
       if (next === key) return;
       key = next;
-      if (key === null) stop();
-      else play(WAIT);
+      if (typeof key === 'string') play(WAIT);
+      else stop(key === null);
     },
     destroy() {
-      stop();
+      stop(true);
       node.removeEventListener('click', tap);
     },
   };

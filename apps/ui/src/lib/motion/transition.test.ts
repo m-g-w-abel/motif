@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { motion } from './stage.svelte';
-import { CURVE, DURATION, Transition, type Track } from './transition';
+import { CATCH, CURVE, DURATION, follow, Transition, type Drive, type Track } from './transition';
 
 describe('CURVE', () => {
   it('runs from 0 to 1, and its inverse undoes it', () => {
@@ -11,6 +11,22 @@ describe('CURVE', () => {
 
   it('is eased out: most of the way is done in the first half of the time', () => {
     expect(CURVE.at(0.5)).toBeGreaterThan(0.8);
+  });
+
+  it('gives a span its own stretch of the curve, so a track is linear in progress within its span', () => {
+    for (const [a, b] of [
+      [0, 1],
+      [0.6, 1],
+      [0, 0.1],
+      [0.5, 0.85],
+    ]) {
+      const seg = CURVE.segment(a, b);
+      const [ta, tb] = [CURVE.inverse(a), CURVE.inverse(b)];
+      for (const p of [a, a + (b - a) * 0.25, (a + b) / 2, a + (b - a) * 0.9, b]) {
+        const x = (CURVE.inverse(p) - ta) / (tb - ta);
+        expect(seg.at(x)).toBeCloseTo((p - a) / (b - a), 3);
+      }
+    }
   });
 });
 
@@ -77,13 +93,35 @@ describe('Transition', () => {
     t.seek(0.4);
     let done = 0;
     void t.release(false).then(() => done++);
-    expect(made.map((a) => a.log.at(-1))).toEqual(['play -1', 'play -1']);
-    made[0].finish();
+    // Backwards is the mirrored transition played forwards (below): two new animations, playing.
+    const back = made.slice(2);
+    expect(back.map((a) => a.log.at(-1))).toEqual(['play 1', 'play 1']);
+    back[0].finish();
     await settle();
     expect(done).toBe(0);
-    made[1].finish();
+    back[1].finish();
     await settle();
     expect(done).toBe(1);
+  });
+
+  it('eases out whichever way the clock plays it: backwards, it plays the mirrored tracks forwards from where it is drawn', () => {
+    const t = new Transition([{ el: el(), frames: [{ opacity: 0 }, { opacity: 1 }], span: [0.6, 1] }]);
+    t.seek(0.8);
+    void t.play(0);
+    const [old, back] = made;
+    expect(old.cancelled).toBe(true);
+    // The same path the other way: frames reversed, the span mirrored, at the mirrored progress, played forwards.
+    expect(back.frames).toEqual([{ opacity: 1 }, { opacity: 0 }]);
+    expect(back.timing.delay).toBeCloseTo(0);
+    expect(back.timing.duration).toBeCloseTo(CURVE.inverse(0.4) * DURATION);
+    expect(back.currentTime).toBeCloseTo(CURVE.inverse(0.2) * DURATION);
+    expect(back.playbackRate).toBe(1);
+    expect(t.progress).toBeCloseTo(0.8);
+    // Caught on the way back, it is drawn where it is and seeks the same as ever.
+    back.currentTime = CURVE.inverse(0.5) * DURATION;
+    expect(t.grab()).toBeCloseTo(0.5);
+    t.seek(0.3);
+    expect(t.progress).toBeCloseTo(0.3);
   });
 
   it('finishes at once when let go already at its end (a swipe all the way), instead of playing again', async () => {
@@ -149,8 +187,9 @@ describe('Transition', () => {
     t.seek(0.2);
     expect(t.progress).toBeCloseTo(0.2);
     void t.release(false);
-    expect(made[0].log.at(-1)).toBe('play -1');
-    made[0].finish();
+    // Back to 0: the mirrored track plays forwards.
+    expect(made[1].log.at(-1)).toBe('play 1');
+    made[1].finish();
     await settle();
     expect(cleaned).toBe(1);
     expect(t.heading).toBe(0);
@@ -168,6 +207,100 @@ describe('Transition', () => {
     const u = new Transition([track()]);
     void u.play(1);
     expect(made[1].log.at(-1)).toBe('play 1');
+  });
+});
+
+/** Frames by hand: `paint(ms)` runs what waits for the next frame, that long after the first. */
+let frames: FrameRequestCallback[] = [];
+const paint = (at: number) => {
+  const now = frames;
+  frames = [];
+  for (const f of now) f(at);
+};
+
+describe('follow', () => {
+  beforeEach(() => {
+    frames = [];
+    vi.stubGlobal('requestAnimationFrame', (f: FrameRequestCallback) => frames.push(f));
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A drive that records what it draws. */
+  const drawn = () => {
+    const at: number[] = [];
+    const released: boolean[] = [];
+    return {
+      at,
+      released,
+      seek: (p: number) => void at.push(p),
+      release: (c: boolean) => void released.push(c),
+    };
+  };
+
+  it('draws from the first move: what is drawn meanwhile carries on exactly where the transition takes over', async () => {
+    let built!: (d: Drive) => void;
+    const early: number[] = [];
+    const d = follow(new Promise<Drive>((r) => (built = r)), {
+      early: (p) => early.push(p),
+    });
+    d.seek(0.1);
+    d.seek(0.2);
+    expect(early).toEqual([0.1, 0.2]);
+    const t = drawn();
+    built(t);
+    await settle();
+    // Its first frame is where the early drawing was, so nothing jumps.
+    expect(t.at).toEqual([0.2]);
+    d.seek(0.25);
+    paint(0);
+    expect(t.at.at(-1)).toBeCloseTo(0.2);
+    paint(CATCH);
+    expect(t.at.at(-1)).toBeCloseTo(0.25);
+  });
+
+  it('catches up with the finger smoothly when it took over behind it (built while the finger moved), never jumping', async () => {
+    const t = drawn();
+    const d = follow(t, { from: 0 });
+    // The build held the main thread; these moves arrive before its first frame.
+    d.seek(0.3);
+    d.seek(0.5);
+    paint(0);
+    expect(t.at.at(-1)).toBe(0);
+    let last = 0;
+    for (let ms = 16; ms <= CATCH + 16; ms += 16) {
+      paint(ms);
+      const p = t.at.at(-1)!;
+      expect(p).toBeGreaterThanOrEqual(last);
+      expect(p - last).toBeLessThan(0.2);
+      last = p;
+    }
+    expect(last).toBeCloseTo(0.5);
+    // Caught up: it follows the finger exactly.
+    d.seek(0.6);
+    expect(t.at.at(-1)).toBe(0.6);
+  });
+
+  it('lets go from where it is drawn, built or not', async () => {
+    const t = drawn();
+    const d = follow(t);
+    d.seek(0.4);
+    d.release(true);
+    paint(16);
+    expect(t.at).toEqual([0]);
+    expect(t.released).toEqual([true]);
+    let built!: (d: Drive | null) => void;
+    const u = drawn();
+    const e = follow(new Promise<Drive | null>((r) => (built = r)), {
+      early: () => {},
+    });
+    e.seek(0.3);
+    e.release(false);
+    e.release(true);
+    built(u);
+    await settle();
+    expect(u.at).toEqual([0.3]);
+    expect(u.released).toEqual([false]);
   });
 });
 

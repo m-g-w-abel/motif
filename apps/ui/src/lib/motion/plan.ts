@@ -23,19 +23,30 @@ export interface Part {
   box: Box;
   /** The nearest part on the same side it sits inside. */
   parent?: number;
+  /**
+   * Not declared: an element between parts (a row holding a part and other
+   * buttons). It moves when kept, so what it holds moves with it, and never
+   * comes or goes on its own.
+   */
+  implicit?: boolean;
+  /** It clips what it holds (overflow other than visible). */
+  clips?: boolean;
 }
 
 export type Frame = { map: Map2; opacity?: number };
-type Moved<K extends string> = Record<K, number> & { frames: [Frame, Frame]; span: Span };
+/** A move: it always runs the whole transition, so everything that moves starts at the start. */
+type Moved<K extends string> = Record<K, number> & { frames: [Frame, Frame] };
+/** A part coming or going: over its span (`data-span`), so it can come once the movers are nearly there. */
+type Faded<K extends string> = Moved<K> & { span: Span };
 
 export interface Plan {
   /** Kept elements that moved: from their old place (less what the part they are in moves) to rest. */
   place: Moved<'after'>[];
   /** A name on another element after: the mover carries it. */
-  fly: { before: number; after: number; span: Span }[];
-  enter: Moved<'after'>[];
+  fly: { before: number; after: number }[];
+  enter: Faded<'after'>[];
   /** Played on a copy, since the change took the element away. */
-  leave: Moved<'before'>[];
+  leave: Faded<'before'>[];
   /** How far things move (px), for a finger to drive it by. */
   distance: number;
 }
@@ -71,39 +82,59 @@ function away(enter: Enter, b: Box, stage: Box): Frame {
 const rest = (from: Frame): Frame => (from.opacity === undefined ? { map: ID } : { map: ID, opacity: 1 });
 
 export function plan(before: Part[], after: Part[], stage: Box, spans: Record<string, Span> = {}): Plan {
-  const spanOf = (p: Part, kind: 'move' | 'enter' | 'leave'): Span => (p.span && spans[p.span]) || spans[kind] || [0, 1];
+  const spanOf = (p: Part, kind: 'enter' | 'leave'): Span => (p.span && spans[p.span]) || spans[kind] || [0, 1];
   const kept = after.map((a) => before.findIndex((b) => b.el === a.el));
   const keptBefore = new Set(kept.filter((i) => i >= 0));
   const fly: Plan['fly'] = [];
   const flown = new Set<number>();
   after.forEach((a, i) => {
-    if (kept[i] >= 0 || !a.name) return;
+    if (kept[i] >= 0 || !a.name || a.implicit) return;
     const j = before.findIndex((b, k) => b.name === a.name && !keptBefore.has(k));
     if (j < 0) return;
-    fly.push({ before: j, after: i, span: spanOf(a.span ? a : before[j], 'move') });
+    fly.push({ before: j, after: i });
     flown.add(j);
   });
   const flownTo = new Set(fly.map((f) => f.after));
-  const entering = new Set(after.map((_, i) => i).filter((i) => kept[i] < 0 && !flownTo.has(i)));
-  const leaving = new Set(before.map((_, j) => j).filter((j) => !keptBefore.has(j) && !flown.has(j)));
+  const entering = new Set(after.map((_, i) => i).filter((i) => kept[i] < 0 && !flownTo.has(i) && !after[i].implicit));
+  const leaving = new Set(before.map((_, j) => j).filter((j) => !keptBefore.has(j) && !flown.has(j) && !before[j].implicit));
   /** Inside something that comes, goes or flies on `side`: it rides along (or is hidden with it). */
   const carried = (side: Part[], i: number, moving: Set<number>) => {
     for (let p = side[i].parent; p !== undefined; p = side[p].parent) if (moving.has(p)) return true;
     return false;
   };
 
-  // Kept parts, outside in: each moves by its own shift less what the part it is in already shows.
+  /** Whether a kept part moving inside the clipping part `c` (after) lies outside it at either end: cut off on the way. */
+  const cut = (i: number, c: number) => {
+    const [a, b] = [after[i].box, before[kept[i]].box];
+    const [ca, cb] = [after[c].box, kept[c] >= 0 ? before[kept[c]].box : after[c].box];
+    const at = (x: Box, y: Box) => ({ left: x.left - y.left, top: x.top - y.top });
+    const [ra, rb] = [at(a, ca), at(b, cb)];
+    if (Math.abs(ra.left - rb.left) < 0.5 && Math.abs(ra.top - rb.top) < 0.5) return false;
+    const inside = (r: { left: number; top: number }, x: Box, y: Box) => r.left >= -1 && r.top >= -1 && r.left + x.width <= y.width + 1 && r.top + x.height <= y.height + 1;
+    return !inside(ra, a, ca) || !inside(rb, b, cb);
+  };
+
+  // Kept parts, outside in: each moves by its own shift less what the part it is in already shows;
+  // one that would be cut off by a box that clips it travels as a copy instead.
   const place: Plan['place'] = [];
   const shown = new Map<number, { x: number; y: number }>();
   after.forEach((a, i) => {
-    if (kept[i] < 0) return;
+    const outer = a.parent === undefined ? { x: 0, y: 0 } : (shown.get(a.parent) ?? { x: 0, y: 0 });
+    // New or gone parts don't move on their own: what they hold moves with what they are in.
+    if (kept[i] < 0 || carried(after, i, flownTo)) return void shown.set(i, outer);
     const b = before[kept[i]];
     const x = b.box.left - a.box.left;
     const y = b.box.top - a.box.top;
-    const outer = a.parent === undefined ? { x: 0, y: 0 } : (shown.get(a.parent) ?? { x: 0, y: 0 });
     if (Math.abs(x - outer.x) < 0.5 && Math.abs(y - outer.y) < 0.5) return void shown.set(i, outer);
     shown.set(i, { x, y });
-    place.push({ after: i, frames: [{ map: shift(x - outer.x, y - outer.y) }, { map: ID }], span: spanOf(a, 'move') });
+    // Declared parts only: a container between parts (a whole list) moving in its scroller is clipped by it, as it is at rest.
+    for (let c = a.parent; c !== undefined && !a.implicit; c = after[c].parent)
+      if (after[c].clips && cut(i, c)) {
+        fly.push({ before: kept[i], after: i });
+        flownTo.add(i);
+        return;
+      }
+    place.push({ after: i, frames: [{ map: shift(x - outer.x, y - outer.y) }, { map: ID }] });
   });
 
   const enter: Plan['enter'] = [];

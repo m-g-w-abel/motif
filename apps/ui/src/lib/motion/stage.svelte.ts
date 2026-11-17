@@ -1,6 +1,6 @@
 import { tick } from 'svelte';
 import { fly, rootZoom, see, type Flight, type Seen } from './mover';
-import { Transition, type Drive, type Track } from './transition';
+import { follow, Transition, type Drive, type Track } from './transition';
 
 /** Into a deeper screen, back out of one, or across to another at the same depth. */
 export type Motion = 'forward' | 'back' | 'swap';
@@ -72,33 +72,23 @@ export class Stage<S extends Screen> {
   drag(under: S, commit: () => void): Drive {
     this.#settle();
     const from = this.top;
-    let p = 0;
-    let released: boolean | null = null;
-    let t: Transition | null = null;
     // Moves with the finger from its first move, while the screen beneath is still being laid out
-    // (a frame or two); the transition takes over from there.
+    // (a frame or two); the transition takes over from there (`follow`).
     const fromEl = this.#el(from.key);
     const early = (q: number) => fromEl && (fromEl.style.transform = q ? `translateX(${q * 100}%)` : '');
-    void this.#begin(from, under, 'back', true, () => early(0)).then((built) => {
-      t = built;
-      if (!t) return;
-      t.seek(p);
-      if (released !== null) void t.release(released);
-    });
+    const drive = follow(this.#begin(from, under, 'back', true, () => early(0)), { early });
+    let released = false;
     return {
-      seek: (q) => {
-        p = q;
-        if (t) t.seek(q);
-        else if (released === null) early(q);
-      },
+      seek: (q) => drive.seek(q),
       release: (yes) => {
-        if (released !== null) return;
-        released = yes;
+        if (released) return;
+        released = true;
         // Committed: ending it early jumps to the end, not back.
         if (yes && this.#change?.from === from) this.#change.drag = false;
         if (yes) commit();
-        if (t) void t.release(yes);
-        else if (!yes) {
+        drive.release(yes);
+        if (!yes && !this.#t) {
+          // Not built yet: springing back is putting it back.
           early(0);
           this.#settle();
         }

@@ -65,10 +65,13 @@
   }
 
   // Rows that move when another comes or goes (removed, played, dropped elsewhere) slide into place, new ones fade in (`flip`).
+  // The engine confirming an order already shown (a reorder's reply) changes nothing, so it doesn't restart the rows mid-slide.
   let root = $state<HTMLElement>();
+  let order = '';
   $effect.pre(() => {
-    void queue;
-    void fromContext;
+    const next = [...queue, ...fromContext].map((item) => item.id).join();
+    if (next === order) return;
+    order = next;
     if (!root) return;
     const then = measure(root, { leaves: false });
     void tick().then(() => then().play(1));

@@ -238,6 +238,41 @@
   {/if}
 {/snippet}
 
+{#snippet head()}
+  <!-- A category's head scrolls with its list, so a cover flying back to a card under it lands where it shows. -->
+  {#if category}
+    <div class="head">
+      {#if views.phone}<div class="back-row"><NavButton /></div>{/if}
+      <div class="title-row">
+        <span class="dot" style:--c={category.colour} data-move={`dot:${category.kind}`}><Icon name={category.icon} size={22} /></span>
+        <h1><span data-move={`category:${category.kind}`}>{category.label}</span></h1>
+        {#if views.phone && view.kind === 'playlists' && engine.can('library')}
+          <button class="tool" aria-label="New playlist" title="New playlist" onclick={() => playlists.create()}>
+            <Icon name="plus" size={18} />
+          </button>
+        {/if}
+      </div>
+    {#if recents}
+      <div class="segmented switch" role="radiogroup" aria-label="Show">
+        {#each [['songs', 'Songs'], ['albums', 'Albums']] as const as [value, label] (value)}
+          <button
+            role="radio"
+            aria-checked={show === value}
+            class:active={show === value}
+            onclick={() => {
+              show = value;
+              lastShown.set(view.kind, value);
+              selecting = false;
+            }}>{label}</button
+          >
+        {/each}
+      </div>
+    {/if}
+      {@render toolbar()}
+    </div>
+  {/if}
+{/snippet}
+
 {#snippet hero()}
   <div class="hero">
     <div class="cover" data-move={`cover:${card}`}>
@@ -294,38 +329,6 @@
     </div>
   {/if}
 
-  {#if category}
-    <div class="head">
-      {#if views.phone}<div class="back-row"><NavButton /></div>{/if}
-      <div class="title-row">
-        <span class="dot" style:--c={category.colour} data-move={`dot:${category.kind}`}><Icon name={category.icon} size={22} /></span>
-        <h1><span data-move={`category:${category.kind}`}>{category.label}</span></h1>
-        {#if views.phone && view.kind === 'playlists' && engine.can('library')}
-          <button class="tool" aria-label="New playlist" title="New playlist" onclick={() => playlists.create()}>
-            <Icon name="plus" size={18} />
-          </button>
-        {/if}
-      </div>
-    {#if recents}
-      <div class="segmented switch" role="radiogroup" aria-label="Show">
-        {#each [['songs', 'Songs'], ['albums', 'Albums']] as const as [value, label] (value)}
-          <button
-            role="radio"
-            aria-checked={show === value}
-            class:active={show === value}
-            onclick={() => {
-              show = value;
-              lastShown.set(view.kind, value);
-              selecting = false;
-            }}>{label}</button
-          >
-        {/each}
-      </div>
-    {/if}
-      {@render toolbar()}
-    </div>
-  {/if}
-
   <!-- The recents' Songs / Albums switch: the other list rises into place. -->
   <div class="body" use:swap={show}>
     {#if view.kind === 'home'}
@@ -352,6 +355,7 @@
         titles={options.titles}
         artists={options.artists}
         oncolumns={(columns) => optionsKey && settings.setView(optionsKey, { columns })}
+        header={category ? head : undefined}
         onopen={(key, title, art, artist) =>
           views.open(view.kind === 'playlists' ? { kind: 'playlist', id: key, name: title } : { kind: 'album', key, title, art, artist })}
       />
@@ -370,7 +374,7 @@
         titles={options.titles}
         artists={options.artists}
         inAlbum={view.kind === 'album'}
-        header={page ? hero : undefined}
+        header={page ? hero : category ? head : undefined}
         openAlbum={view.kind === 'album' ? undefined : openAlbum}
         onremove={removeEntries}
         memory={page ? undefined : `view:${JSON.stringify(view)}`}

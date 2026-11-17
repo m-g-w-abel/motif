@@ -5,6 +5,36 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Phone fixes for now playing and the queue**: buttons respond straight
+  after dragging now playing open or closed or dragging a handle, instead of
+  ignoring taps for a moment. The album's other images no longer show through
+  the cover on the way to the half queue; going to the full queue no longer
+  shows two play buttons, and the handle moves to the top instead of a new one
+  appearing. A partly scrolled queue no longer jumps when the view changes.
+  Dragging a song in the queue keeps it under your finger as it passes others
+  and it settles without a stutter when you let go, and a song swiped away no longer leaves its red strip over the next one: the
+  strip closes up as the songs below move up. Albums no longer go missing at
+  the top of the screen when you scroll a long list with a larger Scale or
+  system font size.
+- **Smoother now playing and queue**: pulling now playing up or a handle
+  starts moving under your finger straight away instead of pausing and then
+  jumping, and everything moves from the start of the animation. Changing
+  between now playing and the half or full queue no longer makes the
+  controls, title or queue rows jump; reordering the queue moves the other
+  songs aside smoothly, and letting go glides the song into place. The seek
+  bar fades into the waveform as it grows instead of turning into it at once.
+- **Now playing closes as smoothly as it opens**: closing, going back and
+  letting go of a drag now slow down as they arrive, like opening, instead of
+  speeding up at the end. Changing between now playing, the queue and the
+  lyrics no longer hides the cover on the way, keeps the title and the shade
+  over the cover in the half queue, and nothing (lyrics, the shade, a long
+  title) pops in, vanishes or jumps as a change starts or ends. With a larger
+  Scale or system font size, dragging the queue's handles and swiping rows
+  now follow your finger exactly, and touching the queue no longer flashes
+  its scrollbar.
+- **Headers scroll with their lists**: the title and buttons at the top of
+  Albums, All Songs, Playlists and the recent lists now scroll away with the
+  list, so going back to an album never leaves its cover cut off under them.
 - **Album colours at start-up**: with art colours on, Motif now opens in the
   last album's colours instead of showing the plain theme until the music loads.
 - **Animated screen changes**: opening and leaving a view slides it, and an

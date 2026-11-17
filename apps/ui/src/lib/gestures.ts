@@ -1,4 +1,4 @@
-import { Transition, type Drive } from './motion/transition';
+import { follow, Transition, type Drive } from './motion/transition';
 
 /**
  * Touch gestures (touch and pen only; the mouse keeps its clicks and drags).
@@ -115,7 +115,8 @@ export type Handlers = Partial<Record<Once, () => void> & Record<Follow, () => (
 
 /**
  * Draws a sideways swipe as it goes: for its way (-1 left, 1 right), a
- * transition the finger drives across `distance` px, then releases (null:
+ * transition the finger drives across `distance` px on screen (where the finger
+ * moves, the root's zoom included), then releases (null:
  * nothing moves that way).
  */
 export type Swipe = (way: -1 | 1) => { drive: Drive; distance: number } | null;
@@ -131,12 +132,14 @@ export function slide(el: HTMLElement): Swipe {
   return (way) => {
     const w = el.offsetWidth;
     const t = new Transition([{ el, frames: [translate(0), translate(way * w)] }]);
+    const drive = follow(t);
     return {
-      distance: w,
+      distance: el.getBoundingClientRect().width,
       drive: {
-        seek: (p) => t.seek(p),
+        seek: (p) => drive.seek(p),
         release(commit) {
-          void t.release(commit).then(() => {
+          drive.release(commit);
+          void t.done.then(() => {
             // In the same task as the first one's clean-up, so it never shows where it started.
             if (commit) void new Transition([{ el, frames: [translate(-way * w), translate(0)] }]).play(1);
           });
@@ -184,27 +187,62 @@ export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Swipe {
     };
     const back = () => void move(-w, 0).play(1).then(done);
     const t = move(0, -w);
+    const drive = follow(t);
     return {
-      distance: w,
+      distance: el.getBoundingClientRect().width,
       drive: {
-        seek: (p) => t.seek(p),
+        seek: (p) => drive.seek(p),
         release(commit) {
-          void t.release(commit).then(() => {
-            if (!commit) return done();
-            // Out of sight until it comes back (or goes, removed).
+          drive.release(commit);
+          if (!commit) return void t.done.then(done);
+          /** Out of sight until it comes back (or goes, removed). */
+          const out = () => {
             el.style.transform = translate(-w).transform;
             if (strip) strip.style.transform = `translateX(calc(100% - ${w}px))`;
-            const restore = () => {
-              el.style.transform = '';
-              back();
-            };
-            if (does === 'queue') setTimeout(restore, 100);
-            else setTimeout(() => (el.isConnected ? restore() : done()), 1000);
+          };
+          const restore = () => {
+            el.style.transform = '';
+            back();
+          };
+          if (does === 'queue') return void t.done.then(() => (out(), setTimeout(restore, 100)));
+          // Removed: the strip closes up as the rows below move up into the row's place (the list's own change, same
+          // clock), from where it is drawn: the row can go while it is still sliding out (a short swipe).
+          let refused: ReturnType<typeof setTimeout> | undefined;
+          const closes = new MutationObserver(() => {
+            if (el.isConnected) return;
+            closes.disconnect();
+            clearTimeout(refused);
+            if (!strip?.isConnected) return done();
+            const at = getComputedStyle(strip).transform;
+            strip.style.transformOrigin = 'top';
+            void new Transition([{ el: strip, frames: [{ transform: `${at} scaleY(1)` }, { transform: `${at} scaleY(0)` }] }]).play(1).then(done);
+          });
+          if (box) closes.observe(box, { childList: true });
+          void t.done.then(() => {
+            if (!el.isConnected) return;
+            out();
+            refused = setTimeout(() => {
+              closes.disconnect();
+              if (el.isConnected) restore();
+              else done();
+            }, 1000);
           });
         },
       },
     };
   };
+}
+
+/**
+ * Makes the touch under way ours alone until the returned function is
+ * called: the browser's own handling of a drag ends in a fling, and
+ * Chromium drops the next tap while one runs (nothing could be tapped for
+ * half a second after a drag), even where `touch-action` rules out panning.
+ */
+export function ownTouch(): () => void {
+  const own = (ev: TouchEvent) => ev.cancelable && ev.preventDefault();
+  window.addEventListener('touchmove', own, { passive: false });
+  return () => window.removeEventListener('touchmove', own);
 }
 
 /**
@@ -217,7 +255,7 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
   const press = new Press(e.clientX, e.clientY, performance.now());
   const holds = !!map['long-press'];
   const swipes = !!(map['swipe-left'] || map['swipe-right']);
-  let follow: ((dy: number) => void) | undefined;
+  let follows: ((dy: number) => void) | undefined;
   let longPressed = false;
   /** The swipe drawn, and the way it went first. */
   let showing: ReturnType<Swipe> = null;
@@ -259,8 +297,8 @@ export function gesture(e: PointerEvent, map: GestureMap, on: Handlers, shown?: 
     if (axis !== 'y') return;
     const action = map['drag-vertical'];
     if (action && isFollow(action)) {
-      follow ??= on[action]?.();
-      follow?.(ev.clientY - press.y);
+      follows ??= on[action]?.();
+      follows?.(ev.clientY - press.y);
     }
   };
   const up = (ev: PointerEvent) => {
