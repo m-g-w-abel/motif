@@ -201,6 +201,8 @@
       { queue: () => queueAlbum(i, album), 'play-next': () => queueAlbum(i, album, true) },
       swipeRow(e.currentTarget as HTMLElement, 'queue'),
     );
+    // A touch may be the start of a scroll: selecting on the way down would mark every card a scroll starts on (#208).
+    if (e.pointerType !== 'mouse') return;
     if (e.button === 2) {
       if (!picked.has(album.key)) select(i);
     } else if (e.button !== 0) {
