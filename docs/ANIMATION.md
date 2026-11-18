@@ -181,9 +181,12 @@ t.play(1);           // a tap
      new size in its old place (cutting off what it held, or showing what it
      hid). The one property besides transform and opacity a change animates,
      only there and only for the change's 260 ms. A box scrolled away from
-     its start keeps its own clipping (set aside, it would stop being a
-     scroller and lose its position, so what it holds would jump); copies
-     are scrolled as their originals were (`rescroll`);
+     its start stops being a scroller while its clipping is set aside, so
+     what it holds is held at its scroll position by `translate` (apart from
+     the transforms a change animates) and the scroll is put back at the end;
+     keeping its own clipping instead cut a shrinking one (the full queue
+     back to the half) to its new size at once. Copies are scrolled as their
+     originals were (`rescroll`);
    - **nothing pops**: an element the change shows that no part declares (a
      part's insides it brings) fades in over the `enter` span, and one it
      takes away while its part stays fades out over the `leave` span, drawn
