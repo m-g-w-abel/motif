@@ -13,6 +13,12 @@ describe('gateHover', () => {
     expect(out).toBe('@media(max-width:700px){@media(hover:hover){li:hover{a:b}}}@keyframesk{from{a:1}}');
   });
 
+  it('gates rules that follow an at-rule it does not descend into', () => {
+    expect(squash(gateHover('@keyframes k { from { a: 1 } } b:hover { c: d }'))).toBe(
+      squash('@keyframes k { from { a: 1 } } @media (hover: hover) { b:hover { c: d }}'),
+    );
+  });
+
   it('ignores :hover in comments', () => {
     expect(squash(gateHover('/* a:hover */ b { c: d }'))).toBe('b{c:d}');
   });

@@ -19,6 +19,10 @@ export function gateHover(css) {
         out += src.slice(start, i + 1) + gateHover(src.slice(i + 1, j - 1)) + '}';
         i = j - 1;
         start = j;
+      } else {
+        out += src.slice(start, j);
+        i = j - 1;
+        start = j;
       }
       continue;
     }
