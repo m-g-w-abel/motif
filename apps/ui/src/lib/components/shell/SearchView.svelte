@@ -272,6 +272,7 @@
       {#key filter}
         <AlbumGrid
           bind:this={grid}
+          bind:selecting={views.selecting}
           cardSize={150}
           mode="covers"
           items={filter === 'Playlists' ? 'playlists' : 'albums'}

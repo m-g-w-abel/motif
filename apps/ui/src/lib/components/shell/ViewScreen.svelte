@@ -345,6 +345,7 @@
       <AlbumGrid
         bind:this={grid}
         bind:shownColumns
+        bind:selecting={views.selecting}
         cardSize={150}
         at="view"
         items={view.kind === 'playlists' ? 'playlists' : view.kind === 'played' ? 'played' : 'albums'}

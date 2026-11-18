@@ -228,7 +228,7 @@
       touch(i);
     } else if (!inSelection(picked, key)) select(i);
   }
-  /** Middle-click or long-press: queues the row, or the selection it is part of. */
+  /** Middle-click: queues the row, or the selection it is part of. (A long press only picks it, as the press does.) */
   function queueRow(i: number, next = false) {
     if (!inSelection(picked, data.key(i))) select(i);
     queueTracks(engine, tracksAt(i), next);

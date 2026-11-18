@@ -76,7 +76,7 @@ describe('GESTURES', () => {
   it('has the decided defaults', () => {
     expect(GESTURES.bar).toEqual({ 'swipe-left': 'next', 'swipe-right': 'previous' });
     expect(GESTURES.artwork).toEqual({ 'swipe-left': 'next', 'swipe-right': 'previous', 'drag-vertical': 'close' });
-    expect(GESTURES.row).toEqual({ 'long-press': 'queue', 'swipe-left': 'queue' });
+    expect(GESTURES.row).toEqual({ 'long-press': 'select', 'swipe-left': 'queue' });
     expect(GESTURES.queued).toEqual({ 'swipe-left': 'remove' });
     expect(GESTURES.view).toEqual({ 'swipe-right': 'back' });
   });
@@ -108,8 +108,13 @@ describe('mapped', () => {
       'swipe-left': 'previous',
       'swipe-right': 'next',
     });
-    expect(mapped({ row: { 'long-press': 'play-next' } }, 'row')).toEqual({ 'long-press': 'play-next', 'swipe-left': 'queue' });
     expect(mapped({ artwork: { 'drag-vertical': 'volume' } }, 'artwork')['drag-vertical']).toBe('volume');
+  });
+
+  it('makes a long press on a row select only: a saved remap to a queue action falls back to the default', () => {
+    expect(CHOICES.row['long-press']).toEqual(['select']);
+    expect(mapped({ row: { 'long-press': 'queue' } }, 'row')).toEqual({ 'long-press': 'select', 'swipe-left': 'queue' });
+    expect(mapped({ row: { 'long-press': 'play-next', 'swipe-left': 'play-next' } }, 'row')).toEqual({ 'long-press': 'select', 'swipe-left': 'play-next' });
   });
 
   it('drops a gesture mapped to none', () => {

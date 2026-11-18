@@ -13,9 +13,15 @@
   const open = $derived(views.menu === 'select');
   const choosing = $derived(views.menu === 'playlist');
   // Add to playlist asks which in the bar's menu, as ⋮ does; with nothing it can add, a tap does nothing.
-  function addToPlaylist() {
-    if (choosing) views.menu = null;
-    else if (picking.count && playlists.canAdd(picking.tracks())) views.menu = 'playlist';
+  async function addToPlaylist() {
+    if (choosing) return (views.menu = null);
+    const shown = picking;
+    if (!shown.count) return;
+    try {
+      if (playlists.canAdd(await shown.tracks()) && views.picking === shown) views.menu = 'playlist';
+    } catch (e) {
+      engine.error = (e as Error).message;
+    }
   }
 </script>
 

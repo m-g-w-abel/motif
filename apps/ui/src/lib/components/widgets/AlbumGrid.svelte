@@ -13,10 +13,12 @@
   import { menu } from '../../contextMenu.svelte';
   import type { MenuItem } from '../../contextMenu.svelte';
   import { albumMenu, playTracks, queueTracks } from '../../menus';
+  import { keyPicking } from '../../picking';
   import type { SortRule } from '../../protocol/SortRule';
   import type { ViewMode } from '../../viewOptions';
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
   import { sortLabel, viewSort } from '../../sort.svelte';
+  import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import { scrollMemory } from '../../scrollMemory';
@@ -33,6 +35,7 @@
     artists = true,
     oncolumns,
     shownColumns = $bindable(),
+    selecting = $bindable(false),
     header,
   }: {
     cardSize: number;
@@ -54,13 +57,15 @@
     oncolumns?: (n: number | null) => void;
     /** The columns shown, for a view's options. */
     shownColumns?: number;
+    /** Select mode (phones, started by a long press): taps pick cards, and the select bar acts on their songs. */
+    selecting?: boolean;
     /** What scrolls above the cards (a category's head). */
     header?: Snippet;
   } = $props();
   /** What its cards open, for their cover and title to fly to the page (`lib/motion/stage.svelte.ts`). */
   const kind = $derived(items === 'playlists' ? 'playlist' : 'album');
 
-  const { engine, library, settings, playlists } = getApp();
+  const { engine, library, settings, playlists, views } = getApp();
   const view = getViewState();
   const memoryKey = $derived(at === undefined ? undefined : `${view.source}/${view.layoutId}/${at}`);
 
@@ -195,10 +200,11 @@
   // As in the track list: a press inside a selection waits for the click,
   // so a right-click acts on all of it.
   function press(e: PointerEvent, i: number, album: Card) {
+    if (selecting) return;
     gesture(
       e,
       mapped(settings.current.gestures, 'row'),
-      { queue: () => queueAlbum(i, album), 'play-next': () => queueAlbum(i, album, true) },
+      { queue: () => queueAlbum(i, album), 'play-next': () => queueAlbum(i, album, true), select: () => startSelecting(i) },
       swipeRow(e.currentTarget as HTMLElement, 'queue'),
     );
     // A touch may be the start of a scroll: selecting on the way down would mark every card a scroll starts on (#208).
@@ -216,13 +222,36 @@
       anchor = i;
     } else if (!inSelection(picked, album.key)) select(i);
   }
-  /** Middle-click or long-press: queues the album, or the picked albums it is part of. */
+  /** A long press: on phones, Select mode with this card picked; wider, the card is picked as a click picks it. */
+  function startSelecting(i: number) {
+    select(i);
+    if (views.phone) selecting = true;
+  }
+  // Select mode's picks go when it ends; the select bar (`NowPlayingBar`) acts on their songs meanwhile.
+  let wasSelecting = untrack(() => selecting);
+  $effect(() => {
+    const now = selecting;
+    untrack(() => {
+      if (wasSelecting && !now) clear();
+      wasSelecting = now;
+    });
+  });
+  $effect(() => {
+    if (!selecting || !views.phone) return;
+    views.picking = keyPicking(picked, count, albumTracks, { toggleAll: () => (picked.size === count ? clear() : selectAll()), done: () => (selecting = false) });
+    return () => (views.picking = null);
+  });
+  /** Middle-click: queues the album, or the picked albums it is part of. */
   function queueAlbum(i: number, album: Card, next = false) {
     if (!inSelection(picked, album.key)) select(i);
     const keys = keysFor(album);
     queueTracks(engine, albumTracks(keys), next, keys.length > 1 ? `${keys.length} albums` : album.title || 'Unknown album');
   }
   function release(e: MouseEvent, i: number) {
+    if (selecting) {
+      view.browse.pickedAlbums = toggle(picked, itemAt, i);
+      return;
+    }
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
     const album = card(i);
     if (onopen && album) onopen(album.key, album.title, album.art, album.artist);
@@ -347,6 +376,11 @@
     if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       selectAll();
+      return;
+    }
+    if (e.key === 'Escape' && selecting) {
+      e.stopPropagation(); // Select mode goes first, then the view
+      selecting = false;
       return;
     }
     if (e.key === 'Escape' && picked.size > 1) {
@@ -531,6 +565,11 @@
                   <Artwork track={album.track} art={album.art} title={album.title} size={grid ? undefined : 40} />
                 </span>
               {/if}
+              {#if selecting}
+                <span class="check" class:on={picked.has(album.key)} aria-hidden="true">
+                  {#if picked.has(album.key)}<Icon name="check" size={14} />{/if}
+                </span>
+              {/if}
               {#if grid}
                 {#if titles}<span class="title" data-move={`title:${kind}:${album.key}`}>{album.title || 'Unknown album'}</span>{/if}
                 {#if artists}<span class="artist" data-move={`artist:${kind}:${album.key}`}>{album.artist || 'Unknown artist'}</span>{/if}
@@ -602,6 +641,33 @@
     background: none;
     text-align: left;
     cursor: pointer;
+    position: relative;
+  }
+
+  /* Select mode: a check in the cover's corner, or at a row's end. */
+  .check {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--text-muted);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--accent-contrast);
+  }
+
+  .check.on {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  .rows .check {
+    top: 50%;
+    right: var(--space-3);
+    margin-top: -11px;
   }
 
   /* Hover, focus and playing show on the cover, as an outline (not a blurred

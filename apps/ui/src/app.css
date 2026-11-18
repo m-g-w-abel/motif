@@ -74,10 +74,12 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* No selection, and no WebView long-press menu (callout), on the interface itself. */
 #app {
   height: 100%;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* Exceptions to the no-selection default: inputs, track info and paths, errors. */
@@ -86,6 +88,7 @@ input,
 textarea {
   -webkit-user-select: text;
   user-select: text;
+  -webkit-touch-callout: default;
 }
 
 button {

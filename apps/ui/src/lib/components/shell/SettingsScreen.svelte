@@ -153,6 +153,7 @@
     remove: 'Remove from queue',
     back: 'Go back',
     close: 'Close or show the queue',
+    select: 'Select',
     none: 'None',
   };
   const gestureRows = (Object.keys(CHOICES) as Surface[]).flatMap((surface) =>

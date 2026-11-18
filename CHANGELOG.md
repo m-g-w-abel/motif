@@ -5,6 +5,13 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Long press selects**: on phones, a long press on a song, album or playlist
+  starts select mode with it picked; taps then pick more. Albums and playlists
+  get the same select bar as songs, acting on all their songs in order. A long
+  press no longer queues (swipe left still does): Settings → Gestures offers
+  Select or None for it, and a long press set to queue becomes Select. On
+  phones a long press never opens a menu (or selects the interface's text);
+  right-click menus on the desktop stay.
 - **Now playing's drags follow at once**: on phones, dragging now playing up
   to the queue, or the full queue's top strip down, moves with your finger from
   the start instead of catching up after a moment. In the full queue, pulling

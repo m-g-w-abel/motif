@@ -28,16 +28,27 @@ class ContextMenuState {
 export const contextMenu = new ContextMenuState();
 
 /**
+ * Whether a `contextmenu` event from a press of `pointer` opens the menu: a
+ * right-click does, a long press on a phone never (there it is a gesture,
+ * Select, or nothing).
+ */
+export const menuOpens = (pointer: string, phone: boolean) => !phone || pointer === 'mouse';
+
+/**
  * Svelte action: right-click, the Menu key or Shift+F10 on the element opens
- * its menu. Touch long-press arrives as a `contextmenu` event too.
+ * its menu. Touch long-press arrives as a `contextmenu` event too, which opens
+ * it wider than a phone only (`menuOpens`).
  */
 export function menu(node: HTMLElement, items: () => MenuItem[]) {
+  let pointer = 'mouse';
+  const onPointerDown = (e: PointerEvent) => (pointer = e.pointerType);
   const open = (x: number, y: number) => {
     const list = items();
     if (list.length) contextMenu.show(list, x, y, node);
   };
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault();
+    if (!menuOpens(pointer, matchMedia('(max-width: 700px)').matches)) return;
     if (e.clientX || e.clientY) open(e.clientX, e.clientY);
     else open(node.getBoundingClientRect().left + 16, node.getBoundingClientRect().top + 16);
   };
@@ -47,6 +58,7 @@ export function menu(node: HTMLElement, items: () => MenuItem[]) {
     const box = node.getBoundingClientRect();
     open(box.left + 16, box.top + box.height / 2);
   };
+  node.addEventListener('pointerdown', onPointerDown);
   node.addEventListener('contextmenu', onContextMenu);
   node.addEventListener('keydown', onKeyDown);
   return {
@@ -54,6 +66,7 @@ export function menu(node: HTMLElement, items: () => MenuItem[]) {
       items = next;
     },
     destroy() {
+      node.removeEventListener('pointerdown', onPointerDown);
       node.removeEventListener('contextmenu', onContextMenu);
       node.removeEventListener('keydown', onKeyDown);
     },

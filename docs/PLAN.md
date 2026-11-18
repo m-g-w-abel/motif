@@ -90,7 +90,7 @@ with a QR code and get a scoped, revocable token. The engine also speaks the
 
 **Android + gestures.** The phone can play locally or remote-control another
 device. Default gestures: swipe to skip, swipe down to minimise, long-press to
-queue, vertical drag for volume or seek. Every gesture can be remapped.
+select (#213; it queued before), vertical drag for volume or seek. Every gesture can be remapped.
 Background playback needs a native `MediaSessionService` foreground service.
 That is the biggest technical risk, so it gets a spike in phase 0.
 
@@ -248,7 +248,7 @@ Tickets #117–#133 (milestone "Phase 5").
 - **Remote playback controls** (notification, lock screen) are opt-in, off
   by default. Volume keys control the remote engine in remote mode.
 - **Gestures** (touch only, also on touchscreen desktops): swipe the bar or
-  artwork to skip, long-press a row to queue, vertical drag on the artwork
+  artwork to skip, swipe a row to queue, long-press it to select (#213), vertical drag on the artwork
   for volume. All remappable (Settings → Gestures: also seek, queue next or none).
 - **Deferred:** signed release builds, F-Droid metadata and battery-killer
   testing on release builds.
