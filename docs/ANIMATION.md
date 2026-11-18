@@ -487,6 +487,11 @@ nothing leaves a reorder.
   none.
 - Short Web Animations are fine on WebKitGTK; the stall in PLAN.md came from
   animations that ran for the whole time a track played.
+- Colour changes (theme, light/dark, cover colours) are the one stepped
+  tween: `lib/colourFade.ts` mixes the root tokens in OKLab for `DURATION`
+  and stops. Each frame restyles the page: on CPU-drawn WebKitGTK (Xvfb,
+  1024×768, All Songs) frames average 19.5 ms during a fade against 16 ms
+  idle; registered `@property` colours with CSS transitions averaged 25 ms.
 - Check on WebKitGTK and the phone (CLAUDE.md, Testing the UI).
 
 ## Migration

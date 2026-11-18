@@ -7,6 +7,7 @@
   import { EngineClient, engines, PlaybackPosition } from './lib/engine.svelte';
   import { addEngine, LOCAL_ID, switchTo } from './lib/engines';
   import { accentFromPixels, artPalette } from './lib/artAccent';
+  import { ColourFade } from './lib/colourFade';
   import { lastArtPixels, rememberArtPixels } from './lib/artMemory';
   import { setBarIconsDark } from './lib/folders';
   import { LibraryClient } from './lib/library.svelte';
@@ -81,11 +82,12 @@
   );
   // A removed or broken user theme falls back to the first built-in.
   const theme = $derived(themes.byId(themeId) ?? themeById(themeId));
+  const colourFade = new ColourFade((token, value) => document.documentElement.style.setProperty(`--${token}`, value));
   $effect(() => {
     const { density, scale, font } = settings.current;
     const accent = art?.accent ?? settings.current.accent;
     const root = document.documentElement;
-    for (const [token, value] of Object.entries({ ...theme.tokens, ...art?.tokens })) root.style.setProperty(`--${token}`, value);
+    colourFade.to({ ...theme.tokens, ...art?.tokens, accent });
     root.style.colorScheme = art?.scheme ?? theme.scheme;
     setBarIconsDark(root.style.colorScheme === 'light');
     // The user's own font beats the theme's, which beats the app's.
@@ -103,7 +105,6 @@
     root.style.zoom = zoom === 1 ? '' : String(zoom);
     root.style.setProperty('--scale', String(zoom));
     root.dataset.density = density;
-    root.style.setProperty('--accent', accent);
     root.style.setProperty('--accent-contrast', contrastFor(accent));
   });
 

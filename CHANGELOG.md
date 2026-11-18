@@ -28,6 +28,9 @@ grouped by phase of the plan.
   views and Settings pages lose the back arrow; go back with the system back
   button or by swiping right.
 
+- **Colours fade**: switching theme, the system going light or dark, and a
+  new track's cover colours now fade over a quarter of a second instead of
+  changing at once (straight away with reduced motion).
 - **Phone fixes for now playing and the queue**: buttons respond straight
   after dragging now playing open or closed or dragging a handle, instead of
   ignoring taps for a moment. The album's other images no longer show through
