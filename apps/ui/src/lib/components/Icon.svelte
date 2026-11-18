@@ -32,6 +32,8 @@
     folder: 'M3 6h6l2 2h10v11H3z',
     copy: 'M9 9h11v11H9zM5 15V4h11',
     lyrics: 'M8 7h8M5 12h14M8 17h8',
+    'queue-add': 'M3 6h13M3 12h13M3 18h8M18 14v7M14.5 17.5h7',
+    'playlist-add': 'M9 18V6l10-2v5M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM18 13v8M14 17h8',
   } as const;
 
   const filled = new Set<IconName>(['play', 'pause', 'next', 'previous']);

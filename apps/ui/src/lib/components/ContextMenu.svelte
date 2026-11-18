@@ -8,7 +8,7 @@
     const top = contextMenu.y + height > innerHeight ? contextMenu.y - height : contextMenu.y;
     node.style.left = `${Math.max(0, Math.min(contextMenu.x, innerWidth - node.offsetWidth))}px`;
     node.style.top = `${Math.max(0, Math.min(top, innerHeight - height))}px`;
-    node.querySelector('button')?.focus();
+    node.querySelector<HTMLButtonElement>('button:enabled')?.focus();
   }
 
   function onKey(e: KeyboardEvent) {
@@ -21,7 +21,7 @@
   }
 
   function onMenuKey(e: KeyboardEvent) {
-    const buttons = [...(e.currentTarget as HTMLElement).querySelectorAll('button')];
+    const buttons = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button:enabled')];
     const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
     const step = { ArrowDown: 1, ArrowUp: -1 }[e.key as 'ArrowDown'];
     if (step) buttons[(at + step + buttons.length) % buttons.length]?.focus();
@@ -47,6 +47,7 @@
       {#each contextMenu.items as item, i (i)}
         <button
           role="menuitem"
+          disabled={item.disabled}
           onclick={() => {
             contextMenu.close(true);
             item.run();
@@ -81,8 +82,13 @@
     cursor: pointer;
   }
 
-  button:hover,
+  button:enabled:hover,
   button:focus-visible {
     background: var(--hover);
+  }
+
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>

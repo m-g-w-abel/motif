@@ -1,5 +1,6 @@
 import { MediaQuery } from 'svelte/reactivity';
 import type { IconName } from './components/Icon.svelte';
+import type { Picking } from './picking';
 
 /**
  * What the music area shows. All Songs (`songs`) is the library view that
@@ -52,6 +53,8 @@ export class Views {
   sorting = $state(false);
   /** The top view is selecting songs (as `options`); kept here so system back leaves select mode first. */
   selecting = $state(false);
+  /** What that selection acts on, for the phone's select bar in the player bar's place. */
+  picking = $state.raw<Picking | null>(null);
   // No window under unit tests.
   #narrow = typeof window === 'undefined' ? { current: false } : new MediaQuery('(max-width: 700px)');
   /** Phone width: views fill the music area and the Library home is one of them, not the left panel. */

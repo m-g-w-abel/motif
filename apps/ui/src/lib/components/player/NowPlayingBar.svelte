@@ -5,6 +5,7 @@
   import { BAR_ART_SIZE } from '../../library.svelte';
   import Icon from '../Icon.svelte';
   import PhoneMenu from '../shell/PhoneMenu.svelte';
+  import SelectBar from '../shell/SelectBar.svelte';
   import Artwork from './Artwork.svelte';
   import RepeatButton from './RepeatButton.svelte';
   import ShuffleButton from './ShuffleButton.svelte';
@@ -27,7 +28,7 @@
    */
   function onPointerDown(e: PointerEvent) {
     const target = e.target as HTMLElement;
-    if (target.closest('button:not(.identity), [role="slider"], .grown')) return;
+    if (target.closest('button:not(.identity), [role="slider"], .grown, .select-bar')) return;
     views.menu = null;
     const onTrack = !!target.closest('.identity');
     gesture(
@@ -56,6 +57,8 @@
   /** The phone's Library and Search buttons: back to that root view, out of Settings. */
   // Only phones have the menu; a window widened with it open leaves it closed.
   const menu = $derived(views.phone && !!views.menu);
+  /** Phones: select mode's bar takes this one's place, which goes inert under it. */
+  const picking = $derived(views.phone ? views.picking : null);
 
   function go(kind: 'home' | 'search') {
     views.show({ kind });
@@ -71,7 +74,9 @@
   <!-- It rises out of the bar's top edge, which clips it. -->
   {#if menu}<div class="grown"><div class="panel" transition:surface={{ enter: 'below' }}><PhoneMenu /></div></div>{/if}
 
-  <div class="row">
+  {#if picking}<SelectBar {picking} />{/if}
+
+  <div class="row" inert={!!picking}>
     <div class="transport" data-enter="fade"><Transport size={17} /></div>
 
     <button class="identity" title="Expand player">
@@ -98,10 +103,10 @@
   </div>
 
   <!-- The seek bar runs along the whole top edge, like a progress line; on phones, under the track. -->
-  <div class="strip"><SeekBar variant="strip" /></div>
+  <div class="strip" inert={!!picking}><SeekBar variant="strip" /></div>
 
   {#if views.phone}
-    <nav class="buttons" aria-label="Views" data-enter="below" data-span="fall">
+    <nav class="buttons" aria-label="Views" inert={!!picking} data-enter="below" data-span="fall">
       <button class="icon-button" class:active={views.root === 'library' && !settingsView.group} aria-label="Library" onclick={() => go('home')}>
         <Icon name="grid" size={24} />
       </button>
