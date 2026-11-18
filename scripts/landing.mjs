@@ -337,6 +337,9 @@ async function sheet(label) {
   await heldFrames(`${label}: now playing to the half queue, held`, tap("document.querySelector('.more .step')"));
   await heldFrames(`${label}: half to the full queue, held`, tap("document.querySelector('.queue-slot > .step')"));
   await heldFrames(`${label}: full back to half, held`, tap("document.querySelector('.mini .step')"));
+  // The full queue scrolled: its rows stay drawn as it shrinks to the half queue (a scroller cut to its new size at once lost them).
+  await scrolledBack(`${label}: full back to half with the queue scrolled, held`, tap("document.querySelector('.mini .step')"));
+  await scrolledBack(`${label}: full back to half with the queue scrolled, dragged, held`, () => dragBy(".mini .step", 200));
   // A drag, let go: its clock is held where the finger left it, and set from there like the others'.
   await heldFrames(`${label}: half back to now playing, held`, () => dragBy(".queue-slot > .step", 200));
   await heldFrames(`${label}: lyrics, held`, tap("document.querySelector('.lyrics-button')"));
@@ -356,6 +359,15 @@ async function sheet(label) {
   }, 4);
 }
 const tap = (selector) => () => run(`${selector}.click()`);
+
+/** From the half queue: up to the full queue, scrolled to its end, then `act` back to half, held (`heldFrames`). */
+async function scrolledBack(name, act) {
+  await run("document.querySelector('.queue-slot > .step').click()");
+  await until(settled);
+  if (!(await run("(() => { const l = document.querySelector('.sheet .queue .list'); l.scrollTop = l.scrollHeight; return l.scrollTop > 20; })()")))
+    return console.log(`skip ${name} (the queue is too short to scroll)`);
+  await heldFrames(name, act);
+}
 
 /** The phone's system bars (device pixel rows), which change on their own (the clock): left out of comparisons. */
 let bars;

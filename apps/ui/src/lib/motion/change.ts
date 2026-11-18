@@ -173,7 +173,7 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
   // to its new one instead, as a clip path in its own coordinates (which its move carries), and its own
   // clipping returns at the end. The one property besides transform and opacity that a change animates; only
   // here, for the 260 ms of a change.
-  const unclipped = new Map<HTMLElement, string>();
+  const unclipped = new Map<HTMLElement, { overflow: string; x: number; y: number }>();
   const rect = (w: number, h: number) => `polygon(0px 0px, ${w}px 0px, ${w}px ${h}px, 0px ${h}px)`;
   after.parts.forEach((a, i) => {
     const j = before.parts.findIndex((b) => b.el === a.el);
@@ -181,12 +181,12 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     const was = before.parts[j].box;
     if (Math.abs(was.width - a.box.width) < 1 && Math.abs(was.height - a.box.height) < 1) return;
     const el = after.els[i];
-    // A scrolled box keeps its own clipping: without it, it isn't a scroller and loses its position (what it
-    // holds would jump by it). shortcut: one that shrinks is cut to its new size at once; the clip path still grows one.
-    if (!el.scrollTop && !el.scrollLeft) {
-      unclipped.set(el, el.style.overflow);
-      el.style.overflow = 'visible';
-    }
+    // Unclipped, a scrolled box is no longer a scroller and loses its position: what it holds is held where it was
+    // scrolled to (`translate`, apart from the transforms a change animates) until its scrolling returns.
+    const [x, y] = [el.scrollLeft, el.scrollTop];
+    unclipped.set(el, { overflow: el.style.overflow, x, y });
+    el.style.overflow = 'visible';
+    if (x || y) for (const c of el.children) (c as HTMLElement).style.translate = `${-x}px ${-y}px`;
     tracks.push({ el, frames: [{ clipPath: rect(was.width, was.height) }, { clipPath: rect(a.box.width, a.box.height) }] });
   });
   for (const m of p.enter) animate(after.els[m.after], m.frames, m.span);
@@ -298,7 +298,12 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
     for (const f of flights) f.done(landed);
     for (const c of copies) c.remove();
     for (const [el, o] of origins) el.style.transformOrigin = o;
-    for (const [el, o] of unclipped) el.style.overflow = o;
+    for (const [el, { overflow, x, y }] of unclipped) {
+      el.style.overflow = overflow;
+      if (!x && !y) continue;
+      for (const c of el.children) (c as HTMLElement).style.translate = '';
+      Object.assign(el, { scrollLeft: x, scrollTop: y });
+    }
     running.delete(t);
     ended?.(landed);
   }) as Change;

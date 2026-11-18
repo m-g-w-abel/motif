@@ -26,7 +26,9 @@ grouped by phase of the plan.
   ignoring taps for a moment. The album's other images no longer show through
   the cover on the way to the half queue; going to the full queue no longer
   shows two play buttons, and the handle moves to the top instead of a new one
-  appearing. A partly scrolled queue no longer jumps when the view changes.
+  appearing. A partly scrolled queue no longer jumps when the view changes,
+  and going from the full queue back to the half queue no longer hides part
+  of it on the way.
   Dragging a song in the queue keeps it under your finger as it passes others
   and it settles without a stutter when you let go, and a song swiped away no longer leaves its red strip over the next one: the
   strip closes up as the songs below move up. Albums no longer go missing at
