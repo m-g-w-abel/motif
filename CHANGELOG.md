@@ -9,6 +9,13 @@ grouped by phase of the plan.
   to the queue, or the full queue's top strip down, moves with your finger from
   the start instead of catching up after a moment. In the full queue, pulling
   the list down while it is scrolled to the top steps back to the half queue.
+- **Select bar in the player bar's place**: on phones, selecting songs fades
+  the player bar into a select bar of the same size: Done and the count where
+  the song was, and Play, Add to queue, Add to playlist and ⋮ where the Library,
+  Search and menu buttons were. ⋮ (Queue next, Select all, Delete) and Add to
+  playlist's list of playlists rise out of the bar like the main menu. Each
+  action ends select mode once it has run (Select all doesn't); Done or back
+  also fades it back.
 - **Back leaves select mode**: the system back button or gesture while
   selecting songs now clears the picks and stays on the view; a second back goes
   back.

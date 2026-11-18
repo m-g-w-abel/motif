@@ -4,12 +4,38 @@
   import { engines } from '../../engine.svelte';
   import { switchTo } from '../../engines';
   import { HELP_URL, openUrl } from '../../openUrl';
+  import type { MenuItem } from '../../contextMenu.svelte';
+  import { pickActions, runPick, type PickAction, type Picking } from '../../picking';
   import Icon from '../Icon.svelte';
 
   // The phone bar's menu, grown up out of the bar (`NowPlayingBar`): the
   // connection, which opens the engine switcher in its place, then Settings, Changelog and Help.
-  const { engine, settingsView, views } = getApp();
+  // In select mode, the select bar's ⋮ opens it with the actions that don't fit on the bar,
+  // and its Add to playlist with the playlists to add to (`Playlists.choices`).
+  const { engine, playlists, settingsView, views } = getApp();
   const statusLabel = { connecting: 'connecting…', open: 'connected', closed: 'disconnected' };
+
+  // One of the select bar's menus, which keeps showing what it showed while it closes.
+  let kept: { mode: 'select' | 'playlist'; picking: Picking } | null = null;
+  const shown = $derived.by(() => {
+    const mode = views.menu;
+    if ((mode === 'select' || mode === 'playlist') && views.picking) kept = { mode, picking: views.picking };
+    else if (mode !== null) kept = null;
+    return kept;
+  });
+  const more = $derived(shown?.mode === 'select' ? pickActions(shown.picking, { playback: false, queue: engine.can('queue'), playlist: false }).more : null);
+  const choices = $derived(shown?.mode === 'playlist' ? playlists.choices(shown.picking.tracks(), shown.picking.done) : null);
+
+  function pick(id: Exclude<PickAction['id'], 'playlist'>) {
+    const on = shown?.picking;
+    views.menu = null;
+    if (on) runPick(id, on, engine);
+  }
+
+  function choose(choice: MenuItem) {
+    views.menu = null;
+    choice.run();
+  }
 
   function settings() {
     views.menu = null;
@@ -36,41 +62,59 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && (views.menu = null)} />
 
-<div class="menu" role="dialog" aria-label="Menu">
-  <h2>motif</h2>
-  <button
-    class="connection {engine.status}"
-    aria-expanded={views.menu === 'engines'}
-    onclick={() => (views.menu = views.menu === 'engines' ? 'main' : 'engines')}
-  >
-    <span class="dot"></span>{engine.unpaired ? 'not paired' : statusLabel[engine.status]}
-    <span class="chip">{engines.current.name}</span>
-  </button>
-
-  {#if views.menu === 'engines'}
-    {#each engines.list.engines as saved (saved.id)}
-      {@const current = saved.id === engines.list.current}
-      <button
-        class="item"
-        aria-current={current}
-        onclick={() => (current ? (views.menu = 'main') : engines.update((list) => switchTo(list, saved.id)))}
-      >
-        <span class="connection {current ? engine.status : ''}"><span class="dot"></span></span>
-        <span class="name">{saved.name}</span>
-        {#if current}<small>in control</small>{/if}
-      </button>
+<div class="menu" class:choices role="dialog" aria-label={more ? 'Selected songs' : choices ? 'Add to playlist' : 'Menu'}>
+  {#if more}
+    {#each more as action (action.id)}
+      <button class="item" class:danger={action.id === 'delete'} onclick={() => pick(action.id)}>{action.label}</button>
     {/each}
-    <button class="item" onclick={pair}><Icon name="plus" size={20} />Pair a device</button>
+  {:else if choices}
+    <!-- By position: playlists may share a name. -->
+    {#each choices as choice, i (i)}
+      <button class="item" onclick={() => choose(choice)}>{choice.label}</button>
+    {/each}
   {:else}
-    <button class="item" onclick={settings}><Icon name="settings" size={20} />Settings</button>
-    <button class="item" onclick={changelog}><Icon name="list" size={20} />Changelog</button>
-    <button class="item" onclick={help}><Icon name="info" size={20} />Help</button>
+    <h2>motif</h2>
+    <button
+      class="connection {engine.status}"
+      aria-expanded={views.menu === 'engines'}
+      onclick={() => (views.menu = views.menu === 'engines' ? 'main' : 'engines')}
+    >
+      <span class="dot"></span>{engine.unpaired ? 'not paired' : statusLabel[engine.status]}
+      <span class="chip">{engines.current.name}</span>
+    </button>
+
+    {#if views.menu === 'engines'}
+      {#each engines.list.engines as saved (saved.id)}
+        {@const current = saved.id === engines.list.current}
+        <button
+          class="item"
+          aria-current={current}
+          onclick={() => (current ? (views.menu = 'main') : engines.update((list) => switchTo(list, saved.id)))}
+        >
+          <span class="connection {current ? engine.status : ''}"><span class="dot"></span></span>
+          <span class="name">{saved.name}</span>
+          {#if current}<small>in control</small>{/if}
+        </button>
+      {/each}
+      <button class="item" onclick={pair}><Icon name="plus" size={20} />Pair a device</button>
+    {:else}
+      <button class="item" onclick={settings}><Icon name="settings" size={20} />Settings</button>
+      <button class="item" onclick={changelog}><Icon name="list" size={20} />Changelog</button>
+      <button class="item" onclick={help}><Icon name="info" size={20} />Help</button>
+    {/if}
   {/if}
 </div>
 
 <style>
   .menu {
     padding: var(--space-4) var(--space-3) var(--space-2);
+  }
+
+  /* Many playlists scroll, under a finger too (the bar it grows from takes touches for its drags). */
+  .menu.choices {
+    max-height: 60vh;
+    overflow-y: auto;
+    touch-action: pan-y;
   }
 
   h2 {
@@ -138,6 +182,10 @@
 
   .item:hover {
     background: var(--hover);
+  }
+
+  .item.danger {
+    color: var(--danger);
   }
 
   .item .connection {

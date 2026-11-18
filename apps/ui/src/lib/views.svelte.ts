@@ -1,5 +1,6 @@
 import { MediaQuery } from 'svelte/reactivity';
 import type { IconName } from './components/Icon.svelte';
+import type { Picking } from './picking';
 
 /**
  * What the music area shows. All Songs (`songs`) is the library view that
@@ -52,6 +53,8 @@ export class Views {
   sorting = $state(false);
   /** The top view is selecting songs (as `options`); kept here so system back leaves select mode first. */
   selecting = $state(false);
+  /** What that selection acts on, for the phone's select bar in the player bar's place. */
+  picking = $state.raw<Picking | null>(null);
   // No window under unit tests.
   #narrow = typeof window === 'undefined' ? { current: false } : new MediaQuery('(max-width: 700px)');
   /** Phone width: views fill the music area and the Library home is one of them, not the left panel. */
@@ -61,8 +64,12 @@ export class Views {
   top: View = $derived(this.stack.at(-1)!);
   /** The phone bar's button the views are under (highlighted there). */
   root: 'library' | 'search' = $derived(this.stack[1]?.kind === 'search' ? 'search' : 'library');
-  /** The phone bar's menu sheet: its main list, or the engine switcher in its place. */
-  menu = $state<'main' | 'engines' | null>(null);
+  /** The phone bar's menu sheet: its main list, the engine switcher in its place, the select bar's ⋮, or its Add to playlist. */
+  menu = $state<'main' | 'engines' | 'select' | 'playlist' | null>(null);
+  /** The menu is one of the select bar's, which go with it. */
+  get pickMenu() {
+    return this.menu === 'select' || this.menu === 'playlist';
+  }
   /** The changelog dialog is open (from the phone menu or the left panel). */
   changelog = $state(false);
   /** Where back goes; the Library home is under every view, even when it isn't on the stack. */

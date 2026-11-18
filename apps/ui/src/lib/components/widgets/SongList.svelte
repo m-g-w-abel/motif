@@ -63,7 +63,7 @@
     memory?: string;
   } = $props();
 
-  const { engine, settings, playlists } = getApp();
+  const { engine, settings, playlists, views } = getApp();
   const view = getViewState();
   $effect(() => data.sync?.());
 
@@ -133,6 +133,13 @@
     view.browse.picked = span(itemAt, 0, count - 1);
   }
   const chosen = () => ordered(picked);
+  const toggleAll = () => (picked.size === count ? (view.browse.picked = new Map()) : selectAll());
+  // Phones: select mode's bar takes the player bar's place (`NowPlayingBar`) and acts on these.
+  $effect(() => {
+    if (!selecting || !views.phone) return;
+    views.picking = { count: picked.size, all: !!count && picked.size === count, tracks: chosen, toggleAll, remove: onremove && remove, done: () => (selecting = false) };
+    return () => (views.picking = null);
+  });
 
   function press(e: PointerEvent, i: number) {
     if (selecting) return;
@@ -303,10 +310,10 @@
     {/if}
   </div>
   <Scrollbar target={scroller} />
-  {#if selecting}
+  {#if selecting && !views.phone}
     <div class="select-bar" transition:surface={{ enter: 'below' }} role="toolbar" aria-label="Selected songs">
       <span class="picked-count" aria-live="polite">{picked.size} selected</span>
-      <button onclick={() => (picked.size === count ? (view.browse.picked = new Map()) : selectAll())}>
+      <button onclick={toggleAll}>
         {picked.size === count && count ? 'None' : 'All'}
       </button>
       <span class="grow"></span>
@@ -593,36 +600,9 @@
     flex: 1;
   }
 
-  /* Desktop: one row, Done at its end. */
-  @media (min-width: 701px) {
-    .select-bar .grow,
-    .select-bar .done {
-      order: 1;
-    }
-  }
-
-  /* Phones: the bar covers the bottom bar (player and view buttons) while songs are picked, its actions in a row of their own. */
-  @media (max-width: 700px) {
-    .select-bar {
-      position: fixed;
-      right: 0;
-      bottom: 0;
-      left: 0;
-      z-index: 31;
-      min-height: calc(148px + env(safe-area-inset-bottom));
-      align-content: flex-start;
-      padding: var(--space-3) var(--space-3) calc(var(--space-3) + env(safe-area-inset-bottom));
-    }
-
-    .picked-actions {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-      gap: var(--space-2);
-      width: 100%;
-    }
-
-    .picked-actions button {
-      height: 44px;
-    }
+  /* Done at the end of the row. */
+  .select-bar .grow,
+  .select-bar .done {
+    order: 1;
   }
 </style>

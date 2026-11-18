@@ -5,6 +5,7 @@
   import { BAR_ART_SIZE } from '../../library.svelte';
   import Icon from '../Icon.svelte';
   import PhoneMenu from '../shell/PhoneMenu.svelte';
+  import SelectBar from '../shell/SelectBar.svelte';
   import Artwork from './Artwork.svelte';
   import RepeatButton from './RepeatButton.svelte';
   import ShuffleButton from './ShuffleButton.svelte';
@@ -15,6 +16,7 @@
   import { untrack } from 'svelte';
   import { surface } from '../../motion/surface';
   import { risen } from '../../motion/swap';
+  import { Transition } from '../../motion/transition';
 
   const { engine, position, sheet, settings, settingsView, views } = getApp();
   let sliding = $state<HTMLElement>();
@@ -27,7 +29,7 @@
    */
   function onPointerDown(e: PointerEvent) {
     const target = e.target as HTMLElement;
-    if (target.closest('button:not(.identity), [role="slider"], .grown')) return;
+    if (target.closest('button:not(.identity), [role="slider"], .grown, .select-bar')) return;
     views.menu = null;
     const onTrack = !!target.closest('.identity');
     gesture(
@@ -55,7 +57,30 @@
 
   /** The phone's Library and Search buttons: back to that root view, out of Settings. */
   // Only phones have the menu; a window widened with it open leaves it closed.
-  const menu = $derived(views.phone && !!views.menu);
+  /** Phones: select mode's bar takes this one's place, which goes inert under it. */
+  const picking = $derived(views.phone ? views.picking : null);
+  // The select bar's ⋮ menu goes with it.
+  const menu = $derived(views.phone && !!views.menu && (!views.pickMenu || !!picking));
+  // What the bar holds fades out as the select bar fades in over it, and back; a change midway turns the fade round.
+  let row = $state<HTMLElement>();
+  let strip = $state<HTMLElement>();
+  let buttons = $state<HTMLElement>();
+  let faded = untrack(() => !!picking);
+  let fading: Transition | null = null;
+  $effect(() => {
+    const out = !!picking;
+    untrack(() => {
+      if (out === faded) return;
+      faded = out;
+      if (!out && views.pickMenu) views.menu = null;
+      if (fading?.grab() == null) {
+        const parts = [row, strip, buttons].filter((el) => !!el);
+        fading = new Transition(parts.map((el) => ({ el, frames: [{ opacity: 1 }, { opacity: 0 }] })));
+        fading.seek(out ? 0 : 1);
+      }
+      void fading.play(out ? 1 : 0);
+    });
+  });
 
   function go(kind: 'home' | 'search') {
     views.show({ kind });
@@ -66,12 +91,14 @@
 {#if menu}<button class="scrim" aria-label="Close menu" tabindex="-1" onclick={() => (views.menu = null)} transition:surface={{ enter: 'fade' }}></button>{/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<section bind:this={sheet.origin} class="bar" class:open={menu} aria-label="Player" onpointerdown={onPointerDown}>
+<section bind:this={sheet.origin} class="bar" class:open={menu} class:picking aria-label="Player" onpointerdown={onPointerDown}>
   <!-- Over the music area, not pushing it up. -->
   <!-- It rises out of the bar's top edge, which clips it. -->
   {#if menu}<div class="grown"><div class="panel" transition:surface={{ enter: 'below' }}><PhoneMenu /></div></div>{/if}
 
-  <div class="row">
+  {#if picking}<SelectBar {picking} />{/if}
+
+  <div class="row" bind:this={row} inert={!!picking}>
     <div class="transport" data-enter="fade"><Transport size={17} /></div>
 
     <button class="identity" title="Expand player">
@@ -98,10 +125,10 @@
   </div>
 
   <!-- The seek bar runs along the whole top edge, like a progress line; on phones, under the track. -->
-  <div class="strip"><SeekBar variant="strip" /></div>
+  <div class="strip" bind:this={strip} inert={!!picking}><SeekBar variant="strip" /></div>
 
   {#if views.phone}
-    <nav class="buttons" aria-label="Views" data-enter="below" data-span="fall">
+    <nav class="buttons" bind:this={buttons} aria-label="Views" inert={!!picking} data-enter="below" data-span="fall">
       <button class="icon-button" class:active={views.root === 'library' && !settingsView.group} aria-label="Library" onclick={() => go('home')}>
         <Icon name="grid" size={24} />
       </button>
@@ -214,6 +241,12 @@
     border-bottom: 0;
     border-radius: 12px 12px 0 0;
     background: var(--surface);
+  }
+
+  .picking > .row,
+  .picking > .strip,
+  .picking > .buttons {
+    opacity: 0;
   }
 
   .buttons {
