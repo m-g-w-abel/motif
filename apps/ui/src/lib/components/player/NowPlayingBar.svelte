@@ -60,7 +60,7 @@
   /** Phones: select mode's bar takes this one's place, which goes inert under it. */
   const picking = $derived(views.phone ? views.picking : null);
   // The select bar's ⋮ menu goes with it.
-  const menu = $derived(views.phone && !!views.menu && (views.menu !== 'select' || !!picking));
+  const menu = $derived(views.phone && !!views.menu && (!views.pickMenu || !!picking));
   // What the bar holds fades out as the select bar fades in over it, and back; a change midway turns the fade round.
   let row = $state<HTMLElement>();
   let strip = $state<HTMLElement>();
@@ -72,7 +72,7 @@
     untrack(() => {
       if (out === faded) return;
       faded = out;
-      if (!out && views.menu === 'select') views.menu = null;
+      if (!out && views.pickMenu) views.menu = null;
       if (fading?.grab() == null) {
         const parts = [row, strip, buttons].filter((el) => !!el);
         fading = new Transition(parts.map((el) => ({ el, frames: [{ opacity: 1 }, { opacity: 0 }] })));

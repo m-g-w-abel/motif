@@ -4,29 +4,37 @@
   import { engines } from '../../engine.svelte';
   import { switchTo } from '../../engines';
   import { HELP_URL, openUrl } from '../../openUrl';
+  import type { MenuItem } from '../../contextMenu.svelte';
   import { pickActions, runPick, type PickAction, type Picking } from '../../picking';
-  import { untrack } from 'svelte';
   import Icon from '../Icon.svelte';
 
   // The phone bar's menu, grown up out of the bar (`NowPlayingBar`): the
   // connection, which opens the engine switcher in its place, then Settings, Changelog and Help.
-  // In select mode, the select bar's ⋮ opens it with the actions that don't fit on the bar.
+  // In select mode, the select bar's ⋮ opens it with the actions that don't fit on the bar,
+  // and its Add to playlist with the playlists to add to (`Playlists.choices`).
   const { engine, playlists, settingsView, views } = getApp();
   const statusLabel = { connecting: 'connecting…', open: 'connected', closed: 'disconnected' };
 
-  // Opened from the select bar's ⋮ (each opening is a new menu); its last picks stay shown while it closes.
-  const selectMenu = untrack(() => views.menu === 'select');
-  let last: Picking | null = null;
-  const picking = $derived(selectMenu ? (views.picking ?? last) : null);
-  $effect(() => {
-    last = picking;
+  // One of the select bar's menus, which keeps showing what it showed while it closes.
+  let kept: { mode: 'select' | 'playlist'; picking: Picking } | null = null;
+  const shown = $derived.by(() => {
+    const mode = views.menu;
+    if ((mode === 'select' || mode === 'playlist') && views.picking) kept = { mode, picking: views.picking };
+    else if (mode !== null) kept = null;
+    return kept;
   });
-  const more = $derived(picking && pickActions(picking, { playback: false, queue: engine.can('queue'), playlist: false }).more);
+  const more = $derived(shown?.mode === 'select' ? pickActions(shown.picking, { playback: false, queue: engine.can('queue'), playlist: false }).more : null);
+  const choices = $derived(shown?.mode === 'playlist' ? playlists.choices(shown.picking.tracks(), shown.picking.done) : null);
 
-  function pick(id: PickAction['id'], e: MouseEvent) {
-    const on = picking;
+  function pick(id: Exclude<PickAction['id'], 'playlist'>) {
+    const on = shown?.picking;
     views.menu = null;
-    if (on) runPick(id, on, engine, playlists, e.currentTarget as HTMLElement);
+    if (on) runPick(id, on, engine);
+  }
+
+  function choose(choice: MenuItem) {
+    views.menu = null;
+    choice.run();
   }
 
   function settings() {
@@ -54,10 +62,15 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && (views.menu = null)} />
 
-<div class="menu" role="dialog" aria-label={more ? 'Selected songs' : 'Menu'}>
+<div class="menu" class:choices role="dialog" aria-label={more ? 'Selected songs' : choices ? 'Add to playlist' : 'Menu'}>
   {#if more}
     {#each more as action (action.id)}
-      <button class="item" class:danger={action.id === 'delete'} onclick={(e) => pick(action.id, e)}>{action.label}</button>
+      <button class="item" class:danger={action.id === 'delete'} onclick={() => pick(action.id)}>{action.label}</button>
+    {/each}
+  {:else if choices}
+    <!-- By position: playlists may share a name. -->
+    {#each choices as choice, i (i)}
+      <button class="item" onclick={() => choose(choice)}>{choice.label}</button>
     {/each}
   {:else}
     <h2>motif</h2>
@@ -95,6 +108,13 @@
 <style>
   .menu {
     padding: var(--space-4) var(--space-3) var(--space-2);
+  }
+
+  /* Many playlists scroll, under a finger too (the bar it grows from takes touches for its drags). */
+  .menu.choices {
+    max-height: 60vh;
+    overflow-y: auto;
+    touch-action: pan-y;
   }
 
   h2 {

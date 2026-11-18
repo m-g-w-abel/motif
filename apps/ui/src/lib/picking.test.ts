@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineClient } from './engine.svelte';
 import { pickActions, runPick, type Picking } from './picking';
-import type { Playlists } from './playlists.svelte';
 
-const picking = (over: Partial<Picking> = {}): Picking => ({ count: 2, all: false, tracks: () => [], toggleAll: () => {}, ...over });
+const picking = (over: Partial<Picking> = {}): Picking => ({ count: 2, all: false, tracks: () => [], toggleAll: () => {}, done: () => {}, ...over });
 const every = { playback: true, queue: true, playlist: true };
 
 describe('pickActions', () => {
@@ -32,25 +31,24 @@ describe('pickActions', () => {
 
 describe('runPick', () => {
   const engine = { send: vi.fn(async () => {}), run: vi.fn(), can: () => true } as unknown as EngineClient;
-  const playlists = { canAdd: () => true, pick: vi.fn() } as unknown as Playlists;
-  const anchor = { getBoundingClientRect: () => ({ left: 0, top: 0 }) } as HTMLElement;
 
   it('does nothing with nothing picked, except Select all', () => {
-    const p = picking({ count: 0, toggleAll: vi.fn(), remove: vi.fn() });
-    for (const id of ['play', 'queue', 'playlist', 'next', 'delete'] as const) runPick(id, p, engine, playlists, anchor);
+    const p = picking({ count: 0, toggleAll: vi.fn(), remove: vi.fn(), done: vi.fn() });
+    for (const id of ['play', 'queue', 'next', 'delete'] as const) runPick(id, p, engine);
     expect(engine.send).not.toHaveBeenCalled();
     expect(engine.run).not.toHaveBeenCalled();
-    expect(playlists.pick).not.toHaveBeenCalled();
     expect(p.remove).not.toHaveBeenCalled();
-    runPick('all', p, engine, playlists, anchor);
+    expect(p.done).not.toHaveBeenCalled();
+    runPick('all', p, engine);
     expect(p.toggleAll).toHaveBeenCalledOnce();
   });
 
-  it('runs an action on the picks', () => {
-    const p = picking({ remove: vi.fn() });
-    runPick('delete', p, engine, playlists, anchor);
-    runPick('playlist', p, engine, playlists, anchor);
+  it('leaves select mode after an action, but not after Select all', () => {
+    const p = picking({ remove: vi.fn(), done: vi.fn() });
+    runPick('all', p, engine);
+    expect(p.done).not.toHaveBeenCalled();
+    for (const id of ['play', 'queue', 'next', 'delete'] as const) runPick(id, p, engine);
     expect(p.remove).toHaveBeenCalledOnce();
-    expect(playlists.pick).toHaveBeenCalledOnce();
+    expect(p.done).toHaveBeenCalledTimes(4);
   });
 });

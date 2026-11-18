@@ -137,7 +137,7 @@
   // Phones: select mode's bar takes the player bar's place (`NowPlayingBar`) and acts on these.
   $effect(() => {
     if (!selecting || !views.phone) return;
-    views.picking = { count: picked.size, all: !!count && picked.size === count, tracks: chosen, toggleAll, remove: onremove && remove };
+    views.picking = { count: picked.size, all: !!count && picked.size === count, tracks: chosen, toggleAll, remove: onremove && remove, done: () => (selecting = false) };
     return () => (views.picking = null);
   });
 

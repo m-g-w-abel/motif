@@ -12,8 +12,10 @@ grouped by phase of the plan.
 - **Select bar in the player bar's place**: on phones, selecting songs fades
   the player bar into a select bar of the same size: Done and the count where
   the song was, and Play, Add to queue, Add to playlist and ⋮ where the Library,
-  Search and menu buttons were. ⋮ opens Queue next, Select all and Delete,
-  rising out of the bar like the main menu. Done or back fades it back.
+  Search and menu buttons were. ⋮ (Queue next, Select all, Delete) and Add to
+  playlist's list of playlists rise out of the bar like the main menu. Each
+  action ends select mode once it has run (Select all doesn't); Done or back
+  also fades it back.
 - **Back leaves select mode**: the system back button or gesture while
   selecting songs now clears the picks and stays on the view; a second back goes
   back.

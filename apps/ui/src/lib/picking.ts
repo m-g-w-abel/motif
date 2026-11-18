@@ -1,7 +1,6 @@
 import type { IconName } from './components/Icon.svelte';
 import type { EngineClient } from './engine.svelte';
 import { playTracks, queueTracks } from './menus';
-import type { Playlists } from './playlists.svelte';
 import type { TrackRef } from './protocol/TrackRef';
 
 /**
@@ -18,6 +17,8 @@ export interface Picking {
   toggleAll: () => void;
   /** Delete: takes the picks out of the list (a playlist's entries). */
   remove?: () => void;
+  /** Leaves select mode, as every action but Select all does once it has run. */
+  done: () => void;
 }
 
 export type PickAction = { id: 'play' | 'queue' | 'playlist' | 'next' | 'all' | 'delete'; label: string };
@@ -29,7 +30,7 @@ export type PickAction = { id: 'play' | 'queue' | 'playlist' | 'next' | 'all' | 
  */
 export function pickActions(p: Picking, can: { playback: boolean; queue: boolean; playlist: boolean }) {
   const bar: (PickAction & { icon: IconName })[] = [];
-  const more: PickAction[] = [];
+  const more: (PickAction & { id: Exclude<PickAction['id'], 'playlist'> })[] = [];
   if (can.playback) bar.push({ id: 'play', label: 'Play', icon: 'play' });
   if (can.queue) bar.push({ id: 'queue', label: 'Add to queue', icon: 'queue-add' });
   if (can.playlist) bar.push({ id: 'playlist', label: 'Add to playlist…', icon: 'playlist-add' });
@@ -39,16 +40,18 @@ export function pickActions(p: Picking, can: { playback: boolean; queue: boolean
   return { bar, more };
 }
 
-/** Runs one of `pickActions` on the picks; with none picked, only Select all does anything. */
-export function runPick(id: PickAction['id'], p: Picking, engine: EngineClient, playlists: Playlists, anchor: HTMLElement) {
+/**
+ * Runs one of `pickActions` on the picks, then leaves select mode; with none
+ * picked, only Select all does anything. Add to playlist first asks which
+ * (`Playlists.choices`), so it isn't one of these.
+ */
+export function runPick(id: Exclude<PickAction['id'], 'playlist'>, p: Picking, engine: EngineClient) {
   if (id === 'all') return p.toggleAll();
-  const tracks = p.tracks();
   if (!p.count) return;
+  const tracks = p.tracks();
   if (id === 'play') playTracks(engine, tracks);
   else if (id === 'queue') void queueTracks(engine, tracks);
   else if (id === 'next') void queueTracks(engine, tracks, true);
-  else if (id === 'playlist') {
-    const box = anchor.getBoundingClientRect();
-    if (playlists.canAdd(tracks)) playlists.pick(tracks, box.left, box.top - 8, anchor);
-  } else p.remove?.();
+  else p.remove?.();
+  p.done();
 }

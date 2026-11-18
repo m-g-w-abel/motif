@@ -11,6 +11,12 @@
 
   const actions = $derived(pickActions(picking, { playback: engine.can('playback'), queue: engine.can('queue'), playlist: engine.can('library') }));
   const open = $derived(views.menu === 'select');
+  const choosing = $derived(views.menu === 'playlist');
+  // Add to playlist asks which in the bar's menu, as ⋮ does; with nothing it can add, a tap does nothing.
+  function addToPlaylist() {
+    if (choosing) views.menu = null;
+    else if (picking.count && playlists.canAdd(picking.tracks())) views.menu = 'playlist';
+  }
 </script>
 
 <div class="select-bar" role="toolbar" aria-label="Selected songs" transition:surface={{ enter: 'fade' }}>
@@ -24,8 +30,9 @@
         class="icon-button"
         aria-label={action.label}
         title={action.label}
-        aria-haspopup={action.id === 'playlist' ? 'menu' : undefined}
-        onclick={(e) => runPick(action.id, picking, engine, playlists, e.currentTarget)}
+        class:active={action.id === 'playlist' && choosing}
+        aria-expanded={action.id === 'playlist' ? choosing : undefined}
+        onclick={() => (action.id === 'playlist' ? addToPlaylist() : runPick(action.id, picking, engine))}
       >
         <Icon name={action.icon} size={24} />
       </button>
