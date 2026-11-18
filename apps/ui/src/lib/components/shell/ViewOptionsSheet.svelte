@@ -7,7 +7,8 @@
   import { surface } from '../../motion/surface';
 
   // The ⋮ sheet of a collection view: its display options and library
-  // actions (sorting has its own button). A sheet from the bottom on phones, a panel below ⋮ on desktop.
+  // actions (sorting has its own button). A panel below ⋮ on desktop; on
+  // phones ⋮ grows into a modal in the middle of the screen.
   let {
     title,
     view,
@@ -16,6 +17,7 @@
     key,
     shownColumns,
     artistsLabel = 'Show artists',
+    from,
     onclose,
   }: {
     title: string;
@@ -29,6 +31,8 @@
     /** The columns the grid shows now, which "Auto" may have picked. */
     shownColumns: number;
     artistsLabel?: string;
+    /** The ⋮ button, which grows into the modal on phones. */
+    from?: HTMLElement;
     onclose: () => void;
   } = $props();
 
@@ -51,7 +55,7 @@
 
 <button class="scrim" tabindex="-1" aria-label="Close" onclick={onclose} transition:surface={{ enter: 'fade' }}></button>
 <div
-  transition:surface={{ enter: 'below' }}
+  transition:surface={{ enter: 'below', from }}
   class="sheet"
   role="dialog"
   aria-label="{title} options"
@@ -235,7 +239,7 @@
     background: var(--hover);
   }
 
-  /* Phones: a sheet along the bottom, over the bar. */
+  /* Phones: a modal in the middle of the screen. */
   @media (max-width: 700px) {
     .scrim {
       background: rgb(0 0 0 / 0.4);
@@ -243,13 +247,12 @@
 
     .sheet {
       position: fixed;
-      top: auto;
-      right: 0;
-      bottom: 0;
-      left: 0;
+      inset: 0 16px;
       width: auto;
-      padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
-      border-radius: var(--radius-md) var(--radius-md) 0 0;
+      height: fit-content;
+      max-height: calc(100% - 32px);
+      margin: auto 0;
+      overflow-y: auto;
     }
 
     .row,

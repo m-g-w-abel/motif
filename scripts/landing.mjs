@@ -777,9 +777,58 @@ async function startsInPlace(name, act) {
   console.log(`${failures.some((f) => f.startsWith(`${name}:`)) ? "FAIL" : "ok  "} ${name}`);
 }
 
+/** Where a box is drawn: its box moved by its transform and cut by its `clip-path: inset(…)`, and its corner radius. */
+const drawnBox = (selector) => `(() => {
+  const el = document.querySelector(${JSON.stringify(selector)});
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  const c = getComputedStyle(el).clipPath;
+  const m = c.match(/^inset\\(([^)]*?)(?: round ([\\d.]+)px)?\\)$/);
+  const v = m ? m[1].trim().split(/\\s+/).map(parseFloat) : [0];
+  const [t, ri = t, b = t, l = ri] = v;
+  const radius = m?.[2] ? +m[2] : parseFloat(getComputedStyle(el).borderTopLeftRadius);
+  return { left: r.left + l, top: r.top + t, width: r.width - l - ri, height: r.height - t - b, radius, opacity: +getComputedStyle(el).opacity };
+})()`;
+
+/**
+ * A phone's ⋮ and Sort grow into a modal and shrink back (#210): held at its
+ * first and last frames, opening must start exactly on the button (its box
+ * and corners, not yet drawn) and land on the modal's own box, and closing
+ * (by `close`) must end exactly on the button.
+ */
+async function menuMorph(name, button, box, close) {
+  const near = (a, b) => a && b && ["left", "top", "width", "height", "radius"].every((k) => Math.abs(a[k] - b[k]) <= 0.25);
+  const show = (d) => (d ? `${["left", "top", "width", "height"].map((k) => d[k].toFixed(1)).join(",")} r${d.radius}` : "nothing");
+  /** The box's own transition (after Svelte's first, empty one), paused at `end` (its last frame) or its first. */
+  const held = (end) =>
+    until(`(() => { const a = document.querySelector(${JSON.stringify(box)})?.getAnimations().find((a) => a.effect.getTiming().duration > 0); if (!a) return false; a.pause(); a.currentTime = ${end ? "a.effect.getTiming().duration" : "0"}; return true; })()`);
+  const play = () => run(`document.querySelector(${JSON.stringify(box)})?.getAnimations().forEach((a) => a.play()); 0`);
+  const target = await run(`(() => { const el = document.querySelector(${JSON.stringify(button)}); const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, radius: parseFloat(getComputedStyle(el).borderTopLeftRadius) }; })()`);
+  await run(`document.querySelector(${JSON.stringify(button)}).click()`);
+  await held(false);
+  const start = await run(drawnBox(box));
+  if (!near(start, target) || start.opacity !== 0) failures.push(`${name}: opening didn't start on the button: ${show(start)} (opacity ${start?.opacity}), button ${show(target)}`);
+  await held(true);
+  const end = await run(drawnBox(box));
+  await play();
+  await until(settled);
+  await sleep(300);
+  const rest = await run(drawnBox(box));
+  if (!near(end, rest)) failures.push(`${name}: opening didn't land on the modal: ${show(end)}, modal ${show(rest)}`);
+  const width = await run("innerWidth");
+  if (!rest || Math.abs(rest.width - (width - 32)) > 0.5) failures.push(`${name}: the modal isn't the screen's width less 32px: ${show(rest)}`);
+  await close();
+  await held(true);
+  const back = await run(drawnBox(box));
+  if (!near(back, target)) failures.push(`${name}: closing didn't end on the button: ${show(back)}, button ${show(target)}`);
+  await play();
+  await until(`!document.querySelector(${JSON.stringify(box)}) && ${settled}`);
+  console.log(`${failures.some((f) => f.startsWith(`${name}:`)) ? "FAIL" : "ok  "} ${name}`);
+}
+
 try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
-  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared, heldFrames, tapBar, fingerScale });
+  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared, heldFrames, tapBar, fingerScale, menuMorph });
   else {
     // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size),
     // and in a font whose glyphs sit differently in their line than the default's (Roboto's on phones do).
@@ -866,6 +915,13 @@ try {
     [scale, font] = [100, ""];
     await open("dev-view=albums", 384, 820);
     await undeclared();
+    const escape = () => run("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    const scrim = () => run("document.querySelector('.scrim[aria-label=Close]').click()");
+    for (const [close, how] of [[escape, "Escape"], [scrim, "the scrim"]]) {
+      await open("dev-view=albums", 384, 820);
+      await menuMorph(`phone: ⋮ grows into its modal, closed by ${how}`, "main > .screen:not([inert]) [aria-label='Albums options']", ".sheet[role=dialog]", close);
+      await menuMorph(`phone: Sort grows into its modal, closed by ${how}`, "main > .screen:not([inert]) [aria-label='Sort order']", ".popover[role=dialog]", close);
+    }
     await open("dev-settings=interface", 384, 820);
     await check("phone: Settings section back to the list", () => swipe(20, 300, 400), 0);
     await check("phone: Settings list to a section", tap("document.querySelector('main > .screen:not([inert]) .phone-list button')"), 0);

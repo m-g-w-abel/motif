@@ -10,8 +10,8 @@
   import ReorderList from '../ReorderList.svelte';
 
   // A view's sort button and its tiered rules, edited tier by tier: a
-  // popover below the button on desktop, a sheet along the bottom on phones
-  // (as the ⋮ sheet).
+  // popover below the button on desktop; on phones the button grows into a
+  // modal in the middle of the screen (as the ⋮ sheet).
   let {
     rules,
     defaults,
@@ -34,6 +34,7 @@
   const { views } = getApp();
   onDestroy(() => (views.sorting = false));
   let menu = $state<HTMLElement>();
+  let button = $state<HTMLElement>();
   const sortKeys = Object.keys(SORT_KEYS) as SortKey[];
   const same = (a: readonly SortRule[], b: readonly SortRule[]) =>
     a.length === b.length && a.every((r, i) => r.key === b[i].key && r.descending === b[i].descending);
@@ -55,6 +56,7 @@
 
 <div class="menu" bind:this={menu}>
   <button
+    bind:this={button}
     class="icon-button"
     class:active={!same(rules, defaults) || oneOff}
     aria-haspopup="dialog"
@@ -67,7 +69,7 @@
   </button>
   {#if views.sorting}
     <button class="scrim" tabindex="-1" aria-label="Close" onclick={() => (views.sorting = false)} transition:surface={{ enter: 'fade' }}></button>
-    <div class="popover" role="dialog" aria-label="Sort order" transition:surface={{ enter: 'below' }}>
+    <div class="popover" role="dialog" aria-label="Sort order" transition:surface={{ enter: 'below', from: button }}>
       <div class="current">Sort by</div>
       {#if oneOff}
         <p class="tip">
@@ -209,7 +211,7 @@
     display: none;
   }
 
-  /* Phones: a sheet along the bottom, over the bar, like the ⋮ sheet. */
+  /* Phones: a modal in the middle of the screen, like the ⋮ sheet. */
   @media (max-width: 700px) {
     .scrim {
       position: fixed;
@@ -224,16 +226,13 @@
 
     .popover {
       position: fixed;
-      top: auto;
-      right: 0;
-      bottom: 0;
-      left: 0;
+      inset: 0 16px;
       z-index: 41;
       width: auto;
-      max-height: 80%;
+      height: fit-content;
+      max-height: calc(100% - 32px);
+      margin: auto 0;
       overflow-y: auto;
-      padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
-      border-radius: var(--radius-md) var(--radius-md) 0 0;
       box-shadow: none;
     }
 

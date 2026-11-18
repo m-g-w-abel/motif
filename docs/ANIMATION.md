@@ -247,6 +247,10 @@ Components that only need a small part of this use actions:
   from the same primitives, so a menu and a screen move alike. Replaces
   `rise`, `pop`, `dim`. These open and close on taps; when one gains a drag
   (a sheet dragged down to close), it moves onto a stage and a `Drive`.
+  With `from: button` (phones), the button grows into the surface instead:
+  its box, corners and background become the surface's, by a translate and
+  a growing `clip-path` (`morphAt`), so what it holds is never scaled; it
+  shrinks back into the button as it goes. A view's ⋮ and Sort use it.
 
 ## Primitives
 
@@ -448,6 +452,8 @@ cover's two drawings crossfade over them. Each step shows one handle
 queue), which moves between steps.
 
 **Menus, dialogs, the selection bar.** `transition:surface`. The scrim dims.
+On phones a view's ⋮ and Sort grow out of their buttons into a centred modal
+(`from`).
 
 **Rows and the bar's swipes.** A row's swipe is a transition with the row's
 slide and its + / × strip; the finger seeks it, release commits or springs
@@ -565,6 +571,11 @@ before the rest (Checking).
   device pixels off). Differences are counted in CSS pixels. The display
   shows what the OS draws on top too: a notification arriving during a case
   fails it (seen once each on two runs); run it again.
+  **Menus from their buttons:** on a phone, a view's ⋮ and Sort, held at
+  their first and last frames, must open exactly from the button (its box
+  and corners, nothing drawn yet), land on the modal (the screen's width
+  less 32 px), and close (by Escape and by the scrim) exactly onto the
+  button again.
   **A finger followed one to one:** at every zoom, a change's distance and a
   swipe's must be the screen distance of what moves (a test stage in the page).
   **Undeclared elements:** a test stage built in the page with `change()`

@@ -94,6 +94,8 @@
   let grid = $state<AlbumGrid>();
   let songList = $state<SongList>();
   let shownColumns = $state(1);
+  /** The ⋮ button, which the options sheet grows out of on phones. */
+  let more = $state<HTMLElement>();
 
   // Search in the view: the view's own search, which outlives the view (cleared on closing the box).
   const searchable = view.kind !== 'played';
@@ -200,6 +202,7 @@
     {/if}
     {#if optionsKey}
       <button
+        bind:this={more}
         class="tool"
         aria-label="{title} options"
         title="More"
@@ -218,6 +221,7 @@
           key={optionsKey}
           {shownColumns}
           artistsLabel={view.kind === 'playlists' ? 'Show song counts' : 'Show artists'}
+          from={more}
           onclose={() => (views.options = false)}
         />
       {/if}
