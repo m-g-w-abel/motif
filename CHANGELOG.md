@@ -21,6 +21,9 @@ grouped by phase of the plan.
 - **No stuck hover on touch**: rows, tiles and buttons no longer look
   selected after a finger scrolls or drags over them; hover styling is for
   mice only.
+- **Closing now playing shows only its cover**: on albums with several
+  images, the album's other images no longer flash where the cover was as it
+  shrinks into the player bar.
 - **Phone fixes for now playing and the queue**: buttons respond straight
   after dragging now playing open or closed or dragging a handle, instead of
   ignoring taps for a moment. The album's other images no longer show through

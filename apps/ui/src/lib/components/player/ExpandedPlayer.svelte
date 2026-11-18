@@ -41,7 +41,8 @@
    */
   const SPANS: Record<string, Span> = {
     leave: [0, 0.1],
-    covered: COVERED,
+    // Closing plays this backwards: at the sheet's end, so they go as a close starts, not as it ends (#206).
+    covered: [1 - COVERED[1], 1 - COVERED[0]],
     enter: [0.6, 1],
     queue: [0.5, 1],
     fall: [0, 0.5],

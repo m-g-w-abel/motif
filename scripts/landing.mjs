@@ -369,6 +369,46 @@ async function scrolledBack(name, act) {
   await heldFrames(name, act);
 }
 
+/**
+ * Closing the sheet over an album with several images (#206): held at frames
+ * from start to end, the only image drawn is the cover the sheet showed (the
+ * carousel's other images lie under it on phones and must not show through
+ * while it flies to the bar). Needs the playing album to have two images or more.
+ */
+async function closesOnOneCover(label) {
+  const name = `${label}: closing shows only the sheet's cover`;
+  await open("dev-view=albums&dev-sheet=1", 384, 820);
+  await until("!!document.querySelector('.sheet .card.frame img')?.complete");
+  if ((await run("document.querySelectorAll('.sheet .dots .dot').length")) < 2) {
+    console.log(`skip ${name} (the playing album has one image)`);
+    return;
+  }
+  await until(settled);
+  await sleep(300);
+  const cover = await run("document.querySelector('.sheet .card.frame img').src.split('/art/')[1].split('?')[0]");
+  const images = `${drawings}.filter((d) => d.startsWith('image ')).map((d) => d.slice(6).split('?')[0])`;
+  await send("Animation.enable");
+  await send("Animation.setPlaybackRate", { playbackRate: 0 });
+  const seen = new Set();
+  try {
+    await run("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+    await sleep(400);
+    // From its first frame on (at 0 it is the open sheet, the other images exactly under the cover).
+    for (const ms of [16, 30, 60, 100, 150, 200, 259.9]) {
+      await run(`(() => { for (const a of document.getAnimations()) if (a.effect?.getTiming().fill === 'both') { a.pause(); a.currentTime = ${ms}; } })()`);
+      await sleep(100);
+      for (const i of await run(images)) seen.add(i);
+    }
+  } finally {
+    await send("Animation.setPlaybackRate", { playbackRate: 1 });
+    await run("(() => { for (const a of document.getAnimations()) if (a.effect?.getTiming().fill === 'both') a.play(); })()");
+  }
+  await until(settled);
+  const others = [...seen].filter((i) => i !== cover);
+  if (others.length) failures.push(`${name}: also drew ${others.join(", ")}`);
+  console.log(`${others.length ? "FAIL" : "ok  "} ${name}${others.length ? `\n       also drew ${others.join(", ")}` : ""}`);
+}
+
 /** The phone's system bars (device pixel rows), which change on their own (the clock): left out of comparisons. */
 let bars;
 function systemBars() {
@@ -841,6 +881,7 @@ async function menuMorph(name, button, box, close) {
 try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
   if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared, heldFrames, tapBar, fingerScale, menuMorph });
+  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared, heldFrames, tapBar, fingerScale, closesOnOneCover });
   else {
     // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size),
     // and in a font whose glyphs sit differently in their line than the default's (Roboto's on phones do).
@@ -913,6 +954,7 @@ try {
       if (covered) failures.push(`${phone_}: back on the scrolled grid, ${covered} corners of the card the cover flew to are hidden`);
       await fingerScale(phone_);
       await sheet(phone_);
+      await closesOnOneCover(phone_);
       if (scale === 100 && !font) await queue(phone_);
     }
     if (!phone) {
