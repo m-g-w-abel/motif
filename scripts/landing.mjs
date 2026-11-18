@@ -902,10 +902,10 @@ try {
         return first ? first.top - s.getBoundingClientRect().top : null;
       })()`);
       if (gap === null || gap > 1) failures.push(`${phone_}: albums scrolled to the end left ${gap?.toFixed(0) ?? "all"}px empty at the top`);
-      // Phone: a category from the Library home and back by its back button; desktop has no home screen.
+      // Phone: a category from the Library home and back by a swipe (phones have no back button); desktop has no home screen.
       await open("dev-view=home", 384, 820);
       await check(`${phone_}: open a category`, tap("document.querySelectorAll('main > .screen:not([inert]) .categories button')[1]"), 2);
-      await check(`${phone_}: back by the button`, tap("document.querySelector('main > .screen:not([inert]) .back')"), 2);
+      await check(`${phone_}: swipe back`, () => swipe(20, 300, 410), 2, true);
       // Search: an album found, and back to the results.
       await open("dev-view=search", 384, 820);
       await run("const i = document.querySelector('main > .screen:not([inert]) input[type=search]'); i.value = 'Short'; i.dispatchEvent(new Event('input', { bubbles: true }))");
