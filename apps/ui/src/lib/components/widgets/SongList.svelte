@@ -147,7 +147,12 @@
       const track = data.track(i);
       if (track) queueTracks(engine, [track], next);
     };
-    gesture(e, mapped(settings.current.gestures, 'row'), { queue: () => queue(), 'play-next': () => queue(true) }, swipeRow(e.currentTarget as HTMLElement, 'queue'));
+    // A long press starts Select mode with this song picked.
+    const pick = () => {
+      selecting = true;
+      view.browse.picked = toggle(new Map(), itemAt, i);
+    };
+    gesture(e, mapped(settings.current.gestures, 'row'), { queue: () => queue(), 'play-next': () => queue(true), select: pick }, swipeRow(e.currentTarget as HTMLElement, 'queue'));
   }
   /** Go to album: the row's cover flies to the album's page (`lib/motion`), and back to it. */
   function goToAlbum(i: number, key: string, title: string) {

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineClient } from './engine.svelte';
-import { pickActions, runPick, type Picking } from './picking';
+import { keyPicking, pickActions, runPick, type Picking } from './picking';
+import type { TrackRef } from './protocol/TrackRef';
+import { toggle, type ItemAt } from './selection';
 
 const picking = (over: Partial<Picking> = {}): Picking => ({ count: 2, all: false, tracks: () => [], toggleAll: () => {}, done: () => {}, ...over });
 const every = { playback: true, queue: true, playlist: true };
@@ -50,5 +52,30 @@ describe('runPick', () => {
     for (const id of ['play', 'queue', 'next', 'delete'] as const) runPick(id, p, engine);
     expect(p.remove).toHaveBeenCalledOnce();
     expect(p.done).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('keyPicking', () => {
+  const keys = ['a', 'b', 'c', 'd'];
+  const at: ItemAt<string> = (i) => [keys[i], keys[i]];
+  const song = (id: string) => ({ source: 'local', id }) as TrackRef;
+
+  it('hands over the songs of the picked albums or playlists, pick after pick in list order', async () => {
+    const picked = toggle(toggle(toggle(new Map(), at, 3), at, 0), at, 2);
+    const songs = vi.fn(async (ks: string[]) => ks.flatMap((k) => [song(`${k}1`), song(`${k}2`)]));
+    const p = keyPicking(picked, keys.length, songs, { toggleAll: () => {}, done: () => {} });
+    expect(p.count).toBe(3);
+    expect(p.all).toBe(false);
+    expect((await p.tracks()).map((t) => t.id)).toEqual(['a1', 'a2', 'c1', 'c2', 'd1', 'd2']);
+    expect(songs).toHaveBeenCalledWith(['a', 'c', 'd']);
+  });
+
+  it('runs an action once the songs have come', async () => {
+    const engine = { run: vi.fn(), can: () => true } as unknown as EngineClient;
+    const done = vi.fn();
+    const p = keyPicking(toggle(new Map(), at, 1), keys.length, async () => [song('b1')], { toggleAll: () => {}, done });
+    runPick('play', p, engine);
+    await vi.waitFor(() => expect(engine.run).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_context', tracks: [song('b1')] })));
+    expect(done).toHaveBeenCalledOnce();
   });
 });

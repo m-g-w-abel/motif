@@ -20,8 +20,9 @@ export type Surface = 'bar' | 'artwork' | 'row' | 'queued' | 'view';
 /**
  * Actions done once, when the gesture completes. `close` is the sheet's own
  * drag (down closes now playing, up shows the queue), so the artwork leaves it be.
+ * `select` starts select mode with the row picked.
  */
-type Once = 'next' | 'previous' | 'queue' | 'play-next' | 'remove' | 'back' | 'close';
+type Once = 'next' | 'previous' | 'queue' | 'play-next' | 'remove' | 'back' | 'close' | 'select';
 /** Actions that follow the finger while it drags. */
 type Follow = 'volume' | 'seek';
 export type Action = Once | Follow;
@@ -30,18 +31,18 @@ export type GestureMap = Partial<Record<Gesture, Action>>;
 export const GESTURES: Record<Surface, GestureMap> = {
   bar: { 'swipe-left': 'next', 'swipe-right': 'previous' },
   artwork: { 'swipe-left': 'next', 'swipe-right': 'previous', 'drag-vertical': 'close' },
-  row: { 'long-press': 'queue', 'swipe-left': 'queue' },
+  row: { 'long-press': 'select', 'swipe-left': 'queue' },
   queued: { 'swipe-left': 'remove' },
   view: { 'swipe-right': 'back' },
 };
 
 const SKIP: Action[] = ['next', 'previous'];
 const QUEUE: Action[] = ['queue', 'play-next'];
-/** What each gesture may be remapped to in Settings, besides none. */
+/** What each gesture may be remapped to in Settings, besides none; a saved action no longer offered falls back to the default (`mapped`). */
 export const CHOICES: Record<Surface, Partial<Record<Gesture, Action[]>>> = {
   bar: { 'swipe-left': SKIP, 'swipe-right': SKIP },
   artwork: { 'swipe-left': SKIP, 'swipe-right': SKIP, 'drag-vertical': ['close', 'volume', 'seek'] },
-  row: { 'long-press': QUEUE, 'swipe-left': QUEUE },
+  row: { 'long-press': ['select'], 'swipe-left': QUEUE },
   queued: { 'swipe-left': ['remove'] },
   view: { 'swipe-right': ['back'] },
 };

@@ -2,18 +2,19 @@ import type { IconName } from './components/Icon.svelte';
 import type { EngineClient } from './engine.svelte';
 import { playTracks, queueTracks } from './menus';
 import type { TrackRef } from './protocol/TrackRef';
+import { ordered, type Selection } from './selection';
 
 /**
  * What select mode acts on, for the phone's select bar (`SelectBar.svelte`),
- * set by the list that is selecting. Songs for now; an album or playlist
- * grid would hand over its picks' songs the same way.
+ * set by the list that is selecting: picked songs, or the songs of picked
+ * albums or playlists (`keyPicking`), which may have to be fetched first.
  */
 export interface Picking {
   count: number;
   /** Everything in the list is picked. */
   all: boolean;
   /** The picked songs, in list order. */
-  tracks: () => TrackRef[];
+  tracks: () => TrackRef[] | Promise<TrackRef[]>;
   toggleAll: () => void;
   /** Delete: takes the picks out of the list (a playlist's entries). */
   remove?: () => void;
@@ -49,9 +50,22 @@ export function runPick(id: Exclude<PickAction['id'], 'playlist'>, p: Picking, e
   if (id === 'all') return p.toggleAll();
   if (!p.count) return;
   const tracks = p.tracks();
-  if (id === 'play') playTracks(engine, tracks);
+  if (id === 'play')
+    void Promise.resolve(tracks)
+      .then((list) => playTracks(engine, list))
+      .catch((e: Error) => (engine.error = e.message));
   else if (id === 'queue') void queueTracks(engine, tracks);
   else if (id === 'next') void queueTracks(engine, tracks, true);
   else p.remove?.();
   p.done();
+}
+
+/** Picked albums or playlists (by key) as the songs they hold: `songs` fetches those of the keys given, in that order. */
+export function keyPicking(
+  picked: Selection<string>,
+  count: number,
+  songs: (keys: string[]) => Promise<TrackRef[]>,
+  rest: Pick<Picking, 'toggleAll' | 'done'>,
+): Picking {
+  return { count: picked.size, all: !!count && picked.size === count, tracks: () => songs(ordered(picked)), ...rest };
 }

@@ -80,17 +80,17 @@ export class Playlists {
   }
 
   /** Whether it was made (not if the name was cancelled). */
-  async create(tracks: TrackRef[] = []): Promise<boolean> {
+  async create(tracks: TrackRef[] | Promise<TrackRef[]> = []): Promise<boolean> {
     const name = await this.askName('New playlist');
     if (!name) return false;
-    const paths = local(tracks);
+    const paths = local(await tracks);
     const made = await this.#run({ type: 'create_playlist', id: newId(), name, paths });
     if (made) toasts.show(paths.length ? `Added to ${name}` : `Made ${name}`);
     return made;
   }
 
-  async add(playlist: Playlist, tracks: TrackRef[]): Promise<boolean> {
-    const added = await this.#run({ type: 'add_to_playlist', id: playlist.id, op: newId(), paths: local(tracks) });
+  async add(playlist: Playlist, tracks: TrackRef[] | Promise<TrackRef[]>): Promise<boolean> {
+    const added = await this.#run({ type: 'add_to_playlist', id: playlist.id, op: newId(), paths: local(await tracks) });
     if (added) toasts.show(`Added to ${playlist.name}`);
     return added;
   }
@@ -125,8 +125,8 @@ export class Playlists {
     return this.engine.can('library') && local(tracks).length > 0;
   }
 
-  /** Where `tracks` can go: a new playlist, then each one; `then` runs once they are in one. */
-  choices(tracks: TrackRef[], then?: () => void): MenuItem[] {
+  /** Where `tracks` (or those still being fetched) can go: a new playlist, then each one; `then` runs once they are in one. */
+  choices(tracks: TrackRef[] | Promise<TrackRef[]>, then?: () => void): MenuItem[] {
     const after = (added: Promise<boolean>) => void added.then((ok) => ok && then?.());
     return [{ label: 'New playlist…', run: () => after(this.create(tracks)) }, ...this.list.map((p) => ({ label: p.name, run: () => after(this.add(p, tracks)) }))];
   }
