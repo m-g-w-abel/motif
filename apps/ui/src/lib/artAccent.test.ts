@@ -95,3 +95,46 @@ describe('hue choice', () => {
     expect(r - Math.max(g, b)).toBeGreaterThan(40);
   });
 });
+
+describe('background and accent picked separately', () => {
+  const mix = (parts: [number[], number][]) => Uint8ClampedArray.from(parts.flatMap(([rgb, n]) => Array.from({ length: n }, () => [...rgb, 255]).flat()));
+  const rgb = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+  const chroma = (c: string) => Math.max(...rgb(c)) - Math.min(...rgb(c));
+  const hue = (c: string) => {
+    const [r, g, b] = rgb(c);
+    const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+    return (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60;
+  };
+
+  it('a white cover with a blue streak gets a light neutral background and a blue accent', () => {
+    const p = artPalette(mix([[[248, 248, 246], 200], [[30, 70, 210], 56]]), THEMES[0], 'full')!;
+    expect(p.scheme).toBe('light');
+    expect(chroma(p.tokens.bg!)).toBeLessThan(12);
+    expect(hue(p.accent!)).toBeGreaterThan(200);
+    expect(hue(p.accent!)).toBeLessThan(250);
+    expect(contrast(p.accent!, p.tokens.bg!)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('an all-blue cover gets a blue background and a readable blue accent', () => {
+    const p = artPalette(mix([[[30, 70, 210], 256]]), THEMES[0], 'full')!;
+    for (const c of [p.tokens.bg!, p.accent!]) {
+      expect(chroma(c)).toBeGreaterThan(30);
+      expect(hue(c)).toBeGreaterThan(200);
+      expect(hue(c)).toBeLessThan(250);
+    }
+    expect(contrast(p.accent!, p.tokens.bg!)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('the accent skips a hue too close to the background', () => {
+    const p = artPalette(mix([[[200, 25, 30], 220], [[240, 210, 40], 36]]), THEMES[0], 'full')!;
+    expect(hue(p.tokens.bg!) > 330 || hue(p.tokens.bg!) < 15).toBe(true);
+    expect(hue(p.accent!)).toBeGreaterThan(35);
+    expect(hue(p.accent!)).toBeLessThan(65);
+  });
+
+  it('a greyscale cover keeps the theme accent', () => {
+    for (const mode of ['tint', 'full'] as const) {
+      expect(artPalette(mix([[[250, 250, 250], 200], [[20, 20, 20], 56]]), THEMES[0], mode)?.accent ?? null).toBeNull();
+    }
+  });
+});

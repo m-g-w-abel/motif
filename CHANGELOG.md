@@ -11,6 +11,10 @@ grouped by phase of the plan.
 
 - **Simpler Library home on phones**: the Library home no longer has a ⋮ menu
   beside its title; Add folder and Rescan are in Settings → Library.
+- **Cover colours pick background and accent separately**: the background
+  comes from the colour covering most of the cover, the accent from its
+  strongest other colour. A mostly white cover with a blue streak now gives a
+  light, neutral interface with a blue accent instead of a pale blue one.
 - **Phone fixes for now playing and the queue**: buttons respond straight
   after dragging now playing open or closed or dragging a handle, instead of
   ignoring taps for a moment. The album's other images no longer show through
