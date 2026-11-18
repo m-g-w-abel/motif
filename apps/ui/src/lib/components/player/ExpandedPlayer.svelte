@@ -1,6 +1,6 @@
 <script lang="ts">
   import { flushSync } from 'svelte';
-  import { ownTouch, SLOP } from '../../gestures';
+  import { ownTouch, Press } from '../../gestures';
   import { released, stepTo } from '../../sheet.svelte';
   import { getApp, setViewState } from '../../context';
   import { mapped } from '../../gestures';
@@ -119,37 +119,63 @@
    * Phones: a drag on one of the sheet's handles. Once it moves, the step
    * change it heads for (up towards the queue, back towards now playing)
    * follows the finger, then finishes or springs back on letting go, as
-   * `released` decides. A tap calls `onTap`; a drag that would close the
-   * sheet is the sheet's own (`closing`, else on letting go).
+   * `released` decides. A tap steps the way `tap` says (null: nothing); a
+   * drag that would close the sheet is the sheet's own (`closing`, else on
+   * letting go); a sideways one is someone else's (the artwork's swipe, a row's).
+   *
+   * Building a step change takes frames on a phone (measured at 6× CPU
+   * throttling: 110–230 ms), so the change `ready` heads for is built at the
+   * press, held where it starts (drawn as before): the drag follows from its
+   * first move past the slop and a tap its way plays it; a press that goes
+   * another way, sideways or nowhere puts it back unseen.
+   * `pull`: the full queue's list at its top, whose touch is ours only while
+   * it heads down (it scrolls up as ever).
    */
-  function stepDrag(e: PointerEvent, onTap: () => void, closing?: () => void) {
+  function stepDrag(e: PointerEvent, tap: 'up' | 'back' | null, { closing, ready, pull = false }: { closing?: () => void; ready?: 'up' | 'back'; pull?: boolean } = {}) {
     if (e.button !== 0) return;
+    const onTap = () => (tap === 'up' ? sheet.up() : tap === 'back' ? sheet.back() : undefined);
     if (!views.phone || still()) return closing ? closing() : sheet.handle(e, onTap);
-    const y0 = e.clientY;
+    const press = new Press(e.clientX, e.clientY, e.timeStamp);
     const from = sheet.step;
     let way: 'up' | 'back' | null = null;
     let t: Change | null = null;
     let drive: Drive | null = null;
     /** Where the press became a drag: the step moves from there, never by the slop. */
-    let y1 = y0;
-    let owned: (() => void) | undefined;
+    let y1 = e.clientY;
+    /** The step change heading `w`, if there is one now. */
+    const build = (w: 'up' | 'back') => {
+      const to = stepTo(from, w);
+      return to && to !== 'closed' && sheet.rest
+        ? step(
+            () => (sheet.step = to),
+            () => (sheet.step = from),
+          )
+        : null;
+    };
+    let early = ready ? build(ready) : null;
+    /** Puts the change built at the press back at once, so what moves next starts from the step as it was. */
+    const drop = () => {
+      early?.release(false);
+      early?.end();
+      early = null;
+    };
+    // Ours once it steps the sheet; a pull's from the press while it heads down, before the browser's pan can take it.
+    const owned = e.pointerType === 'mouse' ? undefined : ownTouch((ev) => !!t || (pull && !way && ev.touches[0]?.clientY >= e.clientY));
     const move = (ev: PointerEvent) => {
-      const dy = ev.clientY - y0;
       if (!way) {
-        if (Math.abs(dy) < SLOP) return;
-        if (e.pointerType !== 'mouse') owned = ownTouch();
+        const axis = press.move(ev.clientX, ev.clientY);
+        if (!axis) return;
+        if (axis === 'x') return void (drop(), stop());
         y1 = ev.clientY;
-        way = dy < 0 ? 'up' : 'back';
-        const to = stepTo(from, way);
-        if (to === 'closed' && closing) {
+        way = ev.clientY < e.clientY ? 'up' : 'back';
+        if (way !== ready) drop();
+        if (stepTo(from, way) === 'closed' && closing) {
           stop();
           return closing();
         }
-        if (!to || to === 'closed' || !sheet.rest) return;
-        t = step(
-          () => (sheet.step = to),
-          () => (sheet.step = from),
-        );
+        t = early ?? build(way);
+        early = null;
+        if (!t) return;
         drive = follow(t);
       }
       if (t) drive?.seek(((way === 'up' ? -1 : 1) * (ev.clientY - y1)) / t.distance);
@@ -162,8 +188,10 @@
     };
     const end = (ev: PointerEvent) => {
       stop();
-      const what = ev.type === 'pointercancel' ? null : released(ev.clientY - y0);
+      const what = ev.type === 'pointercancel' ? null : released(ev.clientY - e.clientY);
       if (drive) return void drive.release(what === way);
+      if (early && what === 'tap' && ready === tap) return void early.play(1);
+      drop();
       if (what === 'tap') onTap();
       else if (what === 'up') sheet.up();
       else if (what === 'back') sheet.back();
@@ -185,8 +213,17 @@
   function dragNow(e: PointerEvent) {
     if (!views.phone || sheet.step !== 'now') return;
     const own = mapped(settings.current.gestures, 'artwork')['drag-vertical'] !== 'close';
-    if ((e.target as Element).closest(own ? '.art, [role="slider"], .more' : '[role="slider"], .more')) return;
-    stepDrag(e, () => {}, () => sheet.drag(e, 'sheet', undefined, true));
+    const target = e.target as Element;
+    if (target.closest(own ? '.art, [role="slider"], .more' : '[role="slider"], .more')) return;
+    // A press on a button is a tap: nothing to build for it.
+    stepDrag(e, null, { closing: () => sheet.drag(e, 'sheet', undefined, true), ready: target.closest('button, a') ? undefined : 'up' });
+  }
+
+  /** Phones, full queue: a pull down on the list at its top steps back to half like the strip; otherwise it scrolls. */
+  function pullList(e: PointerEvent) {
+    const list = (e.target as Element).closest('.list');
+    if (sheet.step !== 'full' || e.pointerType === 'mouse' || !list || list.scrollTop > 0 || (e.target as Element).closest('.handle')) return;
+    stepDrag(e, null, { pull: true });
   }
 
   /** The keyboard's press on a handle; pointers go through `sheet.handle`. */
@@ -238,7 +275,7 @@
   <!-- Phones, full queue and lyrics: the playing track in a strip whose drag or tap steps back. Each step
        shows one handle (`handle:now`: here, above the queue, under the controls), which moves between them. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="mini" data-enter="above" onpointerdown={(e) => !(e.target as Element).closest('.transport') && stepDrag(e, () => sheet.back())}>
+  <div class="mini" data-enter="above" onpointerdown={(e) => !(e.target as Element).closest('.transport') && stepDrag(e, 'back', { ready: 'back' })}>
     <div class="mini-row">
       <Artwork track={engine.current?.track} size={48} move="cover:now" />
       <span class="mini-names">
@@ -281,17 +318,20 @@
         <Controls />
         <!-- Phones: the handle at the bottom; a tap or drag up shows the queue. -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="more" data-enter="fade" onpointerdown={(e) => stepDrag(e, () => sheet.up())}>
+        <div class="more" data-enter="fade" onpointerdown={(e) => stepDrag(e, 'up', { ready: 'up' })}>
           <button class="step" data-move="handle:now" aria-label="Show the queue" onclick={(e) => keyed(e, () => sheet.up())}></button>
         </div>
       </div>
     </div>
-    <div class="queue-slot" data-enter="below" data-span="queue">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="queue-slot" data-enter="below" data-span="queue" onpointerdown={pullList}>
+      <!-- Built as it moves, not at the press: it goes both ways, and putting a full queue back that wasn't wanted
+           restarts the title's scrolling under its copy. -->
       <button
         class="step"
         data-move="handle:now"
         aria-label="Show all of the queue"
-        onpointerdown={(e) => stepDrag(e, () => sheet.up())}
+        onpointerdown={(e) => stepDrag(e, 'up')}
         onclick={(e) => keyed(e, () => sheet.up())}
       ></button>
       <Queue collapsible={!views.phone} nowPlaying={views.phone} />
