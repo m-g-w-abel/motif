@@ -238,9 +238,10 @@ export function swipeRow(el: HTMLElement, does: 'queue' | 'remove'): Swipe {
  * called: the browser's own handling of a drag ends in a fling, and
  * Chromium drops the next tap while one runs (nothing could be tapped for
  * half a second after a drag), even where `touch-action` rules out panning.
+ * With `when`, only the moves it picks are ours (the rest may pan).
  */
-export function ownTouch(): () => void {
-  const own = (ev: TouchEvent) => ev.cancelable && ev.preventDefault();
+export function ownTouch(when: (ev: TouchEvent) => boolean = () => true): () => void {
+  const own = (ev: TouchEvent) => ev.cancelable && when(ev) && ev.preventDefault();
   window.addEventListener('touchmove', own, { passive: false });
   return () => window.removeEventListener('touchmove', own);
 }

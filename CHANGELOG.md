@@ -5,6 +5,10 @@ grouped by phase of the plan.
 
 ## Unreleased: phase 5, Android
 
+- **Now playing's drags follow at once**: on phones, dragging now playing up
+  to the queue, or the full queue's top strip down, moves with your finger from
+  the start instead of catching up after a moment. In the full queue, pulling
+  the list down while it is scrolled to the top steps back to the half queue.
 - **Back leaves select mode**: the system back button or gesture while
   selecting songs now clears the picks and stays on the view; a second back goes
   back.

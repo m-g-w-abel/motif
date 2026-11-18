@@ -295,6 +295,8 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
 
   const t = new Transition(still ? tracks.filter((k) => !still.contains(k.el)) : tracks, () => {
     const landed = t.heading === 1;
+    // Gone back: the old state first, so what flew back lands on its elements where they are again.
+    if (!landed) ended?.(false);
     for (const f of flights) f.done(landed);
     for (const c of copies) c.remove();
     for (const [el, o] of origins) el.style.transformOrigin = o;
@@ -305,7 +307,7 @@ function draw(root: HTMLElement, before: Snapshot, options: Options): Change {
       Object.assign(el, { scrollLeft: x, scrollTop: y });
     }
     running.delete(t);
-    ended?.(landed);
+    if (landed) ended?.(true);
   }) as Change;
   // On screen, where the finger moves: boxes are in CSS pixels, which the root's zoom scales.
   t.distance = p.distance * z;

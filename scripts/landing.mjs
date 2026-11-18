@@ -282,7 +282,9 @@ async function check(name, act, least = 1, dragged = false) {
   const late = [...new Set(watched.late)];
   if (late.length) failures.push(`${name}: moved late (a span on a move): ${late.join(", ")}`);
   if (dragged) {
-    const p = watched.p;
+    // From its first move: before it, what is drawn may be a change held at its start for the press (#204).
+    const first = watched.p.findIndex(([, v]) => v !== 0 && v !== 1);
+    const p = first < 0 ? watched.p : watched.p.slice(first);
     if (!p.length) failures.push(`${name}: nothing followed the finger`);
     else if (Math.min(p[0][1], 1 - p[0][1]) > STEP) failures.push(`${name}: its first frame jumped to ${p[0][1].toFixed(2)}`);
     for (let i = 1; i < p.length; i++)
@@ -319,6 +321,18 @@ async function sheet(label) {
   await check(`${label}: drag up to the half queue`, () => dragBy(".more .step", -200), 1, true);
   if (!(await run(step("half")))) failures.push(`${label}: dragging the handle up didn't show the half queue`);
   await check(`${label}: half back to now playing (again)`, () => dragBy(".queue-slot > .step", 200), 1, true);
+  // Now playing's own drag (off its handle), the strip's and a pull on the full queue's list at its top (#204).
+  await check(`${label}: drag now playing up to the half queue`, atOnce(`${label}: drag now playing up to the half queue`, () => dragBy(".details .hero-title", -200)), 1, true);
+  if (!(await run(step("half")))) failures.push(`${label}: dragging now playing up didn't show the half queue`);
+  await run("document.querySelector('.queue-slot > .step').click()");
+  await until(settled);
+  await check(`${label}: drag the strip back to half`, atOnce(`${label}: drag the strip back to half`, () => dragBy(".mini .mini-names", 200)), 4, true);
+  if (!(await run(step("half")))) failures.push(`${label}: dragging the strip down didn't go back to the half queue`);
+  await run("document.querySelector('.queue-slot > .step').click()");
+  await until(settled);
+  await pullList(label);
+  await dragBy(".queue-slot > .step", 200);
+  await until(settled);
   await check(`${label}: lyrics`, tap("document.querySelector('.lyrics-button')"), 4);
   await check(`${label}: lyrics back to now playing`, tap("document.querySelector('.mini .step')"), 4);
   await check(`${label}: close by dragging down`, () => dragBy(".details .hero-title", 400), shared, true);
@@ -359,6 +373,54 @@ async function sheet(label) {
   }, 4);
 }
 const tap = (selector) => () => run(`${selector}.click()`);
+
+/**
+ * `act` (a finger dragging), failing `name` if the move that passed the slop held the page for a frame or more: the
+ * step change is built at the press, so the drag follows from its first move (#204).
+ */
+const atOnce = (name, act) => async () => {
+  await run(`window.motifMoves = []; { const own = (e) => { const t = performance.now(); const ch = new MessageChannel(); ch.port1.onmessage = () => motifMoves.push(performance.now() - t); ch.port2.postMessage(0); };
+    addEventListener('pointermove', own, { capture: true }); addEventListener('pointerup', () => setTimeout(() => removeEventListener('pointermove', own, { capture: true })), { once: true }); } 0`);
+  await act();
+  const slowest = Math.max(0, ...(await run("window.motifMoves")));
+  if (slowest > 16.7) failures.push(`${name}: a move took ${slowest.toFixed(0)} ms, so the drag fell behind the finger`);
+};
+
+/**
+ * The full queue's list at its top: a pull down steps back to half, following the finger, and taps nothing; scrolled
+ * down, the same pull scrolls it instead (#204).
+ */
+async function pullList(label) {
+  const row = ".sheet .queue-slot ol li .entry";
+  let tapped = false;
+  await check(`${label}: pull the full queue's list down at its top`, async () => {
+    await run("window.motifPulled = false; window.motifPull = () => (window.motifPulled = true); addEventListener('click', motifPull, { capture: true }); 0");
+    await dragBy(row, 200);
+    await sleep(100);
+    tapped = await run("removeEventListener('click', motifPull, { capture: true }); window.motifPulled");
+  }, 4, true);
+  if (!(await run(step("half")))) failures.push(`${label}: pulling the full queue's list down at its top didn't go back to the half queue`);
+  if (tapped) failures.push(`${label}: pulling the full queue's list down tapped a row`);
+  await run("document.querySelector('.queue-slot > .step').click()");
+  await until(settled);
+  const name = `${label}: pull the full queue's list down, scrolled`;
+  if (!(await run("(() => { const l = document.querySelector('.sheet .queue .list'); l.scrollTop = 150; return l.scrollTop > 100; })()")))
+    return console.log(`skip ${name} (the queue is too short to scroll)`);
+  const top = await run("document.querySelector('.sheet .queue .list').scrollTop");
+  // Its middle: the rows at the top are scrolled up under the strip.
+  const [x, y] = await run("(() => { const r = document.querySelector('.sheet .queue .list').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()");
+  await drag(x, y, x, y + 60);
+  await sleep(300);
+  const now = await run("document.querySelector('.sheet .queue .list').scrollTop");
+  const mine = [];
+  if (!(await run(step("full")))) mine.push("it left the full queue");
+  if (now > top - 30) mine.push(`it didn't scroll (scrollTop ${top} → ${now})`);
+  failures.push(...mine.map((m) => `${name}: ${m}`));
+  console.log(`${mine.length ? "FAIL" : "ok  "} ${name}${mine.map((m) => `\n       ${m}`).join("")}`);
+  await run("document.querySelector('.sheet .queue .list').scrollTop = 0");
+  await run("document.querySelector('.mini .step').click()");
+  await until(settled);
+}
 
 /** From the half queue: up to the full queue, scrolled to its end, then `act` back to half, held (`heldFrames`). */
 async function scrolledBack(name, act) {
@@ -880,8 +942,7 @@ async function menuMorph(name, button, box, close) {
 
 try {
   // Debugging: STEPS=steps.mjs runs that module's default export with these helpers instead.
-  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared, heldFrames, tapBar, fingerScale, menuMorph });
-  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared, heldFrames, tapBar, fingerScale, closesOnOneCover });
+  if (process.env.STEPS) await (await import(path.resolve(process.env.STEPS))).default({ send, run, until, open, swipe, drag, dragBy, sleep, settled, card, undeclared, heldFrames, tapBar, fingerScale, menuMorph, closesOnOneCover });
   else {
     // At the Scale setting's default and above it (the root's zoom; on Android it includes the system font size),
     // and in a font whose glyphs sit differently in their line than the default's (Roboto's on phones do).
