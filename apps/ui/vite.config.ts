@@ -1,11 +1,13 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { hoverGatePlugin } from './hoverGate.js';
 
 // In a browser dev session, /ws is proxied to a headless engine
 // (`cargo run -p headless`). Inside Tauri the UI connects to the embedded
 // engine directly, so the proxy is unused there.
 export default defineConfig(({ command }) => ({
   plugins: [
+    hoverGatePlugin,
     svelte({
       // In development, inject component CSS from its JavaScript instead of
       // separate virtual CSS modules: webviews (notably WebKitGTK) that reuse

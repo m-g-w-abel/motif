@@ -18,6 +18,9 @@ grouped by phase of the plan.
 - **Menus that grow from their buttons**: on phones, a view's ⋮ and Sort
   buttons now grow into a box in the middle of the screen, and it shrinks back
   into the button when you close it.
+- **No stuck hover on touch**: rows, tiles and buttons no longer look
+  selected after a finger scrolls or drags over them; hover styling is for
+  mice only.
 - **Phone fixes for now playing and the queue**: buttons respond straight
   after dragging now playing open or closed or dragging a handle, instead of
   ignoring taps for a moment. The album's other images no longer show through
