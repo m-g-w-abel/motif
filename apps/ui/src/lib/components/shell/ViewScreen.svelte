@@ -242,7 +242,6 @@
   <!-- A category's head scrolls with its list, so a cover flying back to a card under it lands where it shows. -->
   {#if category}
     <div class="head">
-      {#if views.phone}<div class="back-row"><NavButton /></div>{/if}
       <div class="title-row">
         <span class="dot" style:--c={category.colour} data-move={`dot:${category.kind}`}><Icon name={category.icon} size={22} /></span>
         <h1><span data-move={`category:${category.kind}`}>{category.label}</span></h1>
@@ -297,10 +296,10 @@
 {/snippet}
 
 <section class="view" aria-label={title} aria-busy={page && !isDemo && !arrived}>
-  <!-- Phones have no bar here: back is in a category's head (or a swipe), the home's menu by its title. -->
+  <!-- Phones have no bar here: back is the system button or a swipe, the home's menu by its title. -->
   {#if !views.phone || (playlist && editing)}
   <header class="toolbar" {...drag}>
-    <NavButton />
+    {#if !views.phone}<NavButton />{/if}
     {#if category}<span class="grow" {...drag}></span>{:else}<h1 {...drag}>{title}</h1>{/if}
     {#if view.kind === 'playlists' && engine.can('library')}
       <button class="icon-button" aria-label="New playlist" title="New playlist" onclick={() => playlists.create()}>
@@ -464,11 +463,6 @@
   .head {
     padding: var(--space-3) var(--space-3) var(--space-2);
     flex: none;
-  }
-
-  .back-row {
-    display: flex;
-    margin-bottom: var(--space-3);
   }
 
   .title-row {

@@ -224,7 +224,6 @@
         <button class="icon-button" aria-label="Close search" onclick={() => ((searching = false), (find = ''))}><Icon name="chevron-left" size={22} /></button>
         <input type="search" placeholder="Search settings" aria-label="Search settings" bind:value={find} use:focusOnMount />
       {:else}
-        <button class="icon-button" aria-label="Back" onclick={() => settingsView.back()}><Icon name="chevron-left" size={22} /></button>
         <h1>{title}</h1>
         <button class="icon-button" aria-label="Search settings" onclick={() => (searching = true)}><Icon name="search" size={20} /></button>
       {/if}
@@ -1258,6 +1257,7 @@
 
     .phone-head h1 {
       flex: 1;
+      padding-left: var(--space-1);
       font-size: 20px;
     }
 
