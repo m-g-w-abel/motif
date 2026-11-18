@@ -64,8 +64,8 @@ export class Views {
   top: View = $derived(this.stack.at(-1)!);
   /** The phone bar's button the views are under (highlighted there). */
   root: 'library' | 'search' = $derived(this.stack[1]?.kind === 'search' ? 'search' : 'library');
-  /** The phone bar's menu sheet: its main list, or the engine switcher in its place. */
-  menu = $state<'main' | 'engines' | null>(null);
+  /** The phone bar's menu sheet: its main list, the engine switcher in its place, or the select bar's ⋮. */
+  menu = $state<'main' | 'engines' | 'select' | null>(null);
   /** The changelog dialog is open (from the phone menu or the left panel). */
   changelog = $state(false);
   /** Where back goes; the Library home is under every view, even when it isn't on the stack. */

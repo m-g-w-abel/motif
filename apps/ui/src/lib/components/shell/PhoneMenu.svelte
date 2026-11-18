@@ -4,12 +4,30 @@
   import { engines } from '../../engine.svelte';
   import { switchTo } from '../../engines';
   import { HELP_URL, openUrl } from '../../openUrl';
+  import { pickActions, runPick, type PickAction, type Picking } from '../../picking';
+  import { untrack } from 'svelte';
   import Icon from '../Icon.svelte';
 
   // The phone bar's menu, grown up out of the bar (`NowPlayingBar`): the
   // connection, which opens the engine switcher in its place, then Settings, Changelog and Help.
-  const { engine, settingsView, views } = getApp();
+  // In select mode, the select bar's ⋮ opens it with the actions that don't fit on the bar.
+  const { engine, playlists, settingsView, views } = getApp();
   const statusLabel = { connecting: 'connecting…', open: 'connected', closed: 'disconnected' };
+
+  // Opened from the select bar's ⋮ (each opening is a new menu); its last picks stay shown while it closes.
+  const selectMenu = untrack(() => views.menu === 'select');
+  let last: Picking | null = null;
+  const picking = $derived(selectMenu ? (views.picking ?? last) : null);
+  $effect(() => {
+    last = picking;
+  });
+  const more = $derived(picking && pickActions(picking, { playback: false, queue: engine.can('queue'), playlist: false }).more);
+
+  function pick(id: PickAction['id'], e: MouseEvent) {
+    const on = picking;
+    views.menu = null;
+    if (on) runPick(id, on, engine, playlists, e.currentTarget as HTMLElement);
+  }
 
   function settings() {
     views.menu = null;
@@ -36,35 +54,41 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && (views.menu = null)} />
 
-<div class="menu" role="dialog" aria-label="Menu">
-  <h2>motif</h2>
-  <button
-    class="connection {engine.status}"
-    aria-expanded={views.menu === 'engines'}
-    onclick={() => (views.menu = views.menu === 'engines' ? 'main' : 'engines')}
-  >
-    <span class="dot"></span>{engine.unpaired ? 'not paired' : statusLabel[engine.status]}
-    <span class="chip">{engines.current.name}</span>
-  </button>
-
-  {#if views.menu === 'engines'}
-    {#each engines.list.engines as saved (saved.id)}
-      {@const current = saved.id === engines.list.current}
-      <button
-        class="item"
-        aria-current={current}
-        onclick={() => (current ? (views.menu = 'main') : engines.update((list) => switchTo(list, saved.id)))}
-      >
-        <span class="connection {current ? engine.status : ''}"><span class="dot"></span></span>
-        <span class="name">{saved.name}</span>
-        {#if current}<small>in control</small>{/if}
-      </button>
+<div class="menu" role="dialog" aria-label={more ? 'Selected songs' : 'Menu'}>
+  {#if more}
+    {#each more as action (action.id)}
+      <button class="item" class:danger={action.id === 'delete'} onclick={(e) => pick(action.id, e)}>{action.label}</button>
     {/each}
-    <button class="item" onclick={pair}><Icon name="plus" size={20} />Pair a device</button>
   {:else}
-    <button class="item" onclick={settings}><Icon name="settings" size={20} />Settings</button>
-    <button class="item" onclick={changelog}><Icon name="list" size={20} />Changelog</button>
-    <button class="item" onclick={help}><Icon name="info" size={20} />Help</button>
+    <h2>motif</h2>
+    <button
+      class="connection {engine.status}"
+      aria-expanded={views.menu === 'engines'}
+      onclick={() => (views.menu = views.menu === 'engines' ? 'main' : 'engines')}
+    >
+      <span class="dot"></span>{engine.unpaired ? 'not paired' : statusLabel[engine.status]}
+      <span class="chip">{engines.current.name}</span>
+    </button>
+
+    {#if views.menu === 'engines'}
+      {#each engines.list.engines as saved (saved.id)}
+        {@const current = saved.id === engines.list.current}
+        <button
+          class="item"
+          aria-current={current}
+          onclick={() => (current ? (views.menu = 'main') : engines.update((list) => switchTo(list, saved.id)))}
+        >
+          <span class="connection {current ? engine.status : ''}"><span class="dot"></span></span>
+          <span class="name">{saved.name}</span>
+          {#if current}<small>in control</small>{/if}
+        </button>
+      {/each}
+      <button class="item" onclick={pair}><Icon name="plus" size={20} />Pair a device</button>
+    {:else}
+      <button class="item" onclick={settings}><Icon name="settings" size={20} />Settings</button>
+      <button class="item" onclick={changelog}><Icon name="list" size={20} />Changelog</button>
+      <button class="item" onclick={help}><Icon name="info" size={20} />Help</button>
+    {/if}
   {/if}
 </div>
 
@@ -138,6 +162,10 @@
 
   .item:hover {
     background: var(--hover);
+  }
+
+  .item.danger {
+    color: var(--danger);
   }
 
   .item .connection {

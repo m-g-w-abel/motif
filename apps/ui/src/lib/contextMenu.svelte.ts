@@ -1,7 +1,6 @@
 export interface MenuItem {
   label: string;
   run: () => void;
-  disabled?: boolean;
 }
 
 /** The one open context menu, drawn by `ContextMenu.svelte`. */

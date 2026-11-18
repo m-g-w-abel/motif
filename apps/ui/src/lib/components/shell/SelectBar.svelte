@@ -1,72 +1,59 @@
 <script lang="ts">
   import { getApp } from '../../context';
-  import { contextMenu } from '../../contextMenu.svelte';
-  import { playTracks, queueTracks } from '../../menus';
   import { surface } from '../../motion/surface';
-  import { pickActions, type PickAction, type Picking } from '../../picking';
+  import { pickActions, runPick, type Picking } from '../../picking';
   import Icon from '../Icon.svelte';
 
-  // Phones: select mode's bar, in the player bar's place and shape (`NowPlayingBar`), which morphs into it and back.
+  // Phones: select mode's bar, over the player bar (`NowPlayingBar`), whose contents fade out under it: Done and
+  // the count where the track is, the actions where the view buttons are. Its ⋮ opens the bar's menu (`PhoneMenu`).
   let { picking }: { picking: Picking } = $props();
-  const { engine, playlists, sheet, views } = getApp();
+  const { engine, playlists, views } = getApp();
 
-  const actions = $derived(
-    pickActions(picking, { playback: engine.can('playback'), queue: engine.can('queue'), playlist: playlists.canAdd(picking.tracks()) }),
-  );
-
-  function run(id: PickAction['id'], button: HTMLElement) {
-    const tracks = picking.tracks();
-    const box = button.getBoundingClientRect();
-    if (id === 'play') playTracks(engine, tracks);
-    else if (id === 'queue') queueTracks(engine, tracks);
-    else if (id === 'next') queueTracks(engine, tracks, true);
-    else if (id === 'playlist') playlists.pick(tracks, box.left, box.top - 8, button);
-    else if (id === 'all') picking.toggleAll();
-    else picking.remove?.();
-  }
-
-  function more(e: MouseEvent) {
-    const button = e.currentTarget as HTMLElement;
-    const box = button.getBoundingClientRect();
-    const items = actions.more.map((a) => ({ label: a.label, disabled: a.disabled, run: () => run(a.id, button) }));
-    contextMenu.show(items, box.right, box.top - 8, button);
-  }
+  const actions = $derived(pickActions(picking, { playback: engine.can('playback'), queue: engine.can('queue'), playlist: engine.can('library') }));
+  const open = $derived(views.menu === 'select');
 </script>
 
-<div class="select-bar" role="toolbar" aria-label="Selected songs" transition:surface={{ enter: 'fade', from: sheet.origin ?? undefined }}>
-  <button class="done" onclick={() => (views.selecting = false)}>Done</button>
-  <span class="count" aria-live="polite">{picking.count} selected</span>
-  <span class="grow"></span>
-  {#each actions.bar as action (action.id)}
-    <button
-      class="icon-button"
-      aria-label={action.label}
-      title={action.label}
-      aria-haspopup={action.id === 'playlist' ? 'menu' : undefined}
-      disabled={action.disabled}
-      onclick={(e) => run(action.id, e.currentTarget)}
-    >
-      <Icon name={action.icon} size={22} />
+<div class="select-bar" role="toolbar" aria-label="Selected songs" transition:surface={{ enter: 'fade' }}>
+  <div class="top">
+    <button class="done" onclick={() => (views.selecting = false)}>Done</button>
+    <span class="count" aria-live="polite">{picking.count} selected</span>
+  </div>
+  <div class="actions">
+    {#each actions.bar as action (action.id)}
+      <button
+        class="icon-button"
+        aria-label={action.label}
+        title={action.label}
+        aria-haspopup={action.id === 'playlist' ? 'menu' : undefined}
+        onclick={(e) => runPick(action.id, picking, engine, playlists, e.currentTarget)}
+      >
+        <Icon name={action.icon} size={24} />
+      </button>
+    {/each}
+    <button class="icon-button" class:active={open} aria-label="More actions" title="More actions" aria-expanded={open} onclick={() => (views.menu = open ? null : 'select')}>
+      <Icon name="more" size={24} />
     </button>
-  {/each}
-  <button class="icon-button" aria-label="More actions" title="More actions" aria-haspopup="menu" onclick={more}>
-    <Icon name="more" size={22} />
-  </button>
+  </div>
 </div>
 
 <style>
-  /* Covers the bar it stands in for, border and corners included. */
+  /* Over the bar it stands in for; the bar's own background and border show through. */
   .select-bar {
     position: absolute;
-    inset: -1px;
+    inset: 0;
     z-index: 2;
     display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  /* The track row's height (`NowPlayingBar`). */
+  .top {
+    display: flex;
     align-items: center;
-    gap: var(--space-1);
-    padding: 0 var(--space-2) 0 var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--surface);
+    gap: var(--space-3);
+    height: 60px;
+    padding: 0 var(--space-3);
   }
 
   .done {
@@ -81,18 +68,20 @@
   }
 
   .count {
-    margin-left: var(--space-2);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
 
-  .grow {
-    flex: 1;
+  /* Spread as the view buttons are. */
+  .actions {
+    display: flex;
+    justify-content: space-around;
+    padding: var(--space-1) 0 var(--space-2);
   }
 
-  .icon-button {
-    width: 44px;
-    height: 44px;
+  .actions .icon-button {
+    width: 56px;
+    height: 40px;
     color: var(--text);
   }
 </style>
