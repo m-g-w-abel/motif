@@ -31,6 +31,10 @@ grouped by phase of the plan.
 - **Colours fade**: switching theme, the system going light or dark, and a
   new track's cover colours now fade over a quarter of a second instead of
   changing at once (straight away with reduced motion).
+- **Cleaner album covers**: albums and playlists sit straight on the background,
+  with no card border or fill and fully rounded covers; hover, focus and the
+  playing album show on the cover. With titles and artists hidden there is no
+  extra space under the covers.
 - **Phone fixes for now playing and the queue**: buttons respond straight
   after dragging now playing open or closed or dragging a handle, instead of
   ignoring taps for a moment. The album's other images no longer show through
