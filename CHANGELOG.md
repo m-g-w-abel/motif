@@ -3,7 +3,7 @@
 New features and notable changes in Motif, newest first (bug fixes are left
 out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
-## Unreleased: phase 5, Android
+## Phase 5: Android
 
 - **Long press selects**: on phones, a long press on a song, album or playlist
   starts select mode with it picked; taps then pick more. Albums and playlists
