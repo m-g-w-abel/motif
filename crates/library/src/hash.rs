@@ -1,7 +1,7 @@
 //! Audio hashes identify the same recording file across devices even when
 //! its tags differ, because only the audio is hashed.
 
-use std::{fs::File, path::Path};
+use std::path::Path;
 
 use symphonia::core::{
     codecs::{CodecParameters, audio::well_known::CODEC_ID_OPUS},
@@ -56,7 +56,7 @@ type PacketDecoder = dyn FnMut(&Packet, &mut Vec<f32>) -> Result<(), String>;
 /// (interleaved) to `f` with the sample rate and channel count.
 pub fn decode(path: &Path, mut f: impl FnMut(&[f32], u32, usize)) -> Result<(), String> {
     let stream = MediaSourceStream::new(
-        Box::new(File::open(path).map_err(|e| e.to_string())?),
+        engine::audio::ogg::source(path).map_err(|e| e.to_string())?,
         Default::default(),
     );
     let mut reader = symphonia::default::get_probe()

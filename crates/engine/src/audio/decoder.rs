@@ -3,7 +3,6 @@
 //! opens it.
 
 use std::{
-    fs::File,
     io::Read,
     path::{Path, PathBuf},
     process::{Child, ChildStdout, Command, Stdio},
@@ -91,12 +90,12 @@ pub struct Symphonia {
 /// Opens `path` with Symphonia's container readers and returns the reader,
 /// its default audio track and that track's parameters.
 fn demux(path: &Path) -> Result<(Box<dyn FormatReader>, u32, AudioCodecParameters), String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
+    let file = super::ogg::source(path).map_err(|e| e.to_string())?;
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
-    let stream = MediaSourceStream::new(Box::new(file), Default::default());
+    let stream = MediaSourceStream::new(file, Default::default());
     let reader = symphonia::default::get_probe()
         .probe(&hint, stream, Default::default(), Default::default())
         .map_err(|e| e.to_string())?;

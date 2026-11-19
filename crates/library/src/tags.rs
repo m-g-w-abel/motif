@@ -466,7 +466,10 @@ fn opus_with_oversized_cover_still_gets_its_tags() {
     tag.save_to_path(&path, Default::default()).unwrap();
 
     let tags = read(&path);
+    // The hash and loudness decode it too, past the 16 MiB header.
+    let hashed = crate::hash::audio_hash(&path);
     fs::remove_dir_all(&dir).unwrap();
+    assert!(hashed.is_ok(), "{hashed:?}");
     assert_eq!(tags.title.as_deref(), Some("Big cover"));
     assert_eq!(tags.artist.as_deref(), Some("Squid"));
     assert_eq!(tags.codec.as_deref(), Some("Opus"));

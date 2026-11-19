@@ -537,8 +537,11 @@ rounds), RSS 360 MB once the requests stop. Not slower: 22 rounds, not 20.
 The soak also showed that the library listed every Opus track as damaged
 ("unsupported feature: core (codec)"): its hash/waveform/loudness decoder
 was Symphonia alone. Fixed in d46a987 (libopus for Opus, DB version 11
-checks noted files again). Opus files with covers over 16 MB (#137) still
-can't play: Symphonia's Ogg reader refuses packets over 16 MiB.
+checks noted files again). Opus files with covers over 16 MB (#137) couldn't
+play or be hashed on the phone (Symphonia's Ogg reader refuses packets over
+16 MiB, and Android has no FFmpeg): `engine::audio::ogg::source` now reads
+their comment header as an empty one, without moving a byte (2026-11-19;
+DB version 12 checks damaged files again).
 
 Not measured yet: hashing time for the whole library (the generated files
 hash much faster than real ones) and a first scan with the new build.

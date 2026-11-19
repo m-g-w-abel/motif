@@ -163,7 +163,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 11;
+const VERSION: i32 = 12;
 
 fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -274,6 +274,14 @@ fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
             [],
         )?;
     }
+    if version < 12 {
+        // Version 12 decodes Opus whose comment header (cover) is over 16 MiB
+        // (#137): check the damaged files again.
+        conn.execute(
+            "UPDATE tracks SET audio_hash = NULL, problem = NULL WHERE problem IS NOT NULL",
+            [],
+        )?;
+    }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
     }
@@ -346,6 +354,31 @@ mod tests {
         for end in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{end}", file.display()));
         }
+    }
+
+    #[test]
+    fn version_12_checks_damaged_files_again() {
+        let file = std::env::temp_dir().join(format!("motif-db12-{}.db", std::process::id()));
+        let conn = open(&file).unwrap();
+        conn.execute(
+            "INSERT INTO tracks (path, size, mtime, audio_hash, problem)
+             VALUES ('big.opus', 1, 1, '', 'ogg: packet buffer would exceed max size')",
+            [],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 11).unwrap();
+        drop(conn);
+        let conn = open(&file).unwrap();
+        let row: (Option<String>, Option<String>) = conn
+            .query_row("SELECT audio_hash, problem FROM tracks", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        drop(conn);
+        for end in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{end}", file.display()));
+        }
+        assert_eq!(row, (None, None));
     }
 
     const fn rule(key: SortKey, descending: bool) -> SortRule {
