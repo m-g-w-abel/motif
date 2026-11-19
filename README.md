@@ -95,7 +95,7 @@ control isn't an add-on: it's the normal code path.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now
   Playing).
 
-**Android** (in progress): the same engine runs in-process behind the same UI,
+**Android**: the same engine runs in-process behind the same UI,
 with background playback that held up through 30 minutes of forced deep Doze.
 The phone's volume keys and Motif's volume are the same control, whichever
 device sets it; while the phone controls another engine, the keys set that
@@ -136,7 +136,7 @@ Some of the measured results (details in [docs/PLAN.md](docs/PLAN.md)):
 
 ## Roadmap
 
-Next: Android (finishing now), then peer-to-peer sync between devices over
+Next: peer-to-peer sync between devices over
 [iroh](https://iroh.computer) (encrypted, no account), shared jam sessions and
 synchronised listen-along, more sources (internet radio, Subsonic/Jellyfin),
 and audiophile output (bit-perfect/exclusive, EQ, crossfade). The full plan is

@@ -6,9 +6,9 @@ Android, remote control, no central server. Architecture and roadmap:
 [docs/THEMES.md](docs/THEMES.md). How things move (animations, gestures):
 [docs/ANIMATION.md](docs/ANIMATION.md).
 
-Status: phases 1 (desktop player), 2 (looks great), 3 (cheap wins) and 4 (remote control:
-pairing, LAN, MPD) are done; see the notes and measurements in `docs/PLAN.md`. Phase 5
-(Android) is next. Local files play for real (decoder plugins → `pipeline.rs` →
+Status: phases 1 (desktop player), 2 (looks great), 3 (cheap wins), 4 (remote control:
+pairing, LAN, MPD) and 5 (Android) are done; see the notes and measurements in `docs/PLAN.md`.
+Phase 6 (P2P + sync) is next. Local files play for real (decoder plugins → `pipeline.rs` →
 cpal, in `crates/engine/src/audio/`), and the library (`crates/library`) is
 scanned from the folders added in Settings. Data lives in the OS data
 directory (`MOTIF_DATA_DIR` overrides it, handy for tests).

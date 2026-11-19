@@ -235,6 +235,9 @@ be saved back to the file or a sidecar.
 
 ## Phase 5 decisions (2026-11-04)
 
+*Done 2026-11-19: all 55 tickets in the milestone. Signed release builds
+and F-Droid metadata were deferred (below).*
+
 Tickets #117–#133 (milestone "Phase 5").
 - **Storage:** All files access (`MANAGE_EXTERNAL_STORAGE`) with plain paths,
   so the scanner and sidecars work unchanged. Fine off the Play Store.
