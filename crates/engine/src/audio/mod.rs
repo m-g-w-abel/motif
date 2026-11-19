@@ -8,6 +8,7 @@
 
 pub mod bands;
 pub mod decoder;
+pub mod ogg;
 pub mod pipeline;
 
 use std::{

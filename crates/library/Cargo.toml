@@ -10,6 +10,8 @@ license.workspace = true
 blake3 = "1.8.7"
 dirs.workspace = true
 ebur128 = "=0.1.10"
+# Its Ogg source, so files it plays decode here too (hash, loudness).
+engine.workspace = true
 opus = "0.4.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 lofty = "=0.25.4"

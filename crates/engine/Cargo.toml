@@ -20,6 +20,8 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# Same as the library's: writes the oversized Opus cover in ogg.rs tests.
+lofty = "=0.25.4"
 serde_json.workspace = true
 
 [lints]
