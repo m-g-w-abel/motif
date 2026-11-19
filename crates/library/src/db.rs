@@ -163,7 +163,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 12;
+const VERSION: i32 = 13;
 
 fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -282,6 +282,11 @@ fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
             [],
         )?;
     }
+    if version < 13 {
+        // Files stored with no tags at all, from before lofty read such
+        // headers (#148): read them again, since a rescan only reads changes.
+        conn.execute("UPDATE tracks SET mtime = -1 WHERE codec IS NULL", [])?;
+    }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
     }
@@ -357,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn version_12_checks_damaged_files_again() {
+    fn versions_12_and_13_read_damaged_and_untagged_files_again() {
         let file = std::env::temp_dir().join(format!("motif-db12-{}.db", std::process::id()));
         let conn = open(&file).unwrap();
         conn.execute(
@@ -369,16 +374,16 @@ mod tests {
         conn.pragma_update(None, "user_version", 11).unwrap();
         drop(conn);
         let conn = open(&file).unwrap();
-        let row: (Option<String>, Option<String>) = conn
-            .query_row("SELECT audio_hash, problem FROM tracks", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
+        let row: (Option<String>, Option<String>, i64) = conn
+            .query_row("SELECT audio_hash, problem, mtime FROM tracks", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             })
             .unwrap();
         drop(conn);
         for end in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{end}", file.display()));
         }
-        assert_eq!(row, (None, None));
+        assert_eq!(row, (None, None, -1), "its tags are read again too");
     }
 
     const fn rule(key: SortKey, descending: bool) -> SortRule {

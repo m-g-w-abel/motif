@@ -541,7 +541,7 @@ checks noted files again). Opus files with covers over 16 MB (#137) couldn't
 play or be hashed on the phone (Symphonia's Ogg reader refuses packets over
 16 MiB, and Android has no FFmpeg): `engine::audio::ogg::source` now reads
 their comment header as an empty one, without moving a byte (2026-11-19;
-DB version 12 checks damaged files again).
+DB version 12 checks damaged files again, 13 reads the tags of files stored without any).
 
 Not measured yet: hashing time for the whole library (the generated files
 hash much faster than real ones) and a first scan with the new build.
