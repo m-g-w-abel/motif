@@ -526,6 +526,11 @@ phone's 6-slot run likely showed no change because the slot was given back
 before the body was sent, so every full-size cover waiting for the client
 (up to 36 MB each there) was outside the limit; now the body keeps it.
 
+On the phone (2026-11-19, the real app with its 8,181-track collection,
+`ATTACH=127.0.0.1:7799 ADB_PID=<pid> node scripts/soak.mjs art 600`):
+before, master's build peaked at 1,962 MB (20 rounds); after, 663 MB (22
+rounds), RSS 360 MB once the requests stop. Not slower: 22 rounds, not 20.
+
 The soak also showed that the library listed every Opus track as damaged
 ("unsupported feature: core (codec)"): its hash/waveform/loudness decoder
 was Symphonia alone. Fixed in d46a987 (libopus for Opus, DB version 11
