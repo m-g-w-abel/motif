@@ -42,9 +42,9 @@ impl Resolver for LibraryResolver {
         })
     }
 
-    fn measure(&self, tracks: &[TrackRef], wait: bool) {
+    fn measure(&self, tracks: &[TrackRef]) {
         if let Some(library) = &self.library {
-            library.measure(tracks.iter().filter_map(|t| self.path(t)).collect(), wait);
+            library.measure(tracks.iter().filter_map(|t| self.path(t)).collect());
         }
     }
 

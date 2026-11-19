@@ -19,9 +19,8 @@ pub trait Resolver: Send + 'static {
     fn resolve(&self, track: &TrackRef) -> Result<Playable, String>;
 
     /// Measures loudness for ReplayGain where `tracks` have no gain tags or
-    /// measurement yet, in order in the background. With `wait`, the first
-    /// is about to play: return once it is measured (within reason).
-    fn measure(&self, _tracks: &[TrackRef], _wait: bool) {}
+    /// measurement yet, in order in the background (see [`Self::measured`]).
+    fn measure(&self, _tracks: &[TrackRef]) {}
 
     /// Whether measurements finished since the last call, changing what
     /// [`Self::resolve`] returns.

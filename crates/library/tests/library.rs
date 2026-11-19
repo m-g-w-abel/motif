@@ -546,8 +546,15 @@ fn loudness_is_measured_for_untagged_files_then_gives_album_gain() {
     wait_until(&library, |s| s.tracks == 2 && !s.scanning);
     assert_eq!(library.replay_gain(&loud), Default::default(), "untagged");
 
-    library.measure(vec![loud.clone()], true);
-    assert!(library.take_measured());
+    let measured = || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !library.take_measured() {
+            assert!(Instant::now() < deadline, "never measured");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    library.measure(vec![loud.clone()]);
+    measured();
     let gain = library.replay_gain(&loud);
     // A 0.5 sine is -6 dBFS RMS, -9 LUFS with K-weighting at 1 kHz: about -9 dB.
     let track_gain = gain.track_gain.unwrap();
@@ -555,12 +562,8 @@ fn loudness_is_measured_for_untagged_files_then_gives_album_gain() {
     assert!((gain.track_peak.unwrap() - 0.5).abs() < 0.01, "{gain:?}");
     assert_eq!(gain.album_gain, None, "the quiet track isn't measured yet");
 
-    library.measure(vec![quiet.clone()], false);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !library.take_measured() {
-        assert!(Instant::now() < deadline, "never measured");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    library.measure(vec![quiet.clone()]);
+    measured();
     let gain = library.replay_gain(&loud);
     let album_gain = gain.album_gain.unwrap();
     assert!(
@@ -569,7 +572,8 @@ fn loudness_is_measured_for_untagged_files_then_gives_album_gain() {
     );
     assert_eq!(library.replay_gain(&quiet).album_gain, Some(album_gain));
     // Cached: nothing to measure again.
-    library.measure(vec![loud], true);
+    library.measure(vec![loud]);
+    std::thread::sleep(Duration::from_millis(500));
     assert!(!library.take_measured());
 }
 

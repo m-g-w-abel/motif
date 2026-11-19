@@ -143,11 +143,21 @@
   function playRows(start: number) {
     if (shown.length === rows.length && view.kind === 'playlist') return playlists.play(view.id, start);
     if (shown.length === rows.length && view.kind === 'album' && !isDemo) {
-      engine.query({ type: 'play_album', album: view.key, sort: [], start }).catch((e: Error) => (engine.error = e.message));
-      return;
+      return engine.query({ type: 'play_album', album: view.key, sort: [], start }).catch((e: Error) => (engine.error = e.message));
     }
     const kind = view.kind === 'album' ? 'album' : 'list';
     engine.run({ type: 'set_context', tracks: shown.map((r) => r.track), start, kind, label: title });
+  }
+
+  // Pressed from the tap until the engine has started playing (#224).
+  let starting = $state<'play' | 'shuffle' | null>(null);
+  async function start(shuffle: boolean) {
+    starting = shuffle ? 'shuffle' : 'play';
+    try {
+      await (collection ? grid : songList)?.playEverything(shuffle);
+    } finally {
+      starting = null;
+    }
   }
 
   // Recently Added's songs, newest first, as its albums.
@@ -178,10 +188,10 @@
   <div class="actions">
     {#if collection || songView}
       {#if engine.can('playback')}
-        <button class="tool" aria-label="Shuffle" title="Shuffle" onclick={() => (collection ? grid : songList)?.playEverything(true)}>
+        <button class="tool" class:active={starting === 'shuffle'} aria-label="Shuffle" title="Shuffle" aria-busy={starting === 'shuffle'} onclick={() => start(true)}>
           <Icon name="shuffle" size={18} />
         </button>
-        <button class="tool" aria-label="Play" title="Play" onclick={() => (collection ? grid : songList)?.playEverything()}>
+        <button class="tool" class:active={starting === 'play'} aria-label="Play" title="Play" aria-busy={starting === 'play'} onclick={() => start(false)}>
           <Icon name="play" size={18} />
         </button>
       {/if}
