@@ -24,6 +24,7 @@
   import { toasts } from './lib/toast.svelte';
   import { routeVolumeKeys } from './lib/volumeKeys';
   import { remoteMedia, routeRemoteButtons, showRemoteMedia } from './lib/remoteMedia';
+  import { android } from './lib/android';
   import { routeBack } from './lib/back';
   import { parsePairLink } from './lib/discover';
   import { contextMenu } from './lib/contextMenu.svelte';
@@ -74,7 +75,7 @@
   // the accent and the density.
   const prefersDark = new MediaQuery('(prefers-color-scheme: dark)');
   /** Android's font size setting, which the page applies as part of its zoom (1 elsewhere). */
-  const fontScale = (globalThis as { MotifAndroid?: { fontScale?(): number } }).MotifAndroid?.fontScale?.() ?? 1;
+  const fontScale = android?.fontScale() ?? 1;
   const themeId = $derived(
     settings.current.theme === 'system'
       ? SYSTEM_THEMES[prefersDark.current ? 'dark' : 'light']
@@ -308,7 +309,6 @@
 
   // Opened by a motif:// link (`MainActivity.kt`): a launcher shortcut shows its view; a host's
   // pairing page ("Open in Motif") pairs as if its QR was scanned.
-  const android = (globalThis as { MotifAndroid?: { takeLink(): string | null } }).MotifAndroid;
   const takeLink = () => {
     const text = android?.takeLink();
     if (!text) return;

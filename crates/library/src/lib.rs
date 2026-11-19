@@ -285,9 +285,8 @@ impl Library {
                 offset,
                 limit,
             } => {
-                // `rtrim` by every character but the separator leaves the path up to its last one.
                 let mut stmt = conn.prepare(&format!(
-                    "SELECT rtrim(path, replace(path, '{SEP}', '')) AS dir, count(*), sum(coalesce(duration_ms, 0)), max(art)
+                    "SELECT {FOLDER} AS dir, count(*), sum(coalesce(duration_ms, 0)), max(art)
                      FROM tracks GROUP BY dir ORDER BY dir"
                 ))?;
                 let wanted = words(search.as_deref().unwrap_or_default());
@@ -496,9 +495,9 @@ impl Library {
                 ContextKind::List,
             ),
             LibraryQuery::PlayFolder { path, start } => (
+                // The folder's own tracks, as `Folders` counts them.
                 format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} ORDER BY path",
-                    db::UNDER_ROOT
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {FOLDER} = ?1 || '{SEP}' ORDER BY path"
                 ),
                 Some(path.clone()),
                 *start,
@@ -1088,6 +1087,12 @@ const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track
 const SEP: char = '/';
 #[cfg(windows)]
 const SEP: char = '\\';
+/// A track's folder, ending in its separator: `rtrim` by every character but
+/// the separator leaves the path up to its last one.
+#[cfg(not(windows))]
+const FOLDER: &str = "rtrim(path, replace(path, '/', ''))";
+#[cfg(windows)]
+const FOLDER: &str = "rtrim(path, replace(path, '\\', ''))";
 
 /// `text` as lowercase words, split as FTS splits them.
 fn words(text: &str) -> Vec<String> {

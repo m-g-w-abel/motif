@@ -1,3 +1,4 @@
+import { android } from './android';
 import type { ConnectionStatus, EngineClient } from './engine.svelte';
 import type { Command } from './protocol/Command';
 import type { PlaybackStatus } from './protocol/PlaybackStatus';
@@ -28,16 +29,15 @@ export function remoteMedia(
   return { title, artist, album, duration_ms, cover, status: player.status, position_ms: positionMs };
 }
 
-const android = (globalThis as { MotifAndroid?: { setRemoteMedia?(json: string | null): void } }).MotifAndroid;
 const hook = globalThis as { motifRemoteButton?: (command: Command) => void };
 /** Only the Android app has a media notification to show a remote engine in. */
-export const canShowRemoteMedia = typeof android?.setRemoteMedia === 'function';
+export const canShowRemoteMedia = !!android;
 // A reload keeps the activity: without this, the notification stays with nothing to update it.
-android?.setRemoteMedia?.(null);
+android?.setRemoteMedia(null);
 
 /** Shows `media` in the phone's media notification and lock screen; `null` hands them back to the phone's engine. */
 export function showRemoteMedia(media: RemoteMedia | null) {
-  android?.setRemoteMedia?.(media && JSON.stringify(media));
+  android?.setRemoteMedia(media && JSON.stringify(media));
 }
 
 /** Sends the notification's and headset's buttons to `engine` while it's shown. Returns the undo, which hides it. */

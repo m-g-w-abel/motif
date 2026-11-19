@@ -1,5 +1,5 @@
 // Touch screens report :hover for whatever the finger last touched, so rows and
-// tiles look selected after a scroll. Every rule whose selector uses :hover is
+// tiles look selected after a scroll. Every selector that uses :hover is
 // wrapped in @media (hover: hover), so only real pointers get hover styles.
 // Used for component styles (Svelte preprocessor) and app.css (Vite plugin).
 export function gateHover(css) {
@@ -26,11 +26,36 @@ export function gateHover(css) {
       }
       continue;
     }
-    out += prelude.includes(':hover') ? `@media (hover: hover) {${prelude}${src.slice(i, j)}}` : prelude + src.slice(i, j);
+    out += gate(prelude, src.slice(i, j));
     i = j - 1;
     start = j;
   }
   return out + src.slice(start);
+}
+
+/** The rule `selectors` + `block`, with only its selectors that use :hover gated. */
+function gate(selectors, block) {
+  if (!selectors.includes(':hover')) return selectors + block;
+  const parts = topLevel(selectors);
+  const rest = parts.filter((p) => !p.includes(':hover'));
+  const hover = parts.filter((p) => p.includes(':hover'));
+  return (rest.length ? rest.join(',') + block : '') + `@media (hover: hover) {${hover.join(',')}${block}}`;
+}
+
+/** `selectors` split at the commas between them, not those inside `:is(…)` and the like. */
+function topLevel(selectors) {
+  const parts = [];
+  let depth = 0;
+  let from = 0;
+  for (let k = 0; k < selectors.length; k++) {
+    if (selectors[k] === '(') depth++;
+    else if (selectors[k] === ')') depth--;
+    else if (selectors[k] === ',' && !depth) {
+      parts.push(selectors.slice(from, k));
+      from = k + 1;
+    }
+  }
+  return [...parts, selectors.slice(from)];
 }
 
 export const hoverGatePreprocess = { style: ({ content }) => ({ code: gateHover(content) }) };

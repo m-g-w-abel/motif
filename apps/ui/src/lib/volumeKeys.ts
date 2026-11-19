@@ -1,3 +1,4 @@
+import { android } from './android';
 import type { EngineClient } from './engine.svelte';
 import { toasts } from './toast.svelte';
 
@@ -27,7 +28,6 @@ export function volumeKeys(read: () => number | null, send: (volume: number) => 
   };
 }
 
-const android = (globalThis as { MotifAndroid?: { setVolumeKeys(on: boolean): void } }).MotifAndroid;
 const hook = globalThis as { motifVolumeKey?: (direction: 1 | -1) => void };
 // A reload keeps the activity: without this, keys stay caught with nothing to catch them.
 android?.setVolumeKeys(false);
@@ -50,7 +50,7 @@ export function routeVolumeKeys(engine: EngineClient): () => void {
   );
   android.setVolumeKeys(true);
   return () => {
-    android.setVolumeKeys(false);
+    android?.setVolumeKeys(false);
     delete hook.motifVolumeKey;
   };
 }

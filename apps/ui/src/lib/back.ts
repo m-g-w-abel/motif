@@ -1,4 +1,5 @@
 import { onBackButtonPress } from '@tauri-apps/api/app';
+import { android } from './android';
 import type { Drive } from './motion/transition';
 
 /** Something system back closes; listed topmost first. */
@@ -38,7 +39,6 @@ export function backSwipe(layers: () => Layer[]) {
   };
 }
 
-const android = (globalThis as { MotifAndroid?: { moveToBack(): void; followBack?(): void } }).MotifAndroid;
 
 /**
  * Android's back (gesture or button) closes the topmost layer from `layers()`;
@@ -47,10 +47,10 @@ const android = (globalThis as { MotifAndroid?: { moveToBack(): void; followBack
  */
 export function routeBack(layers: () => Layer[]): () => void {
   if (!android) return () => {};
-  const listener = onBackButtonPress(() => closeTop(layers()) || android.moveToBack());
+  const listener = onBackButtonPress(() => closeTop(layers()) || android?.moveToBack());
   const own = globalThis as { motifBack?: ReturnType<typeof backSwipe> };
   own.motifBack = backSwipe(layers);
-  android.followBack?.();
+  android.followBack();
   return () => {
     delete own.motifBack;
     void listener.then((l) => l.unregister());

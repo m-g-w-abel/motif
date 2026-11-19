@@ -259,6 +259,11 @@ Tickets #117–#133 (milestone "Phase 5").
   decode of ~1 s per track on the phone. It now starts at the untagged level,
   is measured in the background, and fades to the measured level over 1.5 s
   (`MEASURED_FADE` in `crates/engine/src/audio/mod.rs`).
+- **Backups leave the engine's identity behind** (2026-11-19): Android's
+  backup and phone-to-phone transfer skip `identity.key`, `pairing.json` and
+  the artwork cache (`res/xml/data_extraction_rules.xml`), so a restored
+  phone is a new engine, not a copy of the old one. Playlists, history and
+  settings move with it.
 - **Deferred:** signed release builds, F-Droid metadata and battery-killer
   testing on release builds.
 

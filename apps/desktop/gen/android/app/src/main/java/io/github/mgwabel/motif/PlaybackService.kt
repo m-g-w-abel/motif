@@ -148,23 +148,33 @@ object Playback {
     sync(context)
   }
 
+  /** Asked to start, and not in the foreground yet (see [started]). */
+  private var starting = false
+  private val idle get() = shown.state != PlaybackStateCompat.STATE_PLAYING && shown.state != PlaybackStateCompat.STATE_PAUSED
+
   /** Runs [PlaybackService] while something plays or is paused. */
   fun sync(context: Context) {
     val service = Intent(context, PlaybackService::class.java)
-    val state = shown.state
     when {
-      state != PlaybackStateCompat.STATE_PLAYING && state != PlaybackStateCompat.STATE_PAUSED ->
-        context.stopService(service)
+      // Stopped before it reached the foreground, Android kills the app; a starting service stops itself.
+      idle -> if (!starting) context.stopService(service)
+      running -> refresh(context)
       // Started once, from the UI that started playback; later changes only redraw it.
-      !running -> try {
+      !starting -> try {
         ContextCompat.startForegroundService(context, service)
+        starting = true
       } catch (e: IllegalStateException) {
         // Android 12+ refuses while the app is in the background (playback started remotely):
         // it plays without the notification until the app is next opened (MediaPlugin.onResume).
         Log.w("Motif", "can't start the playback service", e)
       }
-      else -> refresh(context)
     }
+  }
+
+  /** [service] is in the foreground; it stops if playback stopped meanwhile. */
+  fun started(service: Service) {
+    starting = false
+    if (idle) service.stopSelf()
   }
 
   private fun refresh(context: Context) {
@@ -219,6 +229,7 @@ class PlaybackService : Service() {
       this, Playback.NOTIFICATION, Playback.notification(this),
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0
     )
+    Playback.started(this)
     // Notification buttons.
     intent?.action?.let(Playback::send)
     // Without the engine (the process died) there is nothing to restart.

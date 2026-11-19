@@ -1293,16 +1293,17 @@ fn artists_and_folders_are_searched_and_folders_play() {
     // A folder's own name counts, not the folders above it.
     assert!(folders("artist").is_empty());
 
-    let artist_b = music.join("Artist B").to_str().unwrap().to_string();
-    let Command::SetContext { tracks, label, .. } = library
-        .selection(&LibraryQuery::PlayFolder {
-            path: artist_b,
+    let play = |path: &str| {
+        library.selection(&LibraryQuery::PlayFolder {
+            path: path.into(),
             start: 1,
         })
-        .unwrap()
-    else {
+    };
+    let Command::SetContext { tracks, label, .. } = play(&second[0].path).unwrap() else {
         panic!()
     };
-    assert_eq!(tracks.len(), 2, "tracks in folders below count too");
-    assert_eq!(label.as_deref(), Some("Artist B"));
+    assert_eq!(tracks.len(), 2);
+    assert_eq!(label.as_deref(), Some("Second Album"));
+    // Only a folder's own songs play, as the list counts them.
+    assert!(play(music.join("Artist B").to_str().unwrap()).is_err());
 }

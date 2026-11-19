@@ -107,6 +107,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              file TEXT NOT NULL, hash TEXT,
              PRIMARY KEY (playlist, item)
          );
+         CREATE INDEX IF NOT EXISTS playlist_items_file ON playlist_items (file);
          CREATE TABLE IF NOT EXISTS tracks (
              id INTEGER PRIMARY KEY,
              path TEXT NOT NULL UNIQUE,
@@ -158,12 +159,36 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
          END;",
     )?;
     upgrade(&conn, &path.with_file_name("art"))?;
+    // After the upgrade, which adds `plays.hash`.
+    conn.execute_batch(
+        "-- Entries naming a file get its audio hash once the scanner knows it, so
+         -- they find the file again after it moves (see resolve()).
+         CREATE TRIGGER IF NOT EXISTS tracks_hashed AFTER UPDATE OF audio_hash ON tracks
+         WHEN new.audio_hash != '' BEGIN
+             UPDATE playlist_items SET hash = new.audio_hash WHERE file = new.path AND hash IS NULL;
+             UPDATE plays SET hash = new.audio_hash WHERE track_path = new.path AND hash IS NULL;
+         END;",
+    )?;
     Ok(conn)
+}
+
+/// The library track an entry naming its file (`file`, a column) and its
+/// audio (`hash`) stands for: its file, else a present file with the same
+/// audio (it moved; the same title first, since tracks of silence or
+/// duplicates share audio), else its file marked missing.
+pub fn resolve(file: &str, hash: &str) -> String {
+    format!(
+        "coalesce(
+            (SELECT id FROM tracks WHERE path = {file} AND missing = 0),
+            (SELECT id FROM tracks WHERE audio_hash = {hash} AND missing = 0
+             ORDER BY title IS (SELECT title FROM tracks WHERE path = {file}) DESC, id DESC LIMIT 1),
+            (SELECT id FROM tracks WHERE path = {file}))"
+    )
 }
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 13;
+const VERSION: i32 = 14;
 
 fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -287,6 +312,22 @@ fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
         // headers (#148): read them again, since a rescan only reads changes.
         conn.execute("UPDATE tracks SET mtime = -1 WHERE codec IS NULL", [])?;
     }
+    if version < 14 {
+        // Version 14 notes the audio of each play, so history follows moved
+        // files as playlists do, and fills in what reads used to.
+        let has_hash = conn
+            .prepare("SELECT 1 FROM pragma_table_info('plays') WHERE name = 'hash'")?
+            .exists([])?;
+        if !has_hash {
+            conn.execute("ALTER TABLE plays ADD COLUMN hash TEXT", [])?;
+        }
+        conn.execute_batch(
+            "UPDATE plays SET hash = (SELECT nullif(audio_hash, '') FROM tracks WHERE path = track_path)
+             WHERE hash IS NULL;
+             UPDATE playlist_items SET hash = (SELECT nullif(audio_hash, '') FROM tracks WHERE path = file)
+             WHERE hash IS NULL;",
+        )?;
+    }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
     }
@@ -384,6 +425,42 @@ mod tests {
             let _ = std::fs::remove_file(format!("{}{end}", file.display()));
         }
         assert_eq!(row, (None, None, -1), "its tags are read again too");
+    }
+
+    #[test]
+    fn version_14_gives_old_plays_their_hash() {
+        let file = std::env::temp_dir().join(format!("motif-db14-{}.db", std::process::id()));
+        {
+            // A version 13 library, from before plays had a hash.
+            let conn = Connection::open(&file).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE plays (track_path TEXT NOT NULL, played_at INTEGER NOT NULL,
+                     PRIMARY KEY (track_path, played_at));
+                 INSERT INTO plays VALUES ('a.flac', 100);
+                 PRAGMA user_version = 13;",
+            )
+            .unwrap();
+        }
+        let conn = open(&file).unwrap();
+        conn.execute(
+            "INSERT INTO tracks (path, size, mtime) VALUES ('a.flac', 1, 1)",
+            [],
+        )
+        .unwrap();
+        // The scanner hashes it later.
+        conn.execute(
+            "UPDATE tracks SET audio_hash = 'h' WHERE path = 'a.flac'",
+            [],
+        )
+        .unwrap();
+        let hash: Option<String> = conn
+            .query_row("SELECT hash FROM plays", [], |r| r.get(0))
+            .unwrap();
+        drop(conn);
+        for end in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{end}", file.display()));
+        }
+        assert_eq!(hash.as_deref(), Some("h"));
     }
 
     const fn rule(key: SortKey, descending: bool) -> SortRule {

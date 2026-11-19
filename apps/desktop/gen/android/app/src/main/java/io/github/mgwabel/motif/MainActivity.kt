@@ -26,7 +26,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import org.json.JSONObject
-import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
@@ -240,8 +239,12 @@ class MainActivity : TauriActivity() {
         readTimeout = 5000
         try { inputStream.use(BitmapFactory::decodeStream) } finally { disconnect() }
       }
-    } catch (e: IOException) {
+    } catch (e: Exception) {
       Log.w("Motif", "can't fetch the remote engine's artwork", e)
+      null
+    } catch (e: OutOfMemoryError) {
+      // An uncaught error on this thread would end the app, and the music with it.
+      Log.w("Motif", "the remote engine's artwork is too big", e)
       null
     }
 

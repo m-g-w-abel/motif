@@ -107,10 +107,14 @@ async fn write(file: &Path, value: impl Serialize + Send + 'static) {
 }
 
 /// Writes a temporary file and renames it over `file`, so a kill mid-write
-/// leaves the old one whole.
+/// leaves the old one whole. Synced first: a phone losing power could
+/// otherwise keep the rename but not the bytes, an empty file.
 fn save(file: &Path, value: &impl Serialize) -> std::io::Result<()> {
+    use std::io::Write;
     let temp = file.with_extension("json.tmp");
-    std::fs::write(&temp, serde_json::to_vec(value)?)?;
+    let mut out = std::fs::File::create(&temp)?;
+    out.write_all(&serde_json::to_vec(value)?)?;
+    out.sync_all()?;
     std::fs::rename(temp, file)
 }
 

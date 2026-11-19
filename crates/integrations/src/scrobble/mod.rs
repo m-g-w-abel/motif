@@ -119,32 +119,31 @@ pub fn start(
     settings: watch::Sender<IntegrationSettings>,
     dir: &Path,
 ) {
-    let http = match client() {
-        Ok(http) => http,
-        Err(err) => {
-            tracing::warn!(%err, "no scrobbling: can't make an HTTP client");
-            return;
-        }
-    };
     let (actions, _) = broadcast::channel(64);
-    tokio::spawn(run(
-        ListenBrainz::new(http.clone()),
-        actions.subscribe(),
-        settings.clone(),
-        dir.to_owned(),
-    ));
-    tokio::spawn(run(
-        LastFm::new(http.clone()),
-        actions.subscribe(),
-        settings.clone(),
-        dir.to_owned(),
-    ));
-    tokio::spawn(run(
-        LastFm::libre_fm(http),
-        actions.subscribe(),
-        settings,
-        dir.to_owned(),
-    ));
+    match client() {
+        Ok(http) => {
+            tokio::spawn(run(
+                ListenBrainz::new(http.clone()),
+                actions.subscribe(),
+                settings.clone(),
+                dir.to_owned(),
+            ));
+            tokio::spawn(run(
+                LastFm::new(http.clone()),
+                actions.subscribe(),
+                settings.clone(),
+                dir.to_owned(),
+            ));
+            tokio::spawn(run(
+                LastFm::libre_fm(http),
+                actions.subscribe(),
+                settings,
+                dir.to_owned(),
+            ));
+        }
+        // History is kept anyway.
+        Err(err) => tracing::warn!(%err, "no scrobbling: can't make an HTTP client"),
+    }
     tokio::spawn(follow(engine, library, actions));
 }
 

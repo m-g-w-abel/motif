@@ -10,10 +10,12 @@ use crate::{Library, Result, TRACK_COLUMNS, db, library_album, library_track};
 
 pub(crate) const SCHEMA: &str = "
     -- A listen of the track at track_path that started at played_at (Unix
-    -- seconds). The key makes recording the same listen twice harmless.
+    -- seconds), with its audio hash for when the file moves (db::resolve).
+    -- The key makes recording the same listen twice harmless.
     CREATE TABLE IF NOT EXISTS plays (
         track_path TEXT NOT NULL,
         played_at INTEGER NOT NULL,
+        hash TEXT,
         PRIMARY KEY (track_path, played_at)
     );
     CREATE INDEX IF NOT EXISTS plays_at ON plays (played_at);";
@@ -38,7 +40,8 @@ impl Library {
             return Ok(false);
         };
         let added = self.db().execute(
-            "INSERT OR IGNORE INTO plays (track_path, played_at) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO plays (track_path, played_at, hash)
+             VALUES (?1, ?2, (SELECT nullif(audio_hash, '') FROM tracks WHERE path = ?1))",
             params![path, started_at as i64],
         )?;
         if added > 0 {
@@ -50,13 +53,10 @@ impl Library {
 
     pub(crate) fn recently_played(&self, offset: u32, limit: u32) -> Result<QueryResult> {
         let conn = self.db();
-        let total = conn.query_row(
-            "SELECT count(*) FROM plays JOIN tracks ON path = track_path",
-            [],
-            |r| r.get(0),
-        )?;
+        let played = played();
+        let total = conn.query_row(&format!("SELECT count(*) FROM {played}"), [], |r| r.get(0))?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT {TRACK_COLUMNS}, played_at FROM plays JOIN tracks ON path = track_path
+            "SELECT {TRACK_COLUMNS}, played_at FROM {played}
              ORDER BY played_at DESC, track_path LIMIT ?1 OFFSET ?2"
         ))?;
         let plays = stmt
@@ -76,11 +76,9 @@ impl Library {
 
     pub(crate) fn recently_played_albums(&self, offset: u32, limit: u32) -> Result<QueryResult> {
         let conn = self.db();
+        let played = played();
         let total = conn.query_row(
-            &format!(
-                "SELECT count(DISTINCT {}) FROM plays JOIN tracks ON path = track_path",
-                db::ALBUM_KEY
-            ),
+            &format!("SELECT count(DISTINCT {}) FROM {played}", db::ALBUM_KEY),
             [],
             |r| r.get(0),
         )?;
@@ -89,7 +87,7 @@ impl Library {
                     count(*), sum(coalesce(duration_ms, 0)), max(art)
              FROM tracks JOIN (
                  SELECT {key} AS played_key, max(played_at) AS last
-                 FROM plays JOIN tracks ON path = track_path GROUP BY played_key
+                 FROM {played} GROUP BY played_key
              ) ON played_key = {key}
              GROUP BY k ORDER BY last DESC, k LIMIT ?1 OFFSET ?2",
             key = db::ALBUM_KEY
@@ -103,6 +101,14 @@ impl Library {
             albums,
         })
     }
+}
+
+/// Plays joined with the tracks they stand for.
+fn played() -> String {
+    format!(
+        "plays JOIN tracks ON tracks.id = {}",
+        db::resolve("plays.track_path", "plays.hash")
+    )
 }
 
 #[cfg(test)]
@@ -197,6 +203,36 @@ mod tests {
         assert_eq!(library.status(), after, "nothing new, nothing to refetch");
         assert!(!library.record_play(&local("/elsewhere.flac"), 100).unwrap());
         let QueryResult::Played { total, .. } = library.recently_played(0, 10).unwrap() else {
+            panic!()
+        };
+        assert_eq!(total, 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_moved_file_keeps_its_plays() {
+        let (library, dir) = library();
+        // Played before the scanner hashed it, then found under a new name:
+        // the old row goes missing, a new one has the same audio.
+        library.record_play(&local("/m/a1.flac"), 100).unwrap();
+        library
+            .db()
+            .execute_batch(
+                "UPDATE tracks SET audio_hash = 'h1' WHERE path = '/m/a1.flac';
+                 UPDATE tracks SET missing = 1 WHERE path = '/m/a1.flac';
+                 INSERT INTO tracks (path, size, mtime, title, artist, album, duration_ms, audio_hash)
+                 VALUES ('/m/moved.flac', 1, 1, 'A1', 'Band', 'Alpha', 1000, 'h1');",
+            )
+            .unwrap();
+        let QueryResult::Played { total, plays, .. } = library.recently_played(0, 10).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(total, 1);
+        assert_eq!(plays[0].track.track.id, "/m/moved.flac");
+        assert!(!plays[0].track.missing);
+        let QueryResult::Albums { total, .. } = library.recently_played_albums(0, 10).unwrap()
+        else {
             panic!()
         };
         assert_eq!(total, 1);

@@ -4,26 +4,7 @@
 use protocol::{Playlist, PlaylistEntry};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::{Error, Result, TRACK_COLUMNS, library_track};
-
-/// The library track entry `i` stands for: its file, else a present file
-/// with the same audio (it moved; the same title first, since tracks of
-/// silence or duplicates share audio), else its file marked missing.
-const RESOLVE: &str = "coalesce(
-    (SELECT id FROM tracks WHERE path = i.file AND missing = 0),
-    (SELECT id FROM tracks WHERE audio_hash = i.hash AND missing = 0
-     ORDER BY title IS (SELECT title FROM tracks WHERE path = i.file) DESC, id DESC LIMIT 1),
-    (SELECT id FROM tracks WHERE path = i.file))";
-
-/// Notes the audio hash of entries added before their file was hashed.
-fn fill_hashes(conn: &Connection) -> Result<()> {
-    conn.execute(
-        "UPDATE playlist_items SET hash = (SELECT nullif(audio_hash, '') FROM tracks WHERE path = file)
-         WHERE hash IS NULL",
-        [],
-    )?;
-    Ok(())
-}
+use crate::{Error, Result, TRACK_COLUMNS, db, library_track};
 
 fn exists(conn: &Connection, id: &str) -> Result<()> {
     conn.query_row("SELECT 1 FROM playlists WHERE id = ?1", [id], |_| Ok(()))
@@ -40,13 +21,13 @@ fn name(name: &str) -> Result<&str> {
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Playlist>> {
-    fill_hashes(conn)?;
     let mut stmt = conn.prepare(&format!(
         "SELECT p.id, p.name, count(tracks.id), coalesce(sum(tracks.duration_ms), 0), max(tracks.art)
          FROM playlists p
          LEFT JOIN playlist_items i ON i.playlist = p.id
-         LEFT JOIN tracks ON tracks.id = {RESOLVE}
-         GROUP BY p.id ORDER BY lower(p.name), p.id"
+         LEFT JOIN tracks ON tracks.id = {}
+         GROUP BY p.id ORDER BY lower(p.name), p.id",
+        db::resolve("i.file", "i.hash")
     ))?;
     let playlists = stmt
         .query_map([], |r| {
@@ -63,11 +44,11 @@ pub fn list(conn: &Connection) -> Result<Vec<Playlist>> {
 }
 
 pub fn entries(conn: &Connection, id: &str) -> Result<Vec<PlaylistEntry>> {
-    fill_hashes(conn)?;
     let mut stmt = conn.prepare(&format!(
         "SELECT {TRACK_COLUMNS}, i.item FROM playlist_items i
-         JOIN tracks ON tracks.id = {RESOLVE}
-         WHERE i.playlist = ?1 ORDER BY i.pos"
+         JOIN tracks ON tracks.id = {}
+         WHERE i.playlist = ?1 ORDER BY i.pos",
+        db::resolve("i.file", "i.hash")
     ))?;
     let entries = stmt
         .query_map([id], |r| {
@@ -191,4 +172,56 @@ pub fn move_item(conn: &Connection, id: &str, item: &str, before: Option<&str>) 
     drop(set);
     tx.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use protocol::{LibraryQuery, QueryResult};
+
+    use crate::Library;
+
+    #[test]
+    fn an_entry_added_before_its_file_was_hashed_follows_a_move() {
+        let dir = std::env::temp_dir().join(format!(
+            "motif-playlists-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let library = Library::open(&dir).unwrap();
+        library
+            .db()
+            .execute(
+                "INSERT INTO tracks (path, size, mtime, title) VALUES ('/m/a.flac', 1, 1, 'A')",
+                [],
+            )
+            .unwrap();
+        let create = LibraryQuery::CreatePlaylist {
+            id: "p".into(),
+            name: "P".into(),
+            paths: vec!["/m/a.flac".into()],
+        };
+        library.query(create).unwrap();
+        // Hashed by the scanner, then moved.
+        library
+            .db()
+            .execute_batch(
+                "UPDATE tracks SET audio_hash = 'h1' WHERE path = '/m/a.flac';
+                 UPDATE tracks SET missing = 1 WHERE path = '/m/a.flac';
+                 INSERT INTO tracks (path, size, mtime, title, audio_hash)
+                 VALUES ('/m/moved.flac', 1, 1, 'A', 'h1');",
+            )
+            .unwrap();
+        let Ok(QueryResult::PlaylistTracks { entries }) =
+            library.query(LibraryQuery::PlaylistTracks { id: "p".into() })
+        else {
+            panic!()
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].track.track.id, "/m/moved.flac");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

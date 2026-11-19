@@ -1,3 +1,4 @@
+import { android } from './android';
 import type { Paired } from './protocol/Paired';
 
 /** An engine seen on the LAN (`remote.rs` in the desktop app). */
@@ -25,7 +26,7 @@ export const pairEngine = (address: string, code: string, name: string) => invok
 
 /** Android's Wi-Fi drops multicast packets unless the app holds a lock; held only while browsing. */
 export function holdMulticast(on: boolean) {
-  (globalThis as { MotifAndroid?: { setMulticast(on: boolean): void } }).MotifAndroid?.setMulticast(on);
+  android?.setMulticast(on);
 }
 
 export interface PairLink {

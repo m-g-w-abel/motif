@@ -5,7 +5,17 @@ const squash = (s: string) => s.replace(/\s+/g, '');
 
 describe('gateHover', () => {
   it('wraps rules that use :hover and leaves others', () => {
-    expect(squash(gateHover('a { x: 1 } b:hover:not(:disabled), c { y: 2 } d { z: 3 }'))).toBe('a{x:1}@media(hover:hover){b:hover:not(:disabled),c{y:2}}d{z:3}');
+    expect(squash(gateHover('a { x: 1 } b:hover:not(:disabled) { y: 2 } d { z: 3 }'))).toBe('a{x:1}@media(hover:hover){b:hover:not(:disabled){y:2}}d{z:3}');
+  });
+
+  it('gates only the selectors that use :hover, so the rest still apply on touch', () => {
+    expect(squash(gateHover('.picked, .rows .picked:hover { a: b } button:hover, button:focus-visible { c: d }'))).toBe(
+      '.picked{a:b}@media(hover:hover){.rows.picked:hover{a:b}}button:focus-visible{c:d}@media(hover:hover){button:hover{c:d}}',
+    );
+  });
+
+  it('keeps commas inside parentheses in their selector', () => {
+    expect(squash(gateHover('.hot, .slot:is(:hover, :focus) { a: b }'))).toBe('.hot{a:b}@media(hover:hover){.slot:is(:hover,:focus){a:b}}');
   });
 
   it('gates inside @media, and leaves @keyframes alone', () => {

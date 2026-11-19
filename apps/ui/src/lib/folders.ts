@@ -1,19 +1,6 @@
 import { engines, type EngineClient } from './engine.svelte';
+import { android, type AndroidBridge } from './android';
 import { LOCAL_ID } from './engines';
-
-/** What `MainActivity.kt` adds to the Android app's WebView. */
-interface AndroidStorage {
-  /** All files access (Android 11+) or storage read permission (older). */
-  hasAllFilesAccess(): boolean;
-  /** Opens the system toggle (or asks, before Android 11). */
-  openAllFilesSettings(): void;
-  /** Opens the system folder picker; the tree URI (or null) arrives at `window.motifFolderPicked`. */
-  pickFolder(): void;
-  /** Dark status and navigation bar icons (for a light theme), or light ones. */
-  setBarIconsDark(dark: boolean): void;
-}
-
-const android = (globalThis as { MotifAndroid?: AndroidStorage }).MotifAndroid;
 
 export const setBarIconsDark = (dark: boolean) => android?.setBarIconsDark(dark);
 
@@ -39,7 +26,7 @@ export function treeUriToPath(uri: string): string | null {
   return rest ? `${root}/${rest}` : root;
 }
 
-function pickAndroidFolder(android: AndroidStorage): Promise<string | null> {
+function pickAndroidFolder(android: AndroidBridge): Promise<string | null> {
   return new Promise((resolve) => {
     (window as { motifFolderPicked?: (uri: string | null) => void }).motifFolderPicked = resolve;
     android.pickFolder();
