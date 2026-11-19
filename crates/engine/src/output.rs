@@ -104,7 +104,10 @@ impl Output {
 
         if self.audio.is_none() {
             let device = player.output().map(str::to_string);
-            match Audio::open(device.clone(), self.events.clone(), self.plugins.clone()) {
+            let started = Instant::now();
+            let opened = Audio::open(device.clone(), self.events.clone(), self.plugins.clone());
+            tracing::debug!(took = ?started.elapsed(), "audio open");
+            match opened {
                 Ok(mut audio) => {
                     audio.set_tap(self.tap);
                     self.audio = Some(audio);
@@ -148,7 +151,7 @@ impl Output {
                 Ok(Playable::File(path, tags)) => {
                     if player.measures() && tags.track_gain.is_none() {
                         // Measured before it starts; the engine re-resolves once it is.
-                        resolver.measure(std::slice::from_ref(&next.track), false);
+                        resolver.measure(std::slice::from_ref(&next.track));
                     }
                     Some((next.id, path, tags, factor(player.gain_db(&tags, true))))
                 }

@@ -186,7 +186,7 @@
     if (!count) return;
     try {
       await engine.send({ type: 'set_shuffle', on: shuffle });
-      data.play(shuffle ? Math.floor(Math.random() * count) : 0);
+      await data.play(shuffle ? Math.floor(Math.random() * count) : 0);
     } catch (e) {
       engine.error = (e as Error).message;
     }

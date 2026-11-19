@@ -33,7 +33,8 @@ export interface TrackListData {
   readonly totalMs: number;
   /** Key of the row that is playing, if it is in this list. Getters, so lists stay put when only playback changes. */
   readonly currentKey: string | null;
-  play(index: number): void;
+  /** Settles once the engine has started it, where the source can tell. */
+  play(index: number): void | Promise<unknown>;
   playGroup(group: TrackGroup): void;
   remove?(index: number): void;
   /** Why a row can't be played, where the engine has tried and failed. */
@@ -70,7 +71,7 @@ export function fixedData(
   engine: EngineClient,
   title: string,
   rows: { track: TrackRef; details?: LibraryTrack; item?: string }[],
-  play: (start: number) => void,
+  play: (start: number) => void | Promise<unknown>,
   empty: string,
 ): SongListData {
   return {

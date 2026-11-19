@@ -656,10 +656,9 @@ impl Library {
 
     /// Measures the loudness of the library files at `paths` that have no
     /// ReplayGain tags or cached measurement, in order on a background
-    /// thread. With `wait`, the first is measured before this returns (up to
-    /// a few seconds), for a track about to play.
-    pub fn measure(&self, paths: Vec<PathBuf>, wait: bool) {
-        loudness::request(&self.shared, paths, wait);
+    /// thread; [`Self::take_measured`] says when one is cached.
+    pub fn measure(&self, paths: Vec<PathBuf>) {
+        loudness::request(&self.shared, paths);
     }
 
     /// Whether a measurement was cached since the last call, which can

@@ -55,14 +55,18 @@ impl Live {
 
     /// Plays what the play `query` selects and follows it from now on.
     pub(crate) async fn play(&self, library: &Library, query: LibraryQuery) -> Result<(), String> {
+        let started = std::time::Instant::now();
         let mut source = self.source.lock().await;
+        let locked = started.elapsed();
         let stamp = stamp(&library.status(), &query);
         let (lib, q) = (library.clone(), query.clone());
         let command = tokio::task::spawn_blocking(move || lib.selection(&q))
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
+        let selected = started.elapsed();
         self.engine.send(command).await.map_err(|e| e.to_string())?;
+        tracing::debug!(?locked, ?selected, sent = ?started.elapsed(), "play timings");
         *source = Some(Source { query, stamp });
         Ok(())
     }

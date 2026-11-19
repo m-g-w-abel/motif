@@ -1,11 +1,12 @@
 //! ReplayGain for files without gain tags (#84): EBU R128 integrated
-//! loudness and sample peak, measured when a track is about to play (never
-//! as a library scan) and cached by audio hash. Album gain is made from its
+//! loudness and sample peak, measured in the background when a track starts
+//! playing (never as a library scan; it plays at the untagged level until
+//! then, #224) and cached by audio hash. Album gain is made from its
 //! tracks' measurements once all of them are known.
 
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, atomic::Ordering, mpsc},
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
@@ -16,10 +17,6 @@ use crate::{Shared, hash};
 
 /// ReplayGain 2.0's reference loudness, in LUFS.
 pub const REFERENCE: f64 = -18.0;
-
-/// The longest a track about to play waits for its measurement; a long
-/// hi-res file plays unmeasured rather than keep the listener waiting.
-const WAIT_LIMIT: Duration = Duration::from_secs(5);
 
 /// Integrated loudness in LUFS (`None` if silent) and sample peak of the
 /// file at `path`. With `hash`, also its `pcm-b3:` audio hash from the same
@@ -50,22 +47,12 @@ pub fn measure(path: &Path, hash: bool) -> Result<(Option<f64>, f64, Option<Stri
     ))
 }
 
-/// Measures `paths` that need it: new requests go first, in their order,
-/// ahead of earlier ones still waiting. With `wait`, the first is measured
-/// now and this returns once it is cached (or after [`WAIT_LIMIT`]).
-pub(crate) fn request(shared: &Arc<Shared>, mut paths: Vec<PathBuf>, wait: bool) {
+/// Measures `paths` that need it in the background: new requests go first,
+/// in their order, ahead of earlier ones still waiting.
+pub(crate) fn request(shared: &Arc<Shared>, mut paths: Vec<PathBuf>) {
     {
         let unmeasurable = shared.unmeasurable.lock().unwrap();
         paths.retain(|p| !unmeasurable.contains(p));
-    }
-    if wait && !paths.is_empty() {
-        let (path, (done, finished)) = (paths.remove(0), mpsc::channel());
-        let shared = shared.clone();
-        std::thread::spawn(move || {
-            measure_one(&shared, &path);
-            let _ = done.send(());
-        });
-        let _ = finished.recv_timeout(WAIT_LIMIT);
     }
     if paths.is_empty() {
         return;

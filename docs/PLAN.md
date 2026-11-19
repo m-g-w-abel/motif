@@ -250,6 +250,12 @@ Tickets #117–#133 (milestone "Phase 5").
 - **Gestures** (touch only, also on touchscreen desktops): swipe the bar or
   artwork to skip, swipe a row to queue, long-press it to select (#213), vertical drag on the artwork
   for volume. All remappable (Settings → Gestures: also seek, queue next or none).
+- **Untagged tracks play at once** (#224, 2026-11-19; replaces #84's "wait
+  rather than change level mid-track"): the first play of a file without
+  ReplayGain tags used to wait for its loudness measurement, a whole-file
+  decode of ~1 s per track on the phone. It now starts at the untagged level,
+  is measured in the background, and fades to the measured level over 1.5 s
+  (`MEASURED_FADE` in `crates/engine/src/audio/mod.rs`).
 - **Deferred:** signed release builds, F-Droid metadata and battery-killer
   testing on release builds.
 

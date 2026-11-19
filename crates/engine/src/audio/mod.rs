@@ -433,12 +433,7 @@ impl Feeder {
         // Converted audio not yet in the ring buffer.
         let mut pending: Vec<f32> = Vec::new();
         let mut sent = 0;
-        // The ReplayGain factor last applied, ramped to each track's over ~10 ms,
-        // or faded over about a second when it changes mid-track.
-        let mut applied = 1.0f32;
-        let ramp = 1.0 / (self.rate as f32 * 0.01);
-        let fade = 1.0 / self.rate as f32;
-        let mut step = ramp;
+        let mut level = Level::new(self.rate);
 
         loop {
             let full = self.producer.slots() < self.channels * 256;
@@ -480,8 +475,7 @@ impl Feeder {
                     self.flush(&mut stream, &mut pending, &mut sent);
                     next = None;
                     next_request = None;
-                    applied = gain;
-                    step = ramp;
+                    level.jump(gain);
                     current = self.open(token, item, &path, gain).and_then(|mut loaded| {
                         let reached = if start.is_zero() {
                             Duration::ZERO
@@ -507,7 +501,7 @@ impl Feeder {
                 }
                 Some(Command::Gain { token, gain }) => {
                     if current.as_ref().is_some_and(|loaded| loaded.token == token) {
-                        step = fade;
+                        level.fade(gain);
                     }
                     for loaded in [&mut current, &mut next].into_iter().flatten() {
                         if loaded.token == token {
@@ -527,6 +521,7 @@ impl Feeder {
                 Some(Command::Seek(to)) => {
                     if let Some(loaded) = &mut current {
                         self.flush(&mut stream, &mut pending, &mut sent);
+                        level.settle(loaded.gain);
                         match loaded.decoder.seek(to) {
                             Ok(reached) => self.lock().start(
                                 stream.next_frame(),
@@ -573,7 +568,7 @@ impl Feeder {
                             next = self.open(token, item, &path, gain);
                         }
                         current = next.take();
-                        step = ramp;
+                        level.next_track();
                         match &current {
                             Some(n) => self.lock().start(
                                 stream.next_frame(),
@@ -595,7 +590,7 @@ impl Feeder {
                         current = None;
                     }
                 }
-                apply_gain(&mut pending, self.channels, &mut applied, gain, step);
+                level.apply(&mut pending, self.channels, gain);
             }
 
             // Move pending audio into the ring buffer, whole frames at a time.
@@ -655,31 +650,137 @@ impl Feeder {
     }
 }
 
-/// Scales `samples` by `target`, moving `applied` towards it by at most
-/// `step` per frame so a change of gain doesn't click.
-fn apply_gain(samples: &mut [f32], channels: usize, applied: &mut f32, target: f32, step: f32) {
-    if *applied == target && target == 1.0 {
-        return;
+/// How long a mid-track change of ReplayGain (a measurement finishing after
+/// the track started, #224) takes to reach the new level.
+const MEASURED_FADE: Duration = Duration::from_millis(1500);
+
+/// The ReplayGain factor as applied, ramped to each track's over ~10 ms, or
+/// faded over [`MEASURED_FADE`] when it changes mid-track.
+struct Level {
+    applied: f32,
+    step: f32,
+    rate: f32,
+}
+
+impl Level {
+    fn new(rate: u32) -> Self {
+        Self {
+            applied: 1.0,
+            step: 0.0,
+            rate: rate as f32,
+        }
     }
-    for frame in samples.chunks_mut(channels) {
-        *applied += (target - *applied).clamp(-step, step);
-        for sample in frame {
-            *sample *= *applied;
+
+    /// A track loaded from scratch: its gain at once.
+    fn jump(&mut self, gain: f32) {
+        self.applied = gain;
+        self.next_track();
+    }
+
+    /// The next track starts gaplessly: ramp to its gain quickly.
+    fn next_track(&mut self) {
+        self.step = 1.0 / (self.rate * 0.01);
+    }
+
+    /// The playing track's gain changed to `gain`: fade to it.
+    fn fade(&mut self, gain: f32) {
+        self.step = (gain - self.applied).abs() / (self.rate * MEASURED_FADE.as_secs_f32());
+    }
+
+    /// A seek is a cut anyway: no fade left to hear.
+    fn settle(&mut self, gain: f32) {
+        self.applied = gain;
+    }
+
+    /// Scales `samples` by `target`, moving towards it by at most a step per
+    /// frame so a change of gain doesn't click.
+    fn apply(&mut self, samples: &mut [f32], channels: usize, target: f32) {
+        if self.applied == target && target == 1.0 {
+            return;
+        }
+        for frame in samples.chunks_mut(channels) {
+            self.applied += (target - self.applied).clamp(-self.step, self.step);
+            for sample in frame {
+                *sample *= self.applied;
+            }
         }
     }
 }
 
 #[cfg(test)]
-#[test]
-fn gain_changes_ramp() {
-    let mut samples = vec![1.0; 8];
-    let mut applied = 1.0;
-    apply_gain(&mut samples, 2, &mut applied, 0.5, 0.2);
-    assert_eq!(applied, 0.5);
-    let left: Vec<f32> = samples
-        .iter()
-        .step_by(2)
-        .map(|s| (s * 10.0).round() / 10.0)
-        .collect();
-    assert_eq!(left, [0.8, 0.6, 0.5, 0.5]);
+mod tests {
+    use super::*;
+
+    /// Applies `target` to `frames` mono frames of 1.0, returning each frame's level.
+    fn run(level: &mut Level, frames: usize, target: f32) -> Vec<f32> {
+        let mut samples = vec![1.0; frames];
+        level.apply(&mut samples, 1, target);
+        samples
+    }
+
+    #[test]
+    fn a_new_track_ramps_quickly_to_its_gain() {
+        // 1000 Hz: the ramp moves 0.1 a frame (a whole 1.0 in 10 ms).
+        let mut level = Level::new(1000);
+        level.jump(1.0);
+        level.next_track();
+        let heard = run(&mut level, 12, 0.5);
+        assert!((heard[1] - 0.8).abs() < 1e-6, "{heard:?}");
+        assert_eq!(heard[4..], [0.5; 8]);
+    }
+
+    #[test]
+    fn a_measured_gain_fades_in_over_the_fade_length() {
+        let mut level = Level::new(1000);
+        level.jump(1.0);
+        level.fade(0.5);
+        let frames = MEASURED_FADE.as_millis() as usize;
+        let heard = run(&mut level, frames + 10, 0.5);
+        let steps = heard.windows(2).map(|w| (w[1] - w[0]).abs());
+        assert!(
+            steps.fold(0.0, f32::max) <= 0.5 / frames as f32 + 1e-6,
+            "no jumps"
+        );
+        assert!(
+            (heard[frames / 2 - 1] - 0.75).abs() < 0.01,
+            "linear: {}",
+            heard[frames / 2 - 1]
+        );
+        assert!(heard[frames - 2] > 0.5, "still fading just before the end");
+        // Within a frame of the length: the steps add up in floating point.
+        assert_eq!(heard[frames..], [0.5; 10], "then holds the measured level");
+    }
+
+    #[test]
+    fn a_new_track_or_seek_mid_fade_ends_the_fade() {
+        let mut level = Level::new(1000);
+        level.jump(1.0);
+        level.fade(0.5);
+        run(&mut level, 100, 0.5);
+        level.jump(0.8);
+        assert_eq!(
+            run(&mut level, 3, 0.8),
+            [0.8; 3],
+            "a loaded track starts at its gain"
+        );
+
+        level.fade(0.4);
+        run(&mut level, 100, 0.4);
+        level.settle(0.4);
+        assert_eq!(
+            run(&mut level, 3, 0.4),
+            [0.4; 3],
+            "a seek lands on the target"
+        );
+
+        level.fade(1.0);
+        run(&mut level, 100, 1.0);
+        level.next_track();
+        let heard = run(&mut level, 12, 0.6);
+        assert_eq!(
+            heard[9..],
+            [0.6; 3],
+            "the next track ramps quickly from where the fade was"
+        );
+    }
 }
