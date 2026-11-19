@@ -80,9 +80,10 @@ struct AppState {
     art_slots: Arc<Semaphore>,
 }
 
-/// Artwork requests served at once: enough to fill a screen of covers
-/// without waiting, while capping the memory peak of a large grid.
-const ART_SLOTS: usize = 50;
+/// Artwork requests served at once, each until its body is sent. A browser
+/// asks a host for 6 at a time anyway; more let several clients (or the soak
+/// test) decode dozens of 3000 px covers together: 2.5 GB peaks (#133).
+const ART_SLOTS: usize = 6;
 
 /// Binds the listener and returns its address plus a future that serves it.
 /// Binding first lets callers use port 0 and learn the real port. While the
@@ -292,11 +293,15 @@ async fn art(
     let Some(library) = state.library else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let _slot = state.art_slots.acquire().await;
+    let Ok(slot) = state.art_slots.clone().acquire_owned().await else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
     let image = tokio::task::spawn_blocking(move || library.art_image(&key, params.size)).await;
     match image {
         Ok(Ok((bytes, media_type))) => {
+            let length = bytes.len().to_string();
             let headers = [
+                (header::CONTENT_LENGTH, length.as_str()),
                 (header::CONTENT_TYPE, media_type),
                 (
                     header::CACHE_CONTROL,
@@ -304,7 +309,15 @@ async fn art(
                 ),
                 (header::VARY, "origin"),
             ];
-            let mut response = (headers, bytes).into_response();
+            // The body keeps the slot until it is sent or dropped, so the
+            // images waiting for slow clients count too.
+            let body = futures_util::stream::iter([Ok::<_, std::convert::Infallible>(bytes)]).map(
+                move |chunk| {
+                    let _ = &slot;
+                    chunk
+                },
+            );
+            let mut response = (headers, axum::body::Body::from_stream(body)).into_response();
             // The desktop window's page has another origin than this server,
             // and it reads the cover's pixels for art colours. `authorise`
             // has already refused local pages from other origins.

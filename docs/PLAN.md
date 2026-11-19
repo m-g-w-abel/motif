@@ -510,8 +510,21 @@ smaller phone could kill the app at such a peak. A separate `art` run (10
 min, 20 rounds, library re-hashing in the background) reached 1.3 GB, so
 the covers do cause it. Serving 6 covers at once instead of 50 (`ART_SLOTS`)
 made no difference (1.17 GB, 22 rounds), so it isn't the decodes at once.
-Still open: where it goes (heap profile, or the allocator keeping freed
-memory: RSS falls back only minutes after the requests stop).
+**Where it went** (desktop, 2026-11-19, the soak's `art` step for 2 min on
+100 albums with 4 MB 3000 px embedded covers; `peak` is VmHWM, which the
+soak now logs, as the once-a-minute samples miss peaks):
+
+| `ART_SLOTS` | Slot held | Peak RSS | Rounds |
+|---|---|---|---|
+| 50 | until the handler returns | 2,483 MB | 305 in 3 min |
+| 6 | until the handler returns | 493 MB | 240 |
+| 6 | until the body is sent | 442 MB | 244 |
+
+So it is the decodes at once (each 3000 px cover is ~30–40 MB decoded):
+`ART_SLOTS` is now 6, as many as a browser asks one host for anyway. The
+phone's 6-slot run likely showed no change because the slot was given back
+before the body was sent, so every full-size cover waiting for the client
+(up to 36 MB each there) was outside the limit; now the body keeps it.
 
 The soak also showed that the library listed every Opus track as damaged
 ("unsupported feature: core (codec)"): its hash/waveform/loudness decoder

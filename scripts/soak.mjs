@@ -48,7 +48,7 @@ const data = path.join(dir, "data");
 let status;
 if (attach) {
   const pid = process.env.ADB_PID;
-  status = () => pid ? execFileSync("adb", ["shell", `cat /proc/${pid}/status`], { encoding: "utf8" }) : "VmRSS: 0";
+  status = () => pid ? execFileSync("adb", ["shell", `cat /proc/${pid}/status`], { encoding: "utf8" }) : "VmRSS: 0\nVmHWM: 0";
 } else {
   fs.rmSync(data, { recursive: true, force: true });
   const engine = spawn(bin, [], {
@@ -58,7 +58,8 @@ if (attach) {
   process.on("exit", () => engine.kill());
   status = () => fs.readFileSync(`/proc/${engine.pid}/status`, "utf8");
 }
-const rss = () => Number(/VmRSS:\s+(\d+)/.exec(status())[1]) / 1024;
+// VmHWM is the peak RSS so far, which the once-a-minute samples can miss.
+const mb = (field) => Number(new RegExp(`${field}:\\s+(\\d+)`).exec(status())?.[1] ?? 0) / 1024;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function open() {
@@ -120,7 +121,7 @@ const steps = {
 };
 
 const start = Date.now();
-const log = () => console.log(`${Math.round((Date.now() - start) / 1000)}s rss=${rss().toFixed(1)}MB`);
+const log = () => console.log(`${Math.round((Date.now() - start) / 1000)}s rss=${mb("VmRSS").toFixed(1)}MB peak=${mb("VmHWM").toFixed(1)}MB`);
 log();
 const timer = setInterval(log, 60000);
 let round = 0;
