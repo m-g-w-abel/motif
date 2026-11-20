@@ -18,3 +18,18 @@ export function nextRating(current: number | null, stars: number): number | null
 export function starsLabel(stars: number): string {
   return `${stars} ${stars === 1 ? 'star' : 'stars'}`;
 }
+
+export type MarkAction = 'love' | 'unlove' | 'clear';
+
+/**
+ * What a set of songs' menu offers for the Hearts or Stars setting (`marks`: what each shows, `undefined` while
+ * not known): Love if any isn't loved, Unlove if any is, so a mix shows both; Clear rating if any is rated.
+ */
+export function markActions(style: RatingStyle, marks: ({ favourite: boolean; rating: number | null } | null | undefined)[]): MarkAction[] {
+  if (!marks.length) return [];
+  if (style === 'stars') return marks.some((m) => m?.rating != null) ? ['clear'] : [];
+  const actions: MarkAction[] = [];
+  if (marks.some((m) => !m?.favourite)) actions.push('love');
+  if (marks.some((m) => m?.favourite)) actions.push('unlove');
+  return actions;
+}
