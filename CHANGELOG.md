@@ -3,6 +3,14 @@
 New features and notable changes in Motif, newest first (bug fixes are left
 out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
+## Phase 6: Sync
+
+- **Stars or hearts**: rate songs with stars (a rating column in the table, the
+  now-playing sheet) or love them with a heart (a song's menu), as you choose
+  in Settings → Interface; the other is hidden and nothing is lost by
+  switching. Lists sort by it, hearts have a Favourites view in the Library,
+  and both follow a file when it moves.
+
 ## Phase 5: Android
 
 - **Long press selects**: on phones, a long press on a song, album or playlist

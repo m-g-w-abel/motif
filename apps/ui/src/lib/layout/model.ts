@@ -10,7 +10,7 @@ export const LAYOUT_VERSION = 1;
 export const LAYOUT_ICONS = ['list', 'grid', 'split', 'info', 'columns'] as const;
 export type LayoutIcon = (typeof LAYOUT_ICONS)[number];
 
-export const COLUMNS = ['index', 'title', 'artist', 'album', 'format', 'duration'] as const;
+export const COLUMNS = ['index', 'title', 'artist', 'album', 'format', 'rating', 'duration'] as const;
 export type Column = (typeof COLUMNS)[number];
 
 /** `table`: one row per track with column headers. `grouped`: tracks under album headers. */

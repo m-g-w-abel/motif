@@ -662,6 +662,10 @@
       display: inline;
     }
 
+    .details :global(.hero .marks) {
+      justify-content: center;
+    }
+
     .more {
       display: block;
       padding: var(--space-3) 0;

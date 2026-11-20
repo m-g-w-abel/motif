@@ -6,11 +6,12 @@ export const DEFAULT_WIDTHS: Record<Column, number> = {
   artist: 190,
   album: 210,
   format: 72,
+  rating: 84,
   duration: 64,
 };
 
 /** Small columns that keep their width when space runs out. */
-const COMPACT = new Set<Column>(['index', 'format', 'duration']);
+const COMPACT = new Set<Column>(['index', 'format', 'rating', 'duration']);
 
 /** Width the `#` column needs for numbers up to `count`: cell padding plus digits (tabular, ~0.62em at the smallest font) with some slack. */
 export const indexWidth = (count: number) => Math.max(44, 20 + 8 * String(Math.max(1, count)).length);

@@ -1,5 +1,6 @@
 import type { ArtColours } from './artAccent';
 import type { Action, Gesture, Overrides, Surface } from './gestures';
+import type { RatingStyle } from './ratings';
 import { withOptions, type OptionsKey, type SavedOptions, type ViewOptions } from './viewOptions';
 
 /**
@@ -17,6 +18,8 @@ export interface Settings {
   scale: number;
   /** A font family list that overrides the theme's; empty keeps the theme's (or the app's). */
   font: string;
+  /** Songs are rated in stars or loved with a heart; the other mark is hidden everywhere (both stay stored). */
+  ratings: RatingStyle;
   /** The always-visible player: a bar along the bottom, or a floating widget. */
   player: 'bar' | 'floating';
   /** The full seek bar draws the track's waveform, or a plain line. */
@@ -42,6 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   density: 'compact',
   scale: 100,
   font: '',
+  ratings: 'stars',
   player: 'bar',
   seekBar: 'waveform',
   navCollapsed: false,

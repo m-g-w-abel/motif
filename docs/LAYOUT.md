@@ -135,8 +135,10 @@ The tracks of whatever is being browsed.
 | `max-width` | pixels; centres the list at this width on wide screens |
 
 Child `columns` lists the columns in order: `index`, `title`, `artist`,
-`album`, `format`, `duration`. Defaults: `columns index title artist album
+`album`, `format`, `rating`, `duration`. Defaults: `columns index title artist album
 duration` without album breaks, `columns index artist title duration` with them.
+
+`rating` shows five stars you click to rate a song (whole stars; clicking the lit star clears it), or, with the Hearts setting, a heart on loved songs. Its header sorts by rating or by loved.
 
 Title takes the remaining width. Drag the edge between two column headers to
 move it (double-click to reset). Widths are remembered per layout on each

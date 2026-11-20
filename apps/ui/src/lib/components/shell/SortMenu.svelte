@@ -4,7 +4,7 @@
   import { onDestroy } from 'svelte';
   import { getApp } from '../../context';
   import { moveItem } from '../../reorder';
-  import { SORT_KEYS } from '../../sort.svelte';
+  import { SORT_KEYS, sortKeysFor } from '../../sort.svelte';
   import Icon from '../Icon.svelte';
   import { surface } from '../../motion/surface';
   import ReorderList from '../ReorderList.svelte';
@@ -31,11 +31,11 @@
   } = $props();
 
   // Open state lives in `views`, so Android back closes the menu before leaving the view.
-  const { views } = getApp();
+  const { views, settings } = getApp();
   onDestroy(() => (views.sorting = false));
   let menu = $state<HTMLElement>();
   let button = $state<HTMLElement>();
-  const sortKeys = Object.keys(SORT_KEYS) as SortKey[];
+  const sortKeys = $derived(sortKeysFor(settings.current.ratings));
   const same = (a: readonly SortRule[], b: readonly SortRule[]) =>
     a.length === b.length && a.every((r, i) => r.key === b[i].key && r.descending === b[i].descending);
 

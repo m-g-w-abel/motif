@@ -507,6 +507,23 @@ pub enum SortKey {
     Duration,
     Format,
     Path,
+    /// Favourites first when descending.
+    Favourite,
+    /// Half stars; unrated tracks count as none.
+    Rating,
+}
+
+/// Which tracks a list holds besides its search: both limits apply.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TrackFilter {
+    /// Only favourites.
+    #[serde(default)]
+    pub favourite: bool,
+    /// Only tracks rated at least this many half stars (1 to 10).
+    #[serde(default)]
+    #[ts(optional)]
+    pub min_rating: Option<u8>,
 }
 
 /// One tier of a list's order.
@@ -530,6 +547,8 @@ pub enum LibraryQuery {
         search: Option<String>,
         #[serde(default)]
         sort: Vec<SortRule>,
+        #[serde(default)]
+        filter: TrackFilter,
         offset: u32,
         limit: u32,
     },
@@ -596,6 +615,8 @@ pub enum LibraryQuery {
         search: Option<String>,
         #[serde(default)]
         sort: Vec<SortRule>,
+        #[serde(default)]
+        filter: TrackFilter,
         start: u32,
     },
     PlayAlbum {
@@ -627,6 +648,17 @@ pub enum LibraryQuery {
         path: String,
     },
     Rescan,
+    /// Marks or unmarks the library tracks at `paths` as favourites. Safe to repeat.
+    SetFavourite {
+        paths: Vec<String>,
+        favourite: bool,
+    },
+    /// Rates the library tracks at `paths` in half stars (1 to 10), or clears
+    /// their rating with `None`. Safe to repeat.
+    SetRating {
+        paths: Vec<String>,
+        rating: Option<u8>,
+    },
     /// Whether changes made outside Motif (files added, edited or removed by
     /// other programs) are picked up as they happen. Rescan picks them up
     /// either way.
@@ -829,6 +861,9 @@ pub struct LibraryStatus {
     /// Bumped whenever a track counts as played (Recently Played changes).
     #[ts(type = "number")]
     pub plays: u64,
+    /// Bumped whenever a favourite mark or rating changes.
+    #[ts(type = "number")]
+    pub ratings: u64,
     pub error: Option<String>,
 }
 
@@ -859,6 +894,9 @@ pub struct LibraryTrack {
     pub missing: bool,
     /// Why the file can't be played, if it is damaged.
     pub problem: Option<String>,
+    pub favourite: bool,
+    /// Half stars, 1 to 10; none if unrated.
+    pub rating: Option<u8>,
 }
 
 /// A library track and when it was played.

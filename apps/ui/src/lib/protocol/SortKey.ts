@@ -3,4 +3,4 @@
 /**
  * What a library list can be ordered by.
  */
-export type SortKey = "album_artist" | "artist" | "album" | "year" | "added" | "title" | "genre" | "disc" | "track" | "duration" | "format" | "path";
+export type SortKey = "album_artist" | "artist" | "album" | "year" | "added" | "title" | "genre" | "disc" | "track" | "duration" | "format" | "path" | "favourite" | "rating";

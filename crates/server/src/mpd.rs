@@ -1093,6 +1093,7 @@ impl Client {
         let query = LibraryQuery::Tracks {
             search: None,
             sort: Vec::new(),
+            filter: Default::default(),
             offset: 0,
             limit: u32::MAX,
         };
@@ -1455,6 +1456,8 @@ mod tests {
             art: None,
             missing: false,
             problem: None,
+            favourite: false,
+            rating: None,
         }
     }
 

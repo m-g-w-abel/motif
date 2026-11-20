@@ -32,4 +32,8 @@ playlists: number,
 /**
  * Bumped whenever a track counts as played (Recently Played changes).
  */
-plays: number, error: string | null, };
+plays: number, 
+/**
+ * Bumped whenever a favourite mark or rating changes.
+ */
+ratings: number, error: string | null, };

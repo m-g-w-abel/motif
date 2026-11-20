@@ -6,13 +6,15 @@
   import { HELP_URL, openUrl } from '../../openUrl';
   import type { MenuItem } from '../../contextMenu.svelte';
   import { pickActions, runPick, type PickAction, type Picking } from '../../picking';
+  import type { TrackRef } from '../../protocol/TrackRef';
+  import { markActions, type MarkAction } from '../../ratings';
   import Icon from '../Icon.svelte';
 
   // The phone bar's menu, grown up out of the bar (`NowPlayingBar`): the
   // connection, which opens the engine switcher in its place, then Settings, Changelog and Help.
   // In select mode, the select bar's ⋮ opens it with the actions that don't fit on the bar,
   // and its Add to playlist with the playlists to add to (`Playlists.choices`).
-  const { engine, playlists, settingsView, views } = getApp();
+  const { engine, library, playlists, settings: prefs, settingsView, views } = getApp();
   const statusLabel = { connecting: 'connecting…', open: 'connected', closed: 'disconnected' };
 
   // One of the select bar's menus, which keeps showing what it showed while it closes.
@@ -24,6 +26,32 @@
     return kept;
   });
   const more = $derived(shown?.mode === 'select' ? pickActions(shown.picking, { playback: false, queue: engine.can('queue'), playlist: false }).more : null);
+  // The songs the select bar acts on, to offer Love, Unlove or Clear rating by what they show.
+  let picked = $state.raw<TrackRef[]>([]);
+  $effect(() => {
+    const on = shown?.mode === 'select' ? shown.picking : null;
+    if (!on) return;
+    let current = true;
+    Promise.resolve(on.tracks())
+      .then((tracks) => current && (picked = tracks))
+      .catch(() => current && (picked = []));
+    return () => (current = false);
+  });
+  const marks = $derived.by(() => {
+    if (!more || !engine.can('library')) return [];
+    const local = picked.filter((t) => t.source === 'local');
+    return markActions(prefs.current.ratings, local.map((t) => library.details(t)));
+  });
+  const MARK_LABELS: Record<MarkAction, string> = { love: 'Love', unlove: 'Unlove', clear: 'Clear rating' };
+
+  function mark(action: MarkAction) {
+    const on = shown?.picking;
+    views.menu = null;
+    if (action === 'clear') library.setRating(picked, null);
+    else library.setFavourite(picked, action === 'love');
+    on?.done();
+  }
+
   const choices = $derived(shown?.mode === 'playlist' ? playlists.choices(shown.picking.tracks(), shown.picking.done) : null);
 
   function pick(id: Exclude<PickAction['id'], 'playlist'>) {
@@ -66,6 +94,9 @@
   {#if more}
     {#each more as action (action.id)}
       <button class="item" class:danger={action.id === 'delete'} onclick={() => pick(action.id)}>{action.label}</button>
+    {/each}
+    {#each marks as action (action)}
+      <button class="item" onclick={() => mark(action)}>{MARK_LABELS[action]}</button>
     {/each}
   {:else if choices}
     <!-- By position: playlists may share a name. -->

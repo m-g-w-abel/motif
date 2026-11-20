@@ -416,6 +416,8 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | LibraryQuery::Rescan
             | LibraryQuery::SetWatching { .. }
             | LibraryQuery::SaveLyrics { .. }
+            | LibraryQuery::SetFavourite { .. }
+            | LibraryQuery::SetRating { .. }
             | LibraryQuery::CreatePlaylist { .. }
             | LibraryQuery::RenamePlaylist { .. }
             | LibraryQuery::DeletePlaylist { .. }

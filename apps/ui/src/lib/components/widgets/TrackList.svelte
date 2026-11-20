@@ -16,6 +16,7 @@
   import { menu } from '../../contextMenu.svelte';
   import { gesture, mapped, swipeRow } from '../../gestures';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
+  import Stars from '../Stars.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, indexWidth, visibleRange } from '../../table';
@@ -70,18 +71,20 @@
     artist: 'Artist',
     album: 'Album',
     format: 'Format',
+    rating: 'Rating',
     duration: 'Time',
   };
 
   // Header clicks sort the library by that column for now; the saved rules
   // (the toolbar's sort menu) stay as they are. The demo library doesn't sort.
-  const sortKeys: Partial<Record<Column, SortKey>> = {
+  const sortKeys: Partial<Record<Column, SortKey>> = $derived({
     title: 'title',
     artist: 'artist',
     album: 'album',
     format: 'format',
+    rating: settings.current.ratings === 'hearts' ? 'favourite' : 'rating',
     duration: 'duration',
-  };
+  });
   const sortable = (column: Column) => (browsing && !isDemo ? sortKeys[column] : undefined);
   function sortState(column: Column): 'ascending' | 'descending' | undefined {
     const oneOff = view.browse.oneOff;
@@ -436,6 +439,8 @@
         return t.album ?? '';
       case 'format':
         return trackFormat(t);
+      case 'rating':
+        return ''; // drawn in the cell
       case 'duration':
         return t.duration_ms ? formatTime(t.duration_ms) : '';
     }
@@ -587,6 +592,7 @@
               {@const track = data.track(i)}
               {@const key = data.key(i)}
               {@const error = data.error?.(i)}
+              {@const details = data.details?.(i)}
               <tr
                 class="track"
                 class:alt={i % 2 === 1}
@@ -606,13 +612,19 @@
                 onclick={(e) => release(e, i)}
                 onauxclick={(e) => e.button === 1 && queueRow(i)}
                 ondblclick={() => data.play(i)}
-                onkeydown={(e) => onKey(e, i)}
-                use:menu={() => trackMenu(engine, playlists, data, view, i)}
+                onkeydown={(e) => e.target === e.currentTarget && onKey(e, i)}
+                use:menu={() => trackMenu(engine, library, settings.current.ratings, playlists, data, view, i)}
               >
                 {#each shown as column (column)}
                   <td class={column}>
                     {#if column === 'index' && key === currentKey}
                       <Icon name={engine.player?.status === 'playing' ? 'play' : 'pause'} size={10} />
+                    {:else if column === 'rating'}
+                      {#if settings.current.ratings === 'hearts'}
+                        {#if details?.favourite}<span class="loved" aria-label="Loved"><Icon name="heart" size={13} solid /></span>{/if}
+                      {:else if track && engine.can('library')}
+                        <Stars rating={details?.rating ?? null} size={13} tabbable={false} set={(rating) => library.setRating([track], rating)} />
+                      {/if}
                     {:else}
                       {cell(column, i)}
                       {#if column === 'title' && error}<span class="reason">{error}</span>{/if}
@@ -796,6 +808,11 @@
   th.index .label,
   th.duration .label {
     padding-right: 6px;
+  }
+
+  .loved {
+    display: inline-flex;
+    color: var(--accent);
   }
 
   .format {

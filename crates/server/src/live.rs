@@ -191,6 +191,7 @@ mod tests {
             let query = LibraryQuery::Tracks {
                 search: None,
                 sort: vec![],
+                filter: Default::default(),
                 offset: 0,
                 limit: 10,
             };
@@ -226,6 +227,7 @@ mod tests {
         let play = LibraryQuery::Play {
             search: None,
             sort: vec![],
+            filter: Default::default(),
             start: 0,
         };
         live.play(&library, play).await.unwrap();

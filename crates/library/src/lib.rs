@@ -7,6 +7,8 @@
 //! and so is the loudness of files without ReplayGain tags. Lyrics are read
 //! when asked for, LRCLIB's cached by audio hash.
 
+#[macro_use]
+mod ratings;
 mod db;
 mod hash;
 mod history;
@@ -171,17 +173,22 @@ impl Library {
             LibraryQuery::Tracks {
                 search,
                 sort,
+                filter,
                 offset,
                 limit,
             } => {
                 let fts = db::fts_query(search.as_deref());
+                let filter = ratings::filter(&filter);
                 let total = conn.query_row(
-                    &format!("SELECT count(*) FROM tracks WHERE {}", db::SEARCH),
+                    &format!(
+                        "SELECT count(*) FROM tracks WHERE {} AND {filter}",
+                        db::SEARCH
+                    ),
                     [&fts],
                     |r| r.get(0),
                 )?;
                 let mut stmt = conn.prepare(&format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} {} LIMIT ?2 OFFSET ?3",
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} AND {filter} {} LIMIT ?2 OFFSET ?3",
                     db::SEARCH,
                     db::order(&sort)
                 ))?;
@@ -391,6 +398,16 @@ impl Library {
                 playlists::move_item(&conn, &id, &item, before.as_deref())?;
                 self.playlists_changed()
             }
+            LibraryQuery::SetFavourite { paths, favourite } => {
+                drop(conn);
+                self.set_favourite(&paths, favourite)?;
+                QueryResult::Done
+            }
+            LibraryQuery::SetRating { paths, rating } => {
+                drop(conn);
+                self.set_rating(&paths, rating)?;
+                QueryResult::Done
+            }
             LibraryQuery::Waveform { .. }
             | LibraryQuery::RecentlyPlayed { .. }
             | LibraryQuery::RecentlyPlayedAlbums { .. } => unreachable!("answered above"),
@@ -483,11 +500,13 @@ impl Library {
             LibraryQuery::Play {
                 search,
                 sort,
+                filter,
                 start,
             } => (
                 format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} {}",
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} AND {} {}",
                     db::SEARCH,
+                    ratings::filter(filter),
                     db::order(sort)
                 ),
                 db::fts_query(search.as_deref()),
@@ -1078,9 +1097,14 @@ fn tracks_with_art(conn: &Connection, key: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, track_no, disc_no, year, genre, \
+const TRACK_COLUMNS: &str = concat!(
+    "id, path, title, artist, album, album_artist, track_no, disc_no, year, genre, \
      duration_ms, codec, sample_rate, bit_depth, channels, bitrate, musicbrainz_recording, isrc, audio_hash, art, \
-     missing, problem, original_year";
+     missing, problem, original_year, ",
+    favourite!(),
+    ", ",
+    rating!()
+);
 
 #[cfg(not(windows))]
 const SEP: char = '/';
@@ -1150,6 +1174,8 @@ fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
         missing: r.get(20)?,
         problem: r.get(21)?,
         original_year: r.get(22)?,
+        favourite: r.get(23)?,
+        rating: r.get(24)?,
     })
 }
 

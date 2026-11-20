@@ -13,6 +13,7 @@
   import { navTarget, scrollInto } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
+  import { starsLabel, starsOf } from '../../ratings';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { ordered, span, toggle, type ItemAt } from '../../selection';
   import { songInfo, songNumber } from '../../songs';
@@ -63,7 +64,7 @@
     memory?: string;
   } = $props();
 
-  const { engine, settings, playlists, views } = getApp();
+  const { engine, library, settings, playlists, views } = getApp();
   const view = getViewState();
   $effect(() => data.sync?.());
 
@@ -270,7 +271,7 @@
               onkeydown={(e) => onKey(e, i)}
               onpointerdown={(e) => press(e, i)}
               onclick={() => activate(i)}
-              use:menu={() => trackMenu(engine, playlists, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
+              use:menu={() => trackMenu(engine, library, settings.current.ratings, playlists, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
             >
               <span class="lead">
                 {#if mode !== 'list'}
@@ -293,6 +294,11 @@
                   <span class="title">{trackTitle(track)}</span>
                   {#if !inAlbum}<span class="artist">{track.artist || 'Unknown artist'}</span>{/if}
                 </span>
+                {#if settings.current.ratings === 'hearts' ? details?.favourite : details?.rating}
+                  <span class="marks" aria-label={settings.current.ratings === 'hearts' ? 'Loved' : starsLabel(starsOf(details?.rating))}>
+                    {#if settings.current.ratings === 'hearts'}<Icon name="heart" size={12} solid />{:else}<span class="stars">{'★'.repeat(starsOf(details?.rating))}</span>{/if}
+                  </span>
+                {/if}
                 <span class="info">{error ?? songInfo(track, details, inAlbum)}</span>
               {/if}
             </button>
@@ -530,6 +536,15 @@
     font-size: 0.88em;
     font-variant-numeric: tabular-nums;
     color: var(--text-muted);
+  }
+
+  .marks {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 0.88em;
+    color: var(--accent);
   }
 
   .loading {

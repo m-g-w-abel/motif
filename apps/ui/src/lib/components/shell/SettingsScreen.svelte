@@ -133,9 +133,10 @@
   type Choice<K extends keyof Settings> = { key: K; label: string; options: [Settings[K], string][] };
   const choices = [
     { key: 'density', label: 'Density', options: [['compact', 'Compact'], ['comfortable', 'Comfortable']] },
+    { key: 'ratings', label: 'Rate songs with', options: [['stars', 'Stars'], ['hearts', 'Hearts']] },
     { key: 'player', label: 'Player', options: [['bar', 'Bar'], ['floating', 'Floating']] },
     { key: 'seekBar', label: 'Seek bar', options: [['waveform', 'Waveform'], ['plain', 'Plain']] },
-  ] as [Choice<'density'>, Choice<'player'>, Choice<'seekBar'>];
+  ] as [Choice<'density'>, Choice<'ratings'>, Choice<'player'>, Choice<'seekBar'>];
 
   const SURFACES: Record<Surface, string> = { bar: 'the player bar', artwork: 'the artwork', row: 'a track or album', queued: 'a queued track', view: 'a view' };
   const GESTURE_NAMES: Record<Gesture, string> = {

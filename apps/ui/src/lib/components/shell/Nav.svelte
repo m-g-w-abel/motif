@@ -2,7 +2,7 @@
   import { getApp } from '../../context';
   import { demoLibrary, isDemo } from '../../demo';
   import { libraryMenu } from '../../menus';
-  import { CATEGORIES } from '../../views.svelte';
+  import { categoriesFor } from '../../views.svelte';
   import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import { canDecorate } from '../../windowChrome';
@@ -61,7 +61,7 @@
       </button>
     </div>
     <ul class="sources">
-      {#each CATEGORIES as category (category.kind)}
+      {#each categoriesFor(settings.current.ratings) as category (category.kind)}
         <li>
           <button
             class:active={current === category.kind && !settingsView.group}

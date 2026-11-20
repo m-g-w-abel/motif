@@ -29,4 +29,8 @@ missing: boolean,
 /**
  * Why the file can't be played, if it is damaged.
  */
-problem: string | null, };
+problem: string | null, favourite: boolean, 
+/**
+ * Half stars, 1 to 10; none if unrated.
+ */
+rating: number | null, };
