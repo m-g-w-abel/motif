@@ -226,7 +226,7 @@ function libraryData(
         return { message: 'No music folders yet.', hint: 'Add a folder and Motif will find the music in it.', addFolder: true };
       }
       if (search) return { message: `Nothing matches “${search}”.` };
-      if (filter.favourite) return { message: 'No favourites yet.', hint: 'Tap the heart on a song to keep it here.' };
+      if (filter.favourite) return { message: 'No favourites yet.', hint: 'Open a song’s menu and choose Love.' };
       if (status.scanning) return { message: 'Scanning your music…', hint: `${status.scanned} files so far` };
       return { message: 'No music found in your folders.', addFolder: true };
     },

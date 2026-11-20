@@ -9,6 +9,8 @@
   import { rootZoom } from '../../motion/mover';
   import { follow, still, Transition, type Drive, type Span } from '../../motion/transition';
   import Icon from '../Icon.svelte';
+  import { contextMenu } from '../../contextMenu.svelte';
+  import { markItems } from '../../menus';
   import Artwork from './Artwork.svelte';
   import Transport from './Transport.svelte';
   import Scrollbar from '../Scrollbar.svelte';
@@ -20,7 +22,16 @@
   import { trackTitle } from '../../format';
   import { marquee } from '../../marquee';
 
-  const { engine, layout, settings, sheet, views } = getApp();
+  const { engine, layout, library, settings, sheet, views } = getApp();
+  /** What the Hearts or Stars setting leaves for the playing song's ⋮ menu: Love, or Clear rating. */
+  function openMarks(e: MouseEvent & { currentTarget: HTMLElement }) {
+    const box = e.currentTarget.getBoundingClientRect();
+    contextMenu.show(markMenu, box.left, box.bottom, e.currentTarget);
+  }
+  const markMenu = $derived.by(() => {
+    const track = engine.current?.track;
+    return track ? markItems(engine, library, settings.current.ratings, [track], library.details(track) ?? undefined) : [];
+  });
   let body = $state<HTMLElement>();
   let section = $state<HTMLElement>();
   let backdrop = $state<HTMLElement>();
@@ -257,6 +268,17 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <header data-enter="rise" onpointerdown={(e) => sheet.drag(e, 'sheet')}>
     <span class="handle"></span>
+    {#if markMenu.length}
+      <button
+        class="icon-button"
+        aria-label="More"
+        title="More"
+        aria-haspopup="menu"
+        onclick={openMarks}
+      >
+        <Icon name="more" size={18} />
+      </button>
+    {/if}
     <button
       class="icon-button lyrics-toggle"
       class:active={sheet.lyrics}
@@ -310,6 +332,11 @@
         </p>
         <TrackInfo style="hero" playing>
           {#snippet aside()}
+            {#if markMenu.length}
+              <button class="lyrics-button" aria-label="More" title="More" aria-haspopup="menu" onclick={openMarks}>
+                <Icon name="more" size={22} />
+              </button>
+            {/if}
             <button class="lyrics-button" aria-label="Lyrics" aria-pressed={sheet.lyrics} title="Show lyrics" onclick={() => sheet.toggleLyrics()}>
               <Icon name="lyrics" size={22} />
             </button>

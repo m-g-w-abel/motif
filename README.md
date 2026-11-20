@@ -53,8 +53,9 @@ control isn't an add-on: it's the normal code path.
   install by dropping a file on the window.
 - **[Theme files](docs/THEMES.md)**, colour palettes taken from the album art,
   a waveform seek bar, and a spectrum visualiser fed by an FFT in the engine.
-- Favourites (a heart) and ½–5 star ratings, kept by audio hash so they follow
-  moved files, shown on rows, sortable and filterable.
+- Stars or hearts, as you prefer: rate songs from 1 to 5 stars or love them,
+  kept by audio hash so they follow moved files; shown on rows, sortable, and
+  hearts have a Favourites view.
 - Synced, karaoke-style lyrics from embedded tags, `.lrc` sidecars or LRCLIB.
 - A navigation of views: a Library home (All Songs, Albums, Playlists, Recently
   Played, Recently Added, Favourites) that is the left panel on desktop and the first

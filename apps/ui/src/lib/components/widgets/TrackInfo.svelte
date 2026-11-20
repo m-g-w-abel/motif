@@ -11,7 +11,7 @@
   /** `playing` shows the playing track (now-playing screen); otherwise the track selected in a list. */
   let { style, playing = false, aside }: { style: InfoStyle; playing?: boolean; /** Hero: beside the title and artist. */ aside?: Snippet } = $props();
 
-  const { engine, library, sheet } = getApp();
+  const { engine, library, settings, sheet } = getApp();
   const view = getViewState();
   let scroller = $state<HTMLElement>();
   const track = $derived(playing ? engine.current?.track : (view.browse.selectedTrack ?? undefined));
@@ -78,8 +78,11 @@
       </p>
       {#if playing && details && engine.can('library')}
         <div class="marks" data-enter="fade">
-          <Stars rating={details.rating} size={22} set={(rating) => library.setRating([track], rating)} />
-          <Heart on={details.favourite} size={22} set={(on) => library.setFavourite([track], on)} />
+          {#if settings.current.ratings === 'stars'}
+            <Stars rating={details.rating} size={26} set={(rating) => library.setRating([track], rating)} />
+          {:else if details.favourite}
+            <Heart size={22} unlove={() => library.setFavourite([track], false)} />
+          {/if}
         </div>
       {/if}
     {:else}

@@ -1,6 +1,7 @@
 import { MediaQuery } from 'svelte/reactivity';
 import type { IconName } from './components/Icon.svelte';
 import type { Picking } from './picking';
+import type { RatingStyle } from './ratings';
 
 /**
  * What the music area shows. All Songs (`songs`) is the library view that
@@ -29,6 +30,9 @@ export const CATEGORIES: { kind: Category; label: string; icon: IconName; colour
   { kind: 'added', label: 'Recently Added', icon: 'plus', colour: '#4e6043' },
   { kind: 'favourites', label: 'Favourites', icon: 'heart', colour: '#a8405a' },
 ];
+
+/** The Library home's entries for the Hearts or Stars setting: Favourites are loved songs, so Stars hides them. */
+export const categoriesFor = (style: RatingStyle) => CATEGORIES.filter((c) => c.kind !== 'favourites' || style === 'hearts');
 
 const HOME: View = { kind: 'home' };
 

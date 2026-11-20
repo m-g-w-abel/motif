@@ -1,5 +1,6 @@
 import type { ViewState } from './context';
 import { SOURCES, type Source } from './layout/store.svelte';
+import type { RatingStyle } from './ratings';
 import type { SortKey } from './protocol/SortKey';
 import type { SortRule } from './protocol/SortRule';
 
@@ -20,6 +21,10 @@ export const SORT_KEYS: Record<SortKey, string> = {
   favourite: 'Favourite',
   rating: 'Rating',
 };
+
+/** The keys the sort menu offers: the Hearts or Stars setting hides the other mark's. */
+export const sortKeysFor = (style: RatingStyle): SortKey[] =>
+  (Object.keys(SORT_KEYS) as SortKey[]).filter((k) => k !== (style === 'stars' ? 'favourite' : 'rating'));
 
 /** The library's own order (`db.rs`): album artist, album, disc, track. */
 export const DEFAULT_RULES: readonly SortRule[] = [

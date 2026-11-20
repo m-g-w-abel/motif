@@ -19,7 +19,7 @@
   import { DEFAULT_RULES, sortRules, viewSort } from '../../sort.svelte';
   import { fixedData, playedData, trackListData } from '../../sources.svelte';
   import { viewOptions, type OptionsKey } from '../../viewOptions';
-  import { CATEGORIES, viewTitle, type View } from '../../views.svelte';
+  import { CATEGORIES, categoriesFor, viewTitle, type View } from '../../views.svelte';
   import { swap } from '../../motion/swap';
   import { canDecorate } from '../../windowChrome';
   import Icon from '../Icon.svelte';
@@ -344,7 +344,7 @@
   <div class="body" use:swap={show}>
     {#if view.kind === 'home'}
       <ul class="categories">
-        {#each CATEGORIES as category (category.kind)}
+        {#each categoriesFor(settings.current.ratings) as category (category.kind)}
           <li>
             <button onclick={() => views.open({ kind: category.kind })}>
               <span class="dot" style:--c={category.colour} data-move={`dot:${category.kind}`}><Icon name={category.icon} size={18} /></span>

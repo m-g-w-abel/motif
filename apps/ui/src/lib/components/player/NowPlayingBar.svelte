@@ -116,7 +116,9 @@
       <span class="time">
         {formatTime(position.ms)}<span class="total">{' / '}{duration ? formatTime(duration) : '-:--'}</span>
       </span>
-      {#if playing && marks && engine.can('library')}<Heart on={marks.favourite} size={18} set={(on) => library.setFavourite([playing], on)} />{/if}
+      {#if playing && marks?.favourite && settings.current.ratings === 'hearts' && engine.can('library')}
+        <Heart size={18} unlove={() => library.setFavourite([playing], false)} />
+      {/if}
       <ShuffleButton />
       <RepeatButton />
       <Volume />

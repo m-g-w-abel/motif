@@ -5,10 +5,11 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
-- **Favourites and star ratings**: mark a song with a heart and rate it from ½
-  to 5 stars, from the now-playing bar and sheet or a song's menu. Both show on
-  song rows, sort and filter the lists, and Favourites is a new entry in the
-  Library. They follow a file when it moves.
+- **Stars or hearts**: rate songs with stars (a rating column in the table, the
+  now-playing sheet) or love them with a heart (a song's menu), as you choose
+  in Settings → Interface; the other is hidden and nothing is lost by
+  switching. Lists sort by it, hearts have a Favourites view in the Library,
+  and both follow a file when it moves.
 
 ## Phase 5: Android
 
