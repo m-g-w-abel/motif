@@ -267,6 +267,37 @@ Tickets #117–#133 (milestone "Phase 5").
 - **Deferred:** signed release builds, F-Droid metadata and battery-killer
   testing on release builds.
 
+## Phase 6 decisions (2026-11-20)
+
+Tickets #233–#248 (milestone "Phase 6").
+- **Track identity across devices:** lossy files hash their compressed
+  packets (libopus decodes differently on ARM, so `pcm-b3:` of Opus never
+  matched); lossless keeps FLAC MD5 / PCM. One rehash; data follows the hash.
+- **Links:** pairing from an app that has an engine sends that engine's key,
+  so both engines know each other. A new **Sync** scope (Full preset only)
+  decides who gets your data. Old pairings upgrade in place, no re-pairing.
+  Links are symmetric; the phone still takes no pairing codes.
+- **Transport:** iroh on the engine's identity key, linked keys only. Public
+  relays by default, own relay settable. **No lookup service:** devices
+  remember each other's addresses and home relay. Remote control over the
+  internet goes through it (LAN direct first); browser clients and MPD stay
+  LAN-only until phase 7.
+- **Synced:** playlists, play history, favourites + 5-star ratings (new).
+  Not engine settings. Changes spread transitively. How to merge (op log in
+  SQLite vs Automerge) is open on #239.
+- **Combined library:** every linked engine shares its catalog both ways;
+  other devices' tracks are mixed in with a mark, dim while unreachable, and
+  a filter shows only this device. The same audio is one track. Tracks not
+  here stream from a device that has them.
+- **Quality:** Opus 256 for lossless and high-bitrate files; lossy files at
+  or below that go as they are; LAN streams send originals. All settable.
+- **Downloaded group** per device (playlists following edits, albums,
+  artists, songs; optional most-played fill up to N GB, off). Files go to
+  Music/Motif (settable). On Android downloads run in the background, on
+  Wi-Fi only by default.
+- **Scrobbles:** a device with an account scrobbles synced plays too and
+  marks them done, so each listen is sent once.
+
 ## UI rework decisions (2026-11-08)
 
 Phase 5 ends with a new navigation and look, designed from the user's phone
