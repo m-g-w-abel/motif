@@ -122,6 +122,7 @@ struct Inner {
     mpd_listening: bool,
     /// How linked engines are reached now, by key; missing is unreachable.
     reach: HashMap<String, Reach>,
+    iroh_port: Option<u16>,
 }
 
 impl Pairing {
@@ -183,6 +184,7 @@ impl Pairing {
                 mpd_port: 6600,
                 mpd_listening: false,
                 reach: HashMap::new(),
+                iroh_port: None,
             }),
             state: watch::Sender::new(PairingState::default()),
         }));
@@ -237,6 +239,37 @@ impl Pairing {
         stored.address = Some(address);
         self.save(&inner);
         self.publish(&inner);
+    }
+
+    /// Puts `lan` first in the address book entry of the linked engine with
+    /// `key`, found on the LAN (mDNS).
+    pub(crate) fn seen_on_lan(&self, key: &str, lan: Vec<SocketAddr>) {
+        let mut inner = self.lock();
+        let Some(stored) = inner
+            .saved
+            .devices
+            .iter_mut()
+            .find(|d| linked_key(d) == Some(key))
+        else {
+            return;
+        };
+        if lan_first(stored.address.get_or_insert_default(), lan) {
+            self.save(&inner);
+            self.publish(&inner);
+        }
+    }
+
+    /// The iroh endpoint's UDP port while it runs, for the LAN advert.
+    pub(crate) fn iroh_port(&self) -> Option<u16> {
+        self.lock().iroh_port
+    }
+
+    pub(crate) fn set_iroh_port(&self, port: Option<u16>) {
+        let mut inner = self.lock();
+        if inner.iroh_port != port {
+            inner.iroh_port = port;
+            self.publish(&inner);
+        }
     }
 
     /// Says how the linked engine with `key` is reached now.
@@ -493,18 +526,9 @@ impl Pairing {
         let lan: Vec<SocketAddr> = addresses.iter().filter_map(|a| a.parse().ok()).collect();
         let name = match known {
             Some(stored) if stored.device.scopes.contains(&Scope::Sync) => {
-                let address = stored.address.get_or_insert_default();
-                let mut direct = lan;
-                let rest: Vec<_> = address
-                    .direct
-                    .iter()
-                    .filter(|a| !direct.contains(a))
-                    .collect();
-                direct.extend(rest);
-                direct.truncate(ADDRESS_CAP);
-                if direct != address.direct {
-                    address.direct = direct;
+                if lan_first(stored.address.get_or_insert_default(), lan) {
                     self.save(inner);
+                    self.publish(inner);
                 }
                 return Ok(());
             }
@@ -760,6 +784,21 @@ pub(crate) fn relays(net: &NetState) -> net::Relays {
         (true, Some(url)) => net::Relays::Own(url.clone()),
         (true, None) => net::Relays::Public,
     }
+}
+
+/// Puts `lan` first in `address`, keeping the rest; says if it changed.
+fn lan_first(address: &mut net::PeerAddr, lan: Vec<SocketAddr>) -> bool {
+    let mut direct = lan;
+    let rest: Vec<_> = address
+        .direct
+        .iter()
+        .filter(|a| !direct.contains(a))
+        .collect();
+    direct.extend(rest);
+    direct.truncate(ADDRESS_CAP);
+    let changed = direct != address.direct;
+    address.direct = direct;
+    changed
 }
 
 /// The key of a linked engine: one with [`Scope::Sync`].

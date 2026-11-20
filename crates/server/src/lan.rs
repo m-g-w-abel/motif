@@ -1,7 +1,8 @@
 //! Opening the engine to the LAN while [`Pairing::lan_wanted`] says so: the
 //! listener moves from the configured address (loopback) to every interface
 //! on the same port, which still serves loopback (Linux won't bind both), and
-//! `_motif._tcp` is advertised over mDNS.
+//! `_motif._tcp` is advertised over mDNS, with the iroh port while there is
+//! one (linked engines browse for it, see `links.rs`).
 
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -89,9 +90,12 @@ impl LanListener {
         }
         let open = self.listener.is_some() && self.bound.ip().is_unspecified();
         let addresses = open.then(|| lan_addresses(self.local.port()));
-        if open != self.advert.is_some() {
+        let iroh = self.pairing.iroh_port();
+        if open != self.advert.is_some() || self.advert.as_ref().is_some_and(|a| a.iroh != iroh) {
+            // Withdrawn first: the new one has the same name.
+            self.advert = None;
             self.advert = open
-                .then(|| Advert::start("_motif._tcp", &self.pairing, self.local.port()))
+                .then(|| Advert::start("_motif._tcp", &self.pairing, self.local.port(), iroh))
                 .flatten();
         }
         let stale = {
@@ -169,31 +173,41 @@ impl axum::serve::Listener for LanListener {
     }
 }
 
-/// A service (`_motif._tcp`, `_mpd._tcp`) with the engine key in TXT,
-/// withdrawn when dropped.
+/// A service (`_motif._tcp`, `_mpd._tcp`) with the engine key in TXT (and
+/// the iroh UDP port, if given), withdrawn when dropped.
 pub(crate) struct Advert {
     daemon: ServiceDaemon,
     name: String,
+    iroh: Option<u16>,
 }
 
 impl Advert {
-    pub(crate) fn start(service: &str, pairing: &Pairing, port: u16) -> Option<Self> {
+    pub(crate) fn start(
+        service: &str,
+        pairing: &Pairing,
+        port: u16,
+        iroh: Option<u16>,
+    ) -> Option<Self> {
         let key = pairing.engine_key();
         let short = &key[..8];
+        let txt: Vec<(&str, String)> = [("id", key.to_owned())]
+            .into_iter()
+            .chain(iroh.map(|p| ("iroh", p.to_string())))
+            .collect();
         let service = ServiceInfo::new(
             &format!("{service}.local."),
             &format!("Motif {short}"),
             &format!("motif-{short}.local."),
             (),
             port,
-            &[("id", key)][..],
+            &txt[..],
         )
         .map(ServiceInfo::enable_addr_auto);
         let advert = service.and_then(|service| {
             let daemon = ServiceDaemon::new()?;
             let name = service.get_fullname().to_owned();
             daemon.register(service)?;
-            Ok(Self { daemon, name })
+            Ok(Self { daemon, name, iroh })
         });
         advert
             .inspect_err(|err| tracing::warn!(%err, "can't advertise over mDNS"))

@@ -16,7 +16,7 @@ library.workspace = true
 futures-util.workspace = true
 getrandom = "=0.4.3"
 if-addrs = "=0.15.0"
-mdns-sd = { version = "=0.21.6", default-features = false }
+mdns-sd = { version = "=0.21.6", default-features = false, features = ["async"] }
 serde.workspace = true
 protocol.workspace = true
 serde_json.workspace = true

@@ -657,10 +657,17 @@ while some engine is linked (no linked engine, no endpoint, no memory cost).
   refused until #237/#239/#241 handle them (`keep_links` in `links.rs`).
 - **Address book:** `pairing.json` keeps each linked engine's last direct
   addresses and home relay. Refreshed on every iroh meeting (what it says
-  replaces what we had) and on every LAN meeting: the app passes the
-  addresses it reached the other engine at to `link_engine`, and the endpoint
-  binds UDP on the HTTP server's port number so `ip:port` reaches it (another
-  port if taken; the relay still works then).
+  replaces what we had) and on every LAN meeting, found two ways:
+  - **mDNS browse** (user's choice): the `_motif._tcp` advert carries the
+    iroh port in TXT (`iroh=`), and an engine with links browses
+    `_motif._tcp` while its LAN switch is on; a linked key found there goes
+    first in its book and is dialled. Two engines with empty books, relays
+    off, met within a second. **Costs mDNS wakeups** on engines with links
+    and the LAN on: mdns-sd's thread, its queries (backing off) and every
+    `_motif._tcp` answer on the network. Not measured yet.
+  - The app passes the addresses it reached another engine at to
+    `link_engine`. The endpoint binds UDP on the HTTP server's port number
+    so `ip:port` reaches it (another port if taken; the advert says which).
 - **Relays:** public by default, own URL settable, internet switch off =
   no relays and only LAN addresses dialled. Changing them rebinds.
 - **Reach:** the link's selected path (direct / relayed), unreachable without

@@ -1,9 +1,11 @@
 //! The iroh endpoint ([`net`]) while this engine has linked engines: it keeps
 //! a [`net::Alpn::Link`] connection to each one it can reach, where they swap
 //! addresses for each other's address book ([`Pairing::met`]), and shows how
-//! each is reached ([`Pairing::set_reach`]). It binds again when the relay
-//! settings change. Connections for other purposes are refused until the
-//! features that use them exist.
+//! each is reached ([`Pairing::set_reach`]). While the LAN switch is on it
+//! also browses `_motif._tcp` over mDNS, whose adverts carry the iroh port,
+//! so engines whose addresses changed find each other again without relays.
+//! It binds again when the relay settings change. Connections for other
+//! purposes are refused until the features that use them exist.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -11,6 +13,7 @@ use std::{
     time::Duration,
 };
 
+use mdns_sd::{ResolvedService, ServiceDaemon, ServiceEvent};
 use net::{Alpn, Connection, Net};
 use protocol::Reach;
 use tokio::task::JoinSet;
@@ -46,6 +49,7 @@ pub(crate) async fn run(pairing: Pairing, port: u16) {
             }
         };
         tracing::info!(relays = ?wanted, "iroh: started");
+        pairing.set_iroh_port(net.port());
         let changed = states.wait_for(|s| s.net.links.is_empty() || relays(&s.net) != wanted);
         tokio::select! {
             // The endpoint closed under us: start again.
@@ -53,6 +57,7 @@ pub(crate) async fn run(pairing: Pairing, port: u16) {
             _ = changed => {}
         }
         net.close().await;
+        pairing.set_iroh_port(None);
         for (key, _) in pairing.linked() {
             pairing.set_reach(&key, Reach::Unreachable);
         }
@@ -77,6 +82,8 @@ async fn keep_links(net: &Net, pairing: &Pairing) {
     let mut tasks = JoinSet::new();
     let mut states = pairing.subscribe();
     let mut retry = tokio::time::interval(RETRY);
+    let browse = browse_lan(pairing.clone(), net.key());
+    tokio::pin!(browse);
     loop {
         tokio::select! {
             accepted = net.accept() => {
@@ -94,8 +101,66 @@ async fn keep_links(net: &Net, pairing: &Pairing) {
                 dial(net, pairing, &links, &mut tasks);
             }
             Some(_) = tasks.join_next() => {}
+            () = &mut browse => {}
         }
     }
+}
+
+/// Browses `_motif._tcp` while the LAN switch is on, for where linked
+/// engines are ([`found_on_lan`]). Never ends.
+// mDNS costs wakeups: a query now and then (backing off) and every answer
+// on the LAN, but only on engines with links.
+async fn browse_lan(pairing: Pairing, me: String) {
+    let mut states = pairing.subscribe();
+    loop {
+        if states.wait_for(|s| s.lan.allowed).await.is_err() {
+            return std::future::pending().await;
+        }
+        let browsing = ServiceDaemon::new().and_then(|d| Ok((d.browse("_motif._tcp.local.")?, d)));
+        let (events, daemon) = match browsing {
+            Ok(browsing) => browsing,
+            Err(err) => {
+                tracing::warn!(%err, "can't browse the LAN");
+                tokio::time::sleep(RETRY).await;
+                continue;
+            }
+        };
+        let off = states.wait_for(|s| !s.lan.allowed);
+        tokio::pin!(off);
+        loop {
+            tokio::select! {
+                event = events.recv_async() => match event {
+                    Ok(ServiceEvent::ServiceResolved(found)) => found_on_lan(&pairing, &me, &found),
+                    Ok(_) => {}
+                    Err(_) => break,
+                },
+                _ = &mut off => break,
+            }
+        }
+        let _ = daemon.shutdown();
+    }
+}
+
+/// Puts where a linked engine advertises itself on the LAN (its addresses
+/// with the iroh port) first in its address book entry.
+fn found_on_lan(pairing: &Pairing, me: &str, found: &ResolvedService) {
+    let key = found.get_property_val_str("id");
+    let port = found
+        .get_property_val_str("iroh")
+        .and_then(|p| p.parse().ok());
+    let (Some(key), Some(port)) = (key, port) else {
+        return;
+    };
+    if key == me {
+        return;
+    }
+    let mut lan: Vec<std::net::SocketAddr> = found
+        .get_addresses()
+        .iter()
+        .map(|ip| (ip.to_ip_addr(), port).into())
+        .collect();
+    lan.sort();
+    pairing.seen_on_lan(key, lan);
 }
 
 /// Dials every linked engine without a link or a dial under way.
@@ -198,6 +263,49 @@ mod tests {
             .local_addr()
             .unwrap()
             .port()
+    }
+
+    fn advert(key: &str, ip: &str, iroh: Option<&str>) -> ResolvedService {
+        let txt: Vec<(&str, &str)> = [("id", key)]
+            .into_iter()
+            .chain(iroh.map(|p| ("iroh", p)))
+            .collect();
+        mdns_sd::ServiceInfo::new(
+            "_motif._tcp.local.",
+            "Motif x",
+            "x.local.",
+            ip,
+            7700,
+            &txt[..],
+        )
+        .unwrap()
+        .as_resolved_service()
+    }
+
+    #[test]
+    fn a_linked_engine_found_on_the_lan_goes_first_in_the_address_book() {
+        let (pairing, other) = (Pairing::in_memory(), Pairing::in_memory());
+        let key = other.engine_key();
+        pairing
+            .link("Other", key, &["10.0.0.2:41000".into()])
+            .unwrap();
+        let me = pairing.engine_key();
+        found_on_lan(&pairing, me, &advert(key, "192.168.1.7", Some("7700")));
+        // Older engines don't say where iroh is; strangers aren't recorded.
+        found_on_lan(&pairing, me, &advert(key, "192.168.1.8", None));
+        found_on_lan(
+            &pairing,
+            me,
+            &advert(
+                Pairing::in_memory().engine_key(),
+                "192.168.1.9",
+                Some("7700"),
+            ),
+        );
+        let direct: Vec<_> = ["192.168.1.7:7700", "10.0.0.2:41000"]
+            .map(|a| a.parse().unwrap())
+            .into();
+        assert_eq!(pairing.linked()[0].1.direct, direct);
     }
 
     #[tokio::test]

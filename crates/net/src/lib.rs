@@ -116,6 +116,12 @@ impl Net {
         self.endpoint.id().to_string()
     }
 
+    /// The UDP port it listens on (IPv4).
+    pub fn port(&self) -> Option<u16> {
+        let sockets = self.endpoint.bound_sockets();
+        sockets.iter().find(|a| a.is_ipv4()).map(|a| a.port())
+    }
+
     /// Where this engine can be reached now, for peers' address books.
     pub fn addr(&self) -> PeerAddr {
         let addr = self.endpoint.addr();
