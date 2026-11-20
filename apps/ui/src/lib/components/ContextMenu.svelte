@@ -46,13 +46,14 @@
       <!-- By position: playlists in an Add to playlist menu may share a name. -->
       {#each contextMenu.items as item, i (i)}
         <button
-          role="menuitem"
+          role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+          aria-checked={item.checked}
           onclick={() => {
             contextMenu.close(true);
             item.run();
           }}
         >
-          {item.label}
+          {item.checked === undefined ? '' : item.checked ? '✓ ' : '\u2003 '}{item.label}
         </button>
       {/each}
     </div>

@@ -1,6 +1,8 @@
 export interface MenuItem {
   label: string;
   run: () => void;
+  /** Draws a tick (shown) or an empty box (hidden) before the label. */
+  checked?: boolean;
 }
 
 /** The one open context menu, drawn by `ContextMenu.svelte`. */

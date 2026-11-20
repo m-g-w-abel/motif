@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LayoutNode } from './model';
-import { fingerprint, idOf, insert, move, nodeAt, remove, resize, shownRoot, widget } from './overlay';
+import { fingerprint, idOf, insert, move, nodeAt, remove, resize, setColumns, shownRoot, widget } from './overlay';
 import { parseLayout } from './parse';
 import { serializeLayout } from './serialize';
 
@@ -30,6 +30,14 @@ describe('overlay', () => {
     expect(shownRoot(root, overlay)).toBe(edited);
     expect(shownRoot(rootOf('split row { tracklist; queue }'), overlay)).not.toBe(edited);
     expect(shownRoot(root, undefined)).toBe(root);
+  });
+
+  it('sets the columns of a tracklist, keeping ids, and never leaves it with none', () => {
+    const edited = setColumns(root, [0], ['rating', 'title']);
+    expect((nodeAt(edited, [0]) as { columns: string[] }).columns).toEqual(['rating', 'title']);
+    expect(idOf(nodeAt(edited, [0])!)).toBe(idOf(nodeAt(root, [0])!));
+    expect(setColumns(root, [0], [])).toBe(root);
+    expect(setColumns(root, [1, 0], ['title'])).toBe(root); // not a tracklist
   });
 
   it('resizes a node and keeps the ids of everything rebuilt', () => {
