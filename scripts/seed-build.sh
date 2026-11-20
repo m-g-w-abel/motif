@@ -18,6 +18,14 @@ print(m.get("build_directory") or m["target_directory"])
 print(" ".join(p["name"] for p in m["packages"]))'
 }
 
+# One seed at a time, at idle disk priority: several sessions seeding ~14 GB each at
+# once made the machine unusable (2026-11-20). Later seeds wait their turn.
+if [ -z "${SEED_LOCKED:-}" ]; then
+  mkdir -p /var/tmp/motif-build
+  echo "Waiting for any other seed to finish..."
+  SEED_LOCKED=1 exec flock /var/tmp/motif-build/.seed.lock nice -n 19 ionice -c 3 "$0" "$@"
+fi
+
 here=$(git rev-parse --show-toplevel)
 main=${1:-$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")}
 if [ "$here" = "$main" ]; then
