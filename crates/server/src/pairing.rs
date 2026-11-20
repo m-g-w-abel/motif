@@ -71,7 +71,9 @@ struct SavedMpd {
 struct Stored {
     #[serde(flatten)]
     device: PairedDevice,
-    token_hash: String,
+    /// `None` for an engine this one paired with ([`Pairing::link`]): it
+    /// connects by its key, not a token.
+    token_hash: Option<String>,
 }
 
 struct Inner {
@@ -122,7 +124,14 @@ impl Pairing {
         Self::new(None, random(), Saved::default())
     }
 
-    fn new(file: Option<PathBuf>, secret: [u8; 32], saved: Saved) -> Self {
+    fn new(file: Option<PathBuf>, secret: [u8; 32], mut saved: Saved) -> Self {
+        // Full pairings from before Sync existed are Full still.
+        for stored in &mut saved.devices {
+            let scopes = &mut stored.device.scopes;
+            if scopes.contains(&Scope::Pairing) && !scopes.contains(&Scope::Sync) {
+                scopes.push(Scope::Sync);
+            }
+        }
         let engine_key = hex(SigningKey::from_bytes(&secret).verifying_key().as_bytes());
         let pairing = Self(Arc::new(Shared {
             file,
@@ -244,7 +253,11 @@ impl Pairing {
     pub(crate) fn authenticate(&self, token: &str) -> Option<String> {
         let hash = hash(token);
         let inner = self.lock();
-        let stored = inner.saved.devices.iter().find(|d| d.token_hash == hash)?;
+        let stored = inner
+            .saved
+            .devices
+            .iter()
+            .find(|d| d.token_hash.as_ref() == Some(&hash))?;
         Some(stored.device.id.clone())
     }
 
@@ -372,6 +385,73 @@ impl Pairing {
         }
     }
 
+    /// Links the engine with `key`, which this machine paired with and may
+    /// sync with: a device that also paired here gains [`Scope::Sync`],
+    /// else it is listed with only that and no token. Safe to repeat.
+    pub fn link(&self, name: &str, key: &str) -> Result<(), String> {
+        let key = parse_key(key).ok_or("bad engine key")?;
+        let mut inner = self.lock();
+        let inner = &mut *inner;
+        let now = engine::wall_clock_ms();
+        let known = inner
+            .saved
+            .devices
+            .iter_mut()
+            .find(|d| d.device.public_key.as_ref() == Some(&key));
+        let name = match known {
+            Some(stored) if stored.device.scopes.contains(&Scope::Sync) => return Ok(()),
+            Some(stored) => {
+                stored.device.scopes.push(Scope::Sync);
+                stored.device.name.clone()
+            }
+            None => {
+                let name = clean_name(name);
+                inner.saved.devices.push(Stored {
+                    device: PairedDevice {
+                        id: hex(&random::<8>()),
+                        name: name.clone(),
+                        public_key: Some(key),
+                        scopes: vec![Scope::Sync],
+                        paired_at_ms: now,
+                        last_seen_ms: None,
+                    },
+                    token_hash: None,
+                });
+                name
+            }
+        };
+        log(inner, now, PairingAction::Linked, name);
+        self.save(inner);
+        self.publish(inner);
+        Ok(())
+    }
+
+    /// Carries out a [`PairingCommand`] from `who`.
+    pub(crate) fn command_as(&self, who: &Who, command: PairingCommand) -> Result<(), String> {
+        let PairingCommand::SetEngineKey { key } = command else {
+            return self.command(command);
+        };
+        let Who::Device(id) = who else {
+            return Err("only a paired device has an engine key to send".into());
+        };
+        if !self.allows(who, Scope::Sync) {
+            return Err("linking engines needs the Full preset".into());
+        }
+        let key = parse_key(&key).ok_or("bad engine key")?;
+        let mut inner = self.lock();
+        let inner = &mut *inner;
+        let stored = find(inner, id)?;
+        if stored.device.public_key.as_ref() == Some(&key) {
+            return Ok(());
+        }
+        stored.device.public_key = Some(key);
+        let name = stored.device.name.clone();
+        log(inner, engine::wall_clock_ms(), PairingAction::Linked, name);
+        self.save(inner);
+        self.publish(inner);
+        Ok(())
+    }
+
     /// Carries out a client's [`PairingCommand`].
     pub(crate) fn command(&self, command: PairingCommand) -> Result<(), String> {
         let mut inner = self.lock();
@@ -426,6 +506,9 @@ impl Pairing {
             PairingCommand::SetMpdPassword { password } => {
                 inner.saved.mpd.password = Some(password).filter(|p| !p.is_empty());
             }
+            PairingCommand::SetEngineKey { .. } => {
+                return Err("only a paired device has an engine key to send".into());
+            }
             PairingCommand::Disconnect { connection } => {
                 let (_, close) = inner
                     .connections
@@ -461,7 +544,7 @@ impl Pairing {
         let id = device.id.clone();
         inner.saved.devices.push(Stored {
             device,
-            token_hash: hash(&token),
+            token_hash: Some(hash(&token)),
         });
         log(inner, now, action, name);
         self.save(inner);
@@ -790,6 +873,134 @@ mod tests {
         assert_eq!(pairing.lan_wanted(), (false, None));
         pairing.allow_lan(false);
         assert!(!allowed(&Pairing::open(&dir).unwrap()));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn key(seed: u8) -> String {
+        hex(SigningKey::from_bytes(&[seed; 32])
+            .verifying_key()
+            .as_bytes())
+    }
+
+    fn device(pairing: &Pairing, id: &str) -> PairedDevice {
+        let state = pairing.subscribe().borrow().clone();
+        state.devices.into_iter().find(|d| d.id == id).unwrap()
+    }
+
+    #[tokio::test]
+    async fn pairing_with_an_engine_key_links_with_full_only() {
+        assert!(Preset::Full.scopes().contains(&Scope::Sync));
+        assert!(!Preset::ControlPlayback.scopes().contains(&Scope::Sync));
+        assert!(!Preset::ViewOnly.scopes().contains(&Scope::Sync));
+        let pairing = Pairing::in_memory();
+        for (preset, linked) in [(Preset::Full, true), (Preset::ViewOnly, false)] {
+            pairing
+                .command(PairingCommand::SetAutoApprove {
+                    preset: Some(preset),
+                })
+                .unwrap();
+            let request = PairRequest {
+                public_key: Some(key(1).to_uppercase()),
+                ..request(&pairing.start().code)
+            };
+            let paired = pairing.redeem(request, peer()).await.unwrap();
+            assert_eq!(device(&pairing, &paired.device).public_key, Some(key(1)));
+            assert_eq!(
+                pairing.allows(&Who::Device(paired.device), Scope::Sync),
+                linked
+            );
+        }
+    }
+
+    #[test]
+    fn old_full_pairings_gain_sync_and_send_their_key_once() {
+        let dir = std::env::temp_dir().join(format!("motif-upgrade-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Saved before Sync and links.
+        let old = format!(
+            r#"{{"auto_approve":null,"log":[],"devices":[
+                {{"id":"full","name":"Laptop","public_key":null,"scopes":["playback","queue","library","settings","pairing"],"paired_at_ms":1,"last_seen_ms":null,"token_hash":"{}"}},
+                {{"id":"view","name":"Tablet","public_key":null,"scopes":[],"paired_at_ms":1,"last_seen_ms":null,"token_hash":"{}"}}]}}"#,
+            hash("full token"),
+            hash("view token")
+        );
+        std::fs::write(dir.join("pairing.json"), old).unwrap();
+        let pairing = Pairing::open(&dir).unwrap();
+        let full = Who::Device(pairing.authenticate("full token").unwrap());
+        assert!(pairing.allows(&full, Scope::Sync));
+        let view = Who::Device(pairing.authenticate("view token").unwrap());
+        assert!(!pairing.allows(&view, Scope::Sync));
+
+        let set = |who: &Who, key: &str| {
+            pairing.command_as(who, PairingCommand::SetEngineKey { key: key.into() })
+        };
+        set(&full, &key(2)).unwrap();
+        let logged = pairing.subscribe().borrow().log.len();
+        set(&full, &key(2)).unwrap();
+        assert_eq!(
+            pairing.subscribe().borrow().log.len(),
+            logged,
+            "a repeat changes nothing"
+        );
+        assert_eq!(
+            pairing.subscribe().borrow().log.last().unwrap().action,
+            PairingAction::Linked
+        );
+        assert!(set(&view, &key(3)).is_err(), "needs Sync");
+        assert!(
+            set(&Who::Local, &key(3)).is_err(),
+            "this machine has no other engine"
+        );
+        assert!(set(&full, "abcd").is_err());
+        let again = Pairing::open(&dir).unwrap();
+        assert_eq!(device(&again, "full").public_key, Some(key(2)));
+        assert_eq!(device(&again, "view").public_key, None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_engine_paired_with_is_linked_here_without_a_token() {
+        let dir = std::env::temp_dir().join(format!("motif-link-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pairing = Pairing::open(&dir).unwrap();
+        pairing.link("Desktop", &key(4)).unwrap();
+        pairing.link("Desktop again", &key(4)).unwrap();
+        let state = pairing.subscribe().borrow().clone();
+        assert_eq!(state.devices.len(), 1, "a repeat adds no second link");
+        let linked = &state.devices[0];
+        assert_eq!(
+            (linked.name.as_str(), linked.public_key.clone()),
+            ("Desktop", Some(key(4)))
+        );
+        assert_eq!(
+            linked.scopes,
+            vec![Scope::Sync],
+            "it gets our data but no control"
+        );
+        assert!(pairing.link("Bad", "abcd").is_err());
+
+        // An engine that also paired here keeps its access and gains Sync.
+        pairing
+            .command(PairingCommand::SetAutoApprove {
+                preset: Some(Preset::ControlPlayback),
+            })
+            .unwrap();
+        let request = PairRequest {
+            public_key: Some(key(5)),
+            ..request(&pairing.start().code)
+        };
+        let paired = pairing.redeem(request, peer()).await.unwrap();
+        pairing.link("Other", &key(5)).unwrap();
+        let both = device(&pairing, &paired.device);
+        assert_eq!(
+            both.scopes,
+            vec![Scope::Playback, Scope::Queue, Scope::Sync]
+        );
+        assert_eq!(pairing.subscribe().borrow().devices.len(), 2);
+
+        let again = Pairing::open(&dir).unwrap();
+        assert_eq!(again.subscribe().borrow().devices.len(), 2);
+        assert_eq!(again.authenticate(&paired.token), Some(paired.device));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

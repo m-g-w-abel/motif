@@ -8,7 +8,7 @@ import type { Scope } from './protocol/Scope';
 
 /** `Preset::scopes` in crates/protocol. */
 const SCOPES: Record<Preset, Scope[]> = {
-  full: ['playback', 'queue', 'library', 'settings', 'pairing'],
+  full: ['playback', 'queue', 'library', 'settings', 'pairing', 'sync'],
   control_playback: ['playback', 'queue'],
   view_only: [],
 };
@@ -40,6 +40,8 @@ describe('presets', () => {
   it('are recognised from scopes', () => {
     for (const preset of Object.keys(SCOPES) as Preset[]) expect(presetOf(SCOPES[preset])).toBe(preset);
     expect(presetOf(['playback'])).toBe(null);
+    // An engine this one paired with: linked, with no control here.
+    expect(presetOf(['sync'])).toBe(null);
   });
 
   it('cover every command', () => {

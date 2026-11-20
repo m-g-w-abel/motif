@@ -5,6 +5,7 @@
  */
 export type PairRequest = { code: string, name: string, 
 /**
- * The device's ed25519 public key (hex), if it has one.
+ * The device's own engine key (ed25519, hex), if it has one (Motif
+ * apps; browsers have none).
  */
 public_key: string | null, };

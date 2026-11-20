@@ -624,7 +624,7 @@ async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr)
             }
             Ok(ClientMessage::Pairing { id, pairing }) => ServerMessage::Response {
                 id,
-                error: state.pairing.command(pairing).err(),
+                error: state.pairing.command_as(&who, pairing).err(),
             },
             Err(err) => {
                 tracing::debug!(%err, "malformed client message");

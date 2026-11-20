@@ -211,6 +211,28 @@ export class EngineClient {
     }
   }
 
+  /** Whether {@link #link} ran for this connection's engine. */
+  #linked = false;
+
+  /**
+   * Links this app's engine with the other engine in control, which lets it
+   * sync: each records the other's key. Sent on connecting, for pairings from
+   * before links too; repeating it is harmless. Browsers have no engine.
+   */
+  async #link() {
+    const { id, name, addresses } = engines.current;
+    if (this.#linked || !addresses.length || !('__TAURI_INTERNALS__' in window)) return;
+    this.#linked = true;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const key = await invoke<string>('link_engine', { key: id, name });
+      this.pair({ type: 'set_engine_key', key });
+    } catch (e) {
+      // The headless engine serves this app: nothing here to link.
+      console.warn("can't link the engines:", e);
+    }
+  }
+
   close() {
     this.#closed = true;
     this.#socket?.close();
@@ -311,6 +333,7 @@ export class EngineClient {
           this.integrations = message.event.settings;
         } else if (message.event.type === 'access') {
           this.scopes = message.event.scopes;
+          if (this.scopes.includes('sync')) void this.#link();
         } else if (message.event.type === 'pairing') {
           this.pairing = message.event.state;
         } else if (message.event.type === 'bands') {

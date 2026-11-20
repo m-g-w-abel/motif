@@ -75,10 +75,44 @@ pub async fn discover_engines() -> Result<Vec<Found>, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Redeems `code` at `address`'s `POST /pair`; the answer waits for the
-/// host's approval (up to 5 minutes). Errors are texts for the user.
+/// This app's own engine's pairing; `None` when another process's engine
+/// serves the window (the headless one owns the library).
+pub struct OwnEngine(pub Option<server::Pairing>);
+
+/// Redeems `code` at `address`'s `POST /pair`, sending this app's engine key
+/// so the host can link the two; the answer waits for the host's approval
+/// (up to 5 minutes). Errors are texts for the user.
 #[tauri::command]
-pub async fn pair_engine(address: String, code: String, name: String) -> Result<Paired, String> {
+pub async fn pair_engine(
+    own: tauri::State<'_, OwnEngine>,
+    address: String,
+    code: String,
+    name: String,
+) -> Result<Paired, String> {
+    let key = own.0.as_ref().map(|p| p.engine_key().to_owned());
+    pair(address, code, name, key).await
+}
+
+/// Records the engine with `key`, which this app controls with Sync, as
+/// linked to its own engine, and returns its own engine's key to send there
+/// (`PairingCommand::SetEngineKey`). Safe to repeat.
+#[tauri::command]
+pub fn link_engine(
+    own: tauri::State<'_, OwnEngine>,
+    key: String,
+    name: String,
+) -> Result<String, String> {
+    let pairing = own.0.as_ref().ok_or("this app's engine runs elsewhere")?;
+    pairing.link(&name, &key)?;
+    Ok(pairing.engine_key().to_owned())
+}
+
+async fn pair(
+    address: String,
+    code: String,
+    name: String,
+    public_key: Option<String>,
+) -> Result<Paired, String> {
     // The other crates build reqwest without a TLS provider; it panics without one even for http.
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = reqwest::Client::builder()
@@ -89,7 +123,7 @@ pub async fn pair_engine(address: String, code: String, name: String) -> Result<
         // Shown as "ABCD EFGH"; the host compares the bare code.
         code: code.split_whitespace().collect(),
         name: name.trim().to_owned(),
-        public_key: None,
+        public_key,
     };
     let response = client
         .post(format!("http://{address}/pair"))
@@ -184,21 +218,28 @@ mod tests {
             .unwrap()
             .unwrap();
         let key = pairing.engine_key().to_owned();
+        let own = server::Pairing::in_memory().engine_key().to_owned();
 
-        let wrong = pair_engine(address.clone(), "WRONG".into(), "Phone".into()).await;
+        let wrong = pair(address.clone(), "WRONG".into(), "Phone".into(), None).await;
         assert_eq!(wrong.unwrap_err(), "unknown code");
         // The code has a space in the middle on screen.
         let spaced = format!("{} {}", &code[..4], &code[4..]);
-        let paired = pair_engine(address.clone(), spaced, "Phone".into())
+        let paired = pair(address.clone(), spaced, "Phone".into(), Some(own.clone()))
             .await
             .unwrap();
         assert_eq!(paired.engine_key, key);
+        let devices = pairing.subscribe().borrow().devices.clone();
+        assert_eq!(
+            devices[0].public_key,
+            Some(own),
+            "the host knows this app's engine"
+        );
         // A retried request finds the code used up and adds no second device.
-        let again = pair_engine(address, code, "Phone".into()).await;
+        let again = pair(address, code, "Phone".into(), None).await;
         assert_eq!(again.unwrap_err(), "unknown code");
         assert_eq!(pairing.subscribe().borrow().devices.len(), 1);
 
-        let gone = pair_engine("127.0.0.1:9".into(), "X".into(), "Phone".into()).await;
+        let gone = pair("127.0.0.1:9".into(), "X".into(), "Phone".into(), None).await;
         assert_eq!(gone.unwrap_err(), "can't reach 127.0.0.1:9");
         let _ = std::fs::remove_dir_all(dir);
     }

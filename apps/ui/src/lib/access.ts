@@ -75,7 +75,7 @@ export const PRESETS: [Preset, string][] = [
 /** The preset a paired device's scopes match (`Preset::scopes` in crates/protocol), if any. */
 export function presetOf(scopes: Scope[]): Preset | null {
   const has = (s: Scope) => scopes.includes(s);
-  if (scopes.length === 5) return 'full';
+  if (scopes.length === 6) return 'full';
   if (scopes.length === 2 && has('playback') && has('queue')) return 'control_playback';
   if (scopes.length === 0) return 'view_only';
   return null;

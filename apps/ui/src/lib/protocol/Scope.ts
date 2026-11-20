@@ -4,4 +4,4 @@
  * What a client may do. Every client may read the player state and the
  * library; each scope allows changing something.
  */
-export type Scope = "playback" | "queue" | "library" | "settings" | "pairing";
+export type Scope = "playback" | "queue" | "library" | "settings" | "pairing" | "sync";
