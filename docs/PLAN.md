@@ -352,6 +352,7 @@ language for phone and desktop, not a separate mobile UI.
 - [x] Music-area layouts (KDL) with built-in presets and drag-and-drop install; widgets: track list (table/grouped, resizable columns), album grid, artwork, track info, queue; settings (theme, accent, density, bar/floating player); expanding now-playing sheet
 - [x] Webview stress test on WebKitGTK (results below)
 - [x] Android background-audio spike (results below)
+- [x] P2P spike: iroh on desktop and Android (#234, results below; go)
 
 ### Webview stress test (2026-10-24)
 
@@ -582,6 +583,66 @@ DB version 12 checks damaged files again, 13 reads the tags of files stored with
 
 Not measured yet: hashing time for the whole library (the generated files
 hash much faster than real ones) and a first scan with the new build.
+
+### P2P spike (#234, 2026-11-20)
+
+Branch `claude/spike-iroh-234-4dcc17`: `crates/server/src/p2p_spike.rs` runs an
+iroh endpoint on its own runtime in desktop, headless and the APK, and
+`crates/server/examples/p2p_spike.rs` connects to it and measures. Pins:
+`iroh = "=1.4.1"` (1.4.2/1.5.0 are a day old), `n0-future = "=0.3.2"`.
+Builds clean next to `ed25519-dalek = "=3.0.0"` (iroh takes `>=3.0.0-rc.0, <4`,
+so the lock keeps one copy). Cargo resolved iroh's own crates (`iroh-base`,
+`iroh-relay`, `iroh-dns`, `noq*`) to 1.5.0, a day old; the numbers below are
+with those. #236 pins them to the 1.4.x matching `iroh`. Discovery off throughout: `presets::Minimal` (no pkarr/DNS lookup) plus the
+default public relays; the client gets only the node id, remembered addresses
+and the home relay URL. Test data is incompressible bytes (FLAC doesn't
+compress, and QUIC doesn't compress anyway). Phone: Sony XQ-DC54, Android 15,
+debug APK; desktop on the same Wi-Fi.
+
+- [x] **Identity:** `SecretKey::from_bytes(identity.key)` gives a node id equal
+  to `Pairing::engine_key()` (asserted at start-up on desktop and phone), so the
+  key paired devices know is the iroh address. No key conversion needed.
+- [x] **Builds:** desktop, headless and the aarch64 APK. Stripped `libdesktop_lib.so`
+  33.4 → 45.2 MB (+11.7 MB, +4.2 MB gzipped, which is about what the APK grows).
+  Measured on debug builds, whose dependencies are optimised; a release build
+  with LTO should be smaller.
+- [x] **Direct on LAN** (phone ↔ desktop, Wi-Fi): connect 10–170 ms, request
+  round trip 2–4 ms. 200 MB phone → desktop 129 Mbit/s, desktop → phone
+  293 Mbit/s. Desktop ↔ desktop: connect 2 ms, ~2.4 Gbit/s.
+- [x] **Discovery off:** with only the node id and home relay URL the first
+  connection goes through the relay in ~150 ms (first request ~70 ms), then
+  moves to a direct path 60–100 ms later. Holds for the locked phone too.
+- [x] **Relay fallback** (direct paths disabled on the client, public relay
+  `euc1-1.relay.n0.iroh.link`): connect ~140 ms, round trip ~50 ms, but
+  **~4 Mbit/s** both ways: the public relay rate-limits ("The relay is rate-limiting
+  this endpoint"). Fine for remote control and an Opus 256 stream, too slow for
+  FLAC sync downloads or streaming originals (a 30 MB album takes ~1 minute).
+  Settable own relay (decided) is the answer for heavy relay use.
+- [ ] **Across NAT via hole punching (phone on mobile data):** not run (no OK
+  for mobile data this time). The LAN case above already goes relay → direct
+  by hole punching, but not through a carrier NAT; run it before #236 ships.
+- [x] **Memory:** desktop headless idle (no transfers) 68–70 MB RSS vs 38 MB
+  with the endpoint off: +24 MB mimalloc heap, +7 MB code pages. Phone: total
+  PSS 192 MB vs 165 MB on master (WebView-dominated and noisy; fits the
+  desktop figure). Worth trimming in #236: share the engine's runtime instead
+  of a second one, and look at noq's per-socket buffers.
+- [x] **Wakeups:** desktop, iroh's threads idle at 250–340 context switches a
+  minute (~5/s: relay keep-alives, net reports, portmapper); the process goes
+  1,330 → 1,630/min. Phone locked (screen off, on USB so no deep Doze), app
+  paused: the process kept running (not frozen) and reachable; everything
+  but the audio threads came to ~1,600/min, an upper bound for iroh (threads
+  that touch JNI are renamed `Thread-N`, so iroh's can't be told apart).
+  Battery not measured directly.
+- Seen in passing, not the spike: while paused and locked, the phone's
+  `audio-decode` and `AudioTrack` threads wake ~6,400 and ~4,800 times a
+  minute: the output keeps running while paused (#254). That costs far more than iroh.
+
+**Go.** iroh 1.4 builds everywhere next to our pins, takes the engine key as
+it is, connects in well under a second without a lookup service and upgrades
+relay to direct on its own. Things to carry into #236: own relay setting
+(public relays throttle to ~4 Mbit/s), one runtime and a memory budget
+(~25–30 MB now), pin iroh's own crates alongside `iroh`, and the
+mobile-data and unplugged-Doze runs still to do.
 
 ## Phase 1 plan: desktop player
 
