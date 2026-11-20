@@ -61,7 +61,7 @@ apps/
 | Tags | lofty |
 | Library DB | SQLite (sqlx) + FTS5; `notify` for folder watching |
 | P2P | iroh: QUIC, hole punching, mDNS on LAN, relay fallback (self-hostable) |
-| Sync | Automerge CRDT for metadata; BLAKE3 content-addressed files via iroh-blobs |
+| Sync | Op log in SQLite for metadata (#239); files by audio hash over iroh |
 | Shared types | ts-rs → `apps/ui/src/lib/protocol/` (CI fails if stale) |
 
 ## Feature design
@@ -283,8 +283,9 @@ Tickets #233–#248 (milestone "Phase 6").
   internet goes through it (LAN direct first); browser clients and MPD stay
   LAN-only until phase 7.
 - **Synced:** playlists, play history, favourites + 5-star ratings (new).
-  Not engine settings. Changes spread transitively. How to merge (op log in
-  SQLite vs Automerge) is open on #239.
+  Not engine settings. Changes spread transitively, as a hand-rolled op log
+  in SQLite (#239): plays a grow-only set, fields last-writer-wins, playlist
+  order by fractional positions. No Automerge.
 - **Combined library:** every linked engine shares its catalog both ways;
   other devices' tracks are mixed in with a mark, dim while unreachable, and
   a filter shows only this device. The same audio is one track. Tracks not
