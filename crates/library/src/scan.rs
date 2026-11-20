@@ -405,10 +405,12 @@ fn hash_next(shared: &Shared, conn: &Connection) -> bool {
         .flatten();
     let Some((id, path)) = next else { return false };
     let result = match hash::audio_hash(Path::new(&path)) {
-        Ok(hash) => conn.execute(
-            "UPDATE tracks SET audio_hash = ?1 WHERE id = ?2",
-            params![hash, id],
-        ),
+        Ok(hash) => conn
+            .execute(
+                "UPDATE tracks SET audio_hash = ?1 WHERE id = ?2",
+                params![hash, id],
+            )
+            .and_then(|n| db::move_hash(conn, &path, &hash).map(|()| n)),
         Err(_) if !Path::new(&path).exists() => return false,
         // Present but undecodable: note why, with an empty hash so it isn't retried.
         Err(problem) => {

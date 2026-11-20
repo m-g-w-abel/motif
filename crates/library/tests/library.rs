@@ -220,7 +220,7 @@ fn scans_queries_matches_and_rescans() {
         .map(|r| r.keys.audio_hash.clone().unwrap())
         .collect();
     assert!(
-        hashes[0].starts_with("flac-md5:") && hashes[2].starts_with("pcm-b3:"),
+        hashes[0].starts_with("flac-md5:") && hashes[2].starts_with("pkt-b3:"),
         "{hashes:?}"
     );
 
@@ -1031,7 +1031,7 @@ fn opus_tracks_are_hashed_and_old_codec_flags_cleared() {
         .unwrap()
         .unwrap_or_default()
     };
-    assert!(hash().starts_with("pcm-b3:"), "{}", hash());
+    assert!(hash().starts_with("pkt-b3:"), "{}", hash());
     assert_eq!(problem(&library), None);
 
     // Engines from before flagged every Opus file: an upgrade checks them again.
@@ -1045,7 +1045,7 @@ fn opus_tracks_are_hashed_and_old_codec_flags_cleared() {
     let library = Library::open(&data).unwrap();
     wait_until(&library, |_| !hash().is_empty());
     assert_eq!(problem(&library), None);
-    assert!(hash().starts_with("pcm-b3:"), "{}", hash());
+    assert!(hash().starts_with("pkt-b3:"), "{}", hash());
     let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
 }
 
