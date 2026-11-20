@@ -63,7 +63,7 @@
     memory?: string;
   } = $props();
 
-  const { engine, settings, playlists, views } = getApp();
+  const { engine, library, settings, playlists, views } = getApp();
   const view = getViewState();
   $effect(() => data.sync?.());
 
@@ -270,7 +270,7 @@
               onkeydown={(e) => onKey(e, i)}
               onpointerdown={(e) => press(e, i)}
               onclick={() => activate(i)}
-              use:menu={() => trackMenu(engine, playlists, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
+              use:menu={() => trackMenu(engine, library, playlists, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
             >
               <span class="lead">
                 {#if mode !== 'list'}
@@ -293,6 +293,12 @@
                   <span class="title">{trackTitle(track)}</span>
                   {#if !inAlbum}<span class="artist">{track.artist || 'Unknown artist'}</span>{/if}
                 </span>
+                {#if details?.favourite || details?.rating}
+                  <span class="marks">
+                    {#if details.favourite}<Icon name="heart" size={12} solid />{/if}
+                    {#if details.rating}<span class="stars">★ {details.rating / 2}</span>{/if}
+                  </span>
+                {/if}
                 <span class="info">{error ?? songInfo(track, details, inAlbum)}</span>
               {/if}
             </button>
@@ -530,6 +536,15 @@
     font-size: 0.88em;
     font-variant-numeric: tabular-nums;
     color: var(--text-muted);
+  }
+
+  .marks {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 0.88em;
+    color: var(--accent);
   }
 
   .loading {

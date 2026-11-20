@@ -63,7 +63,7 @@ impl Library {
             .query_map(params![limit, offset], |r| {
                 Ok(PlayedTrack {
                     track: library_track(r)?,
-                    played_at: r.get::<_, i64>(23)? as u64,
+                    played_at: r.get::<_, i64>(25)? as u64,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;

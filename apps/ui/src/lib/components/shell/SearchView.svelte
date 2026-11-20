@@ -4,7 +4,7 @@
   import { getApp, getViewState } from '../../context';
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
   import { formatTime } from '../../format';
-  import type { LibraryTracks, Shown } from '../../library.svelte';
+  import { NO_FILTER, type LibraryTracks, type Shown } from '../../library.svelte';
   import { queueTracks } from '../../menus';
   import type { LibraryAlbum } from '../../protocol/LibraryAlbum';
   import type { LibraryArtist } from '../../protocol/LibraryArtist';
@@ -115,10 +115,10 @@
     if (grids) return grid?.playEverything(shuffle);
     if (songList) return songList.playEverything(shuffle);
     try {
-      const found = await engine.query({ type: 'tracks', search: searched, sort: [], offset: 0, limit: 0 });
+      const found = await engine.query({ type: 'tracks', search: searched, sort: [], filter: NO_FILTER, offset: 0, limit: 0 });
       if (found.type !== 'tracks' || !found.total) return;
       await engine.send({ type: 'set_shuffle', on: shuffle });
-      await engine.query({ type: 'play', search: searched, sort: [], start: shuffle ? Math.floor(Math.random() * found.total) : 0 });
+      await engine.query({ type: 'play', search: searched, sort: [], filter: NO_FILTER, start: shuffle ? Math.floor(Math.random() * found.total) : 0 });
     } catch (e) {
       engine.error = (e as Error).message;
     }
@@ -127,7 +127,7 @@
   /** The ⋮ menu: queue the matching songs. */
   function openMore(e: MouseEvent) {
     const matching = async () => {
-      const found = await engine.query({ type: 'tracks', search: searched, sort: [], offset: 0, limit: songs.count });
+      const found = await engine.query({ type: 'tracks', search: searched, sort: [], filter: NO_FILTER, offset: 0, limit: songs.count });
       return found.type === 'tracks' ? found.tracks.map((t) => t.track) : [];
     };
     const items: MenuItem[] = engine.can('queue')

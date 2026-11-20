@@ -4,7 +4,9 @@
   import { formatTime, trackFormat, trackTitle } from '../../format';
   import { marquee } from '../../marquee';
   import type { InfoStyle } from '../../layout/model';
+  import Heart from '../Heart.svelte';
   import Scrollbar from '../Scrollbar.svelte';
+  import Stars from '../Stars.svelte';
 
   /** `playing` shows the playing track (now-playing screen); otherwise the track selected in a list. */
   let { style, playing = false, aside }: { style: InfoStyle; playing?: boolean; /** Hero: beside the title and artist. */ aside?: Snippet } = $props();
@@ -74,6 +76,12 @@
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
         {#if format}<span class="format"><span class="rates">{rates}</span>{format}</span>{/if}
       </p>
+      {#if playing && details && engine.can('library')}
+        <div class="marks" data-enter="fade">
+          <Stars rating={details.rating} size={22} set={(rating) => library.setRating([track], rating)} />
+          <Heart on={details.favourite} size={22} set={(on) => library.setFavourite([track], on)} />
+        </div>
+      {/if}
     {:else}
       <p class="hero-album">Double-click a track in the library to start.</p>
     {/if}
@@ -162,6 +170,13 @@
     gap: var(--space-2);
     margin: 2px 0 0;
     color: var(--text-muted);
+  }
+
+  .marks {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-top: var(--space-2);
   }
 
   .format {

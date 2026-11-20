@@ -17,6 +17,8 @@ export const SORT_KEYS: Record<SortKey, string> = {
   duration: 'Duration',
   format: 'Format',
   path: 'File path',
+  favourite: 'Favourite',
+  rating: 'Rating',
 };
 
 /** The library's own order (`db.rs`): album artist, album, disc, track. */

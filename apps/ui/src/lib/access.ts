@@ -53,6 +53,8 @@ const QUERY_SCOPES: Record<LibraryQuery['type'], Scope | null> = {
   add_root: 'library',
   remove_root: 'library',
   rescan: 'library',
+  set_favourite: 'library',
+  set_rating: 'library',
   set_watching: 'library',
   save_lyrics: 'library',
   create_playlist: 'library',

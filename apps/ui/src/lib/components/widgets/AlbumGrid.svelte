@@ -7,7 +7,7 @@
   import { addFolder } from '../../folders';
   import { formatTime } from '../../format';
   import { gesture, mapped, swipeRow } from '../../gestures';
-  import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
+  import { hold, NO_FILTER, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
@@ -183,8 +183,8 @@
       const from = (total: number) => (shuffle ? Math.floor(Math.random() * total) : 0);
       if (items === 'albums' && !isDemo) {
         const search = view.browse.search || null;
-        const found = await engine.query({ type: 'tracks', search, sort, offset: 0, limit: 0 });
-        if (found.type === 'tracks' && found.total) await engine.query({ type: 'play', search, sort, start: from(found.total) });
+        const found = await engine.query({ type: 'tracks', search, sort, filter: NO_FILTER, offset: 0, limit: 0 });
+        if (found.type === 'tracks' && found.total) await engine.query({ type: 'play', search, sort, filter: NO_FILTER, start: from(found.total) });
         return;
       }
       // shortcut: all playlists play as a snapshot of their tracks (one playlist at a time is followed live); recent albums are a snapshot by design.

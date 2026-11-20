@@ -51,6 +51,7 @@ fn track(library: &Library, title: &str) -> protocol::LibraryTrack {
     let query = LibraryQuery::Tracks {
         search: None,
         sort: vec![],
+        filter: Default::default(),
         offset: 0,
         limit: 100,
     };
@@ -69,6 +70,7 @@ fn titles(library: &Library, search: Option<&str>) -> Vec<String> {
     let query = LibraryQuery::Tracks {
         search: search.map(Into::into),
         sort: vec![],
+        filter: Default::default(),
         offset: 0,
         limit: 100,
     };
@@ -209,6 +211,7 @@ fn scans_queries_matches_and_rescans() {
         .selection(&LibraryQuery::Play {
             search: None,
             sort: vec![],
+            filter: Default::default(),
             start: 0,
         })
         .unwrap()
@@ -233,6 +236,7 @@ fn scans_queries_matches_and_rescans() {
         .query(LibraryQuery::Tracks {
             search: None,
             sort: by_title.clone(),
+            filter: Default::default(),
             offset: 1,
             limit: 2,
         })
@@ -269,6 +273,7 @@ fn scans_queries_matches_and_rescans() {
         .selection(&LibraryQuery::Play {
             search: None,
             sort: by_title.clone(),
+            filter: Default::default(),
             start: 0,
         })
         .unwrap()
@@ -653,6 +658,7 @@ fn both_years_are_kept_and_original_sorts_first() {
                 key: protocol::SortKey::Year,
                 descending: true,
             }],
+            filter: Default::default(),
             offset: 0,
             limit: 100,
         })
@@ -1016,6 +1022,7 @@ fn opus_tracks_are_hashed_and_old_codec_flags_cleared() {
         let query = LibraryQuery::Tracks {
             search: None,
             sort: vec![],
+            filter: Default::default(),
             offset: 0,
             limit: 1,
         };

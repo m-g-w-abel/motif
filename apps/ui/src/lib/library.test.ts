@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineClient } from './engine.svelte';
-import { LibraryTracks, RecentPlays } from './library.svelte';
+import { LibraryClient, LibraryTracks, RecentPlays } from './library.svelte';
 import type { LibraryQuery } from './protocol/LibraryQuery';
 import type { QueryResult } from './protocol/QueryResult';
 
@@ -9,10 +9,12 @@ function fakeEngine(total: number) {
   const queries: LibraryQuery[] = [];
   const engine = {
     status: 'open',
-    library: { revision: 1, plays: 1 },
+    library: { revision: 1, plays: 1, ratings: 1 },
     query: async (q: LibraryQuery): Promise<QueryResult> => {
       queries.push(q);
       if (q.type === 'recently_played') return { type: 'played', total: 0, plays: [] } as unknown as QueryResult;
+      if (q.type === 'set_favourite' || q.type === 'set_rating') return { type: 'done' };
+      if (q.type === 'lookup') return { type: 'tracks', total: 1, offset: 0, tracks: [{ track: { source: 'local', id: '/a.flac' }, favourite: false, rating: null }] } as unknown as QueryResult;
       if (q.type === 'groups') return { type: 'groups', groups: [] };
       if (q.type !== 'tracks') throw new Error(q.type);
       const tracks = Array.from({ length: Math.max(0, Math.min(q.limit, total - q.offset)) }, (_, i) => ({
@@ -21,7 +23,7 @@ function fakeEngine(total: number) {
       return { type: 'tracks', total, offset: q.offset, tracks } as unknown as QueryResult;
     },
   };
-  return { engine: engine as unknown as EngineClient & { library: { revision: number; plays: number } }, queries };
+  return { engine: engine as unknown as EngineClient & { library: { revision: number; plays: number; ratings: number } }, queries };
 }
 
 vi.useFakeTimers({ toFake: ['Date'] });
@@ -114,3 +116,30 @@ describe('stale data', () => {
   });
 });
 
+
+describe('marking tracks', () => {
+  const local = { source: 'local', id: '/a.flac' } as never;
+
+  it('shows a mark at once and sends it by path', async () => {
+    const { engine, queries } = fakeEngine(1);
+    const library = new LibraryClient(engine);
+    library.details(local);
+    await settle();
+    expect(library.details(local)).toMatchObject({ favourite: false, rating: null });
+    library.setFavourite([local], true);
+    library.setRating([local], 7);
+    expect(library.details(local)).toMatchObject({ favourite: true, rating: 7 });
+    expect(queries.filter((q) => q.type.startsWith('set_'))).toEqual([
+      { type: 'set_favourite', paths: ['/a.flac'], favourite: true },
+      { type: 'set_rating', paths: ['/a.flac'], rating: 7 },
+    ]);
+    library.setRating([local], null);
+    expect(library.details(local)?.rating).toBeNull();
+  });
+
+  it('leaves tracks that are not local alone', () => {
+    const { engine, queries } = fakeEngine(1);
+    new LibraryClient(engine).setFavourite([{ source: 'other', id: 'x' } as never], true);
+    expect(queries).toEqual([]);
+  });
+});

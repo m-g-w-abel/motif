@@ -9,6 +9,7 @@ import type { TrackRef } from './protocol/TrackRef';
 import { inSelection, ordered } from './selection';
 import { launcherItems } from './launcher';
 import { isAndroid } from './platform';
+import type { LibraryClient } from './library.svelte';
 import type { Playlists } from './playlists.svelte';
 import type { SongListData } from './sources.svelte';
 import { toasts } from './toast.svelte';
@@ -81,12 +82,28 @@ function queueItems(engine: EngineClient, tracks: TrackRef[]): MenuItem[] {
   ];
 }
 
+/** Favourite and rating items for library tracks (`marks`: what the row shows, if known); none where the engine can't write the library. */
+function markItems(engine: EngineClient, library: LibraryClient, tracks: TrackRef[], marks?: { favourite: boolean; rating: number | null }): MenuItem[] {
+  if (!engine.can('library') || !tracks.some((t) => t.source === 'local')) return [];
+  const on = marks?.favourite ?? false;
+  const items: MenuItem[] = [
+    { label: on ? 'Remove from favourites' : 'Add to favourites', run: () => library.setFavourite(tracks, !on) },
+  ];
+  if (tracks.length > 1) return items;
+  for (let stars = 1; stars <= 5; stars++) {
+    items.push({ label: `Rate ${stars} ${stars === 1 ? 'star' : 'stars'}`, run: () => library.setRating(tracks, stars * 2) });
+  }
+  if (marks?.rating != null) items.push({ label: 'Clear rating', run: () => library.setRating(tracks, null) });
+  return items;
+}
+
 /**
  * The menu of row `i` in a track list; of the whole selection when the row is part of one.
  * `openAlbum` goes to the album's page; without it Go to album shows the album in the layout.
  */
 export function trackMenu(
   engine: EngineClient,
+  library: LibraryClient,
   playlists: Playlists,
   data: SongListData,
   view: ViewState,
@@ -97,9 +114,19 @@ export function trackMenu(
   if (!track) return [];
   if (inSelection(view.browse.picked, data.key(i))) {
     const tracks = ordered(view.browse.picked);
-    return [...playItem(engine, () => playTracks(engine, tracks)), ...queueItems(engine, tracks), ...playlists.addItems(tracks)];
+    return [
+      ...playItem(engine, () => playTracks(engine, tracks)),
+      ...queueItems(engine, tracks),
+      ...playlists.addItems(tracks),
+      ...markItems(engine, library, tracks),
+    ];
   }
-  const items: MenuItem[] = [...playItem(engine, () => data.play(i)), ...queueItems(engine, [track]), ...playlists.addItems([track])];
+  const items: MenuItem[] = [
+    ...playItem(engine, () => data.play(i)),
+    ...queueItems(engine, [track]),
+    ...playlists.addItems([track]),
+    ...markItems(engine, library, [track], data.details?.(i)),
+  ];
   if (track.album) {
     const artist = data.details?.(i)?.album_artist ?? track.artist ?? '';
     const key = albumKey({ ...track, artist });

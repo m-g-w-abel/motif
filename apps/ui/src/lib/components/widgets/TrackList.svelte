@@ -70,6 +70,7 @@
     artist: 'Artist',
     album: 'Album',
     format: 'Format',
+    rating: 'Rating',
     duration: 'Time',
   };
 
@@ -80,6 +81,7 @@
     artist: 'artist',
     album: 'album',
     format: 'format',
+    rating: 'rating',
     duration: 'duration',
   };
   const sortable = (column: Column) => (browsing && !isDemo ? sortKeys[column] : undefined);
@@ -436,6 +438,10 @@
         return t.album ?? '';
       case 'format':
         return trackFormat(t);
+      case 'rating': {
+        const d = data.details?.(index);
+        return [d?.favourite ? '♥' : '', d?.rating ? `★ ${d.rating / 2}` : ''].filter(Boolean).join(' ');
+      }
       case 'duration':
         return t.duration_ms ? formatTime(t.duration_ms) : '';
     }
@@ -607,7 +613,7 @@
                 onauxclick={(e) => e.button === 1 && queueRow(i)}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => onKey(e, i)}
-                use:menu={() => trackMenu(engine, playlists, data, view, i)}
+                use:menu={() => trackMenu(engine, library, playlists, data, view, i)}
               >
                 {#each shown as column (column)}
                   <td class={column}>

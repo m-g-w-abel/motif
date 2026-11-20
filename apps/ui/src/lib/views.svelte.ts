@@ -13,11 +13,12 @@ export type View =
   | { kind: 'playlists' }
   | { kind: 'played' }
   | { kind: 'added' }
+  | { kind: 'favourites' }
   | { kind: 'album'; key: string; title: string; art?: string | null; artist?: string }
   | { kind: 'playlist'; id: string; name: string }
   | { kind: 'search' };
 
-export type Category = Extract<View['kind'], 'songs' | 'albums' | 'playlists' | 'played' | 'added'>;
+export type Category = Extract<View['kind'], 'songs' | 'albums' | 'playlists' | 'played' | 'added' | 'favourites'>;
 
 /** The Library home's entries, in order, each with its round icon's colour. */
 export const CATEGORIES: { kind: Category; label: string; icon: IconName; colour: string }[] = [
@@ -26,6 +27,7 @@ export const CATEGORIES: { kind: Category; label: string; icon: IconName; colour
   { kind: 'playlists', label: 'Playlists', icon: 'list', colour: '#7a4638' },
   { kind: 'played', label: 'Recently Played', icon: 'play', colour: '#3f3d8a' },
   { kind: 'added', label: 'Recently Added', icon: 'plus', colour: '#4e6043' },
+  { kind: 'favourites', label: 'Favourites', icon: 'heart', colour: '#a8405a' },
 ];
 
 const HOME: View = { kind: 'home' };

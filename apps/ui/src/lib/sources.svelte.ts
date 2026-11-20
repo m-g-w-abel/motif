@@ -1,8 +1,9 @@
 import { groupConsecutive } from './albums';
 import { demoLibrary, isDemo } from './demo';
 import type { EngineClient } from './engine.svelte';
-import { hold, type LibraryClient, type LibraryTracks, type RecentPlays, type Shown } from './library.svelte';
+import { hold, NO_FILTER, type LibraryClient, type LibraryTracks, type RecentPlays, type Shown } from './library.svelte';
 import type { LibraryTrack } from './protocol/LibraryTrack';
+import type { TrackFilter } from './protocol/TrackFilter';
 import type { SortRule } from './protocol/SortRule';
 import type { TrackGroup } from './protocol/TrackGroup';
 import type { TrackRef } from './protocol/TrackRef';
@@ -130,9 +131,10 @@ export function trackListData(
   search: string | null = null,
   sort: SortRule[] = [],
   shown: Shown<LibraryTracks> = {},
+  filter: TrackFilter = NO_FILTER,
 ): TrackListData {
   if (isDemo) return demoData(engine);
-  return libraryData(engine, library, search, sort, shown);
+  return libraryData(engine, library, search, sort, shown, filter);
 }
 
 /** Memoises a value computed from the data object's inputs. */
@@ -178,8 +180,9 @@ function libraryData(
   search: string | null,
   sort: SortRule[],
   shown: Shown<LibraryTracks>,
+  filter: TrackFilter,
 ): TrackListData {
-  const next = library.tracks(search, sort);
+  const next = library.tracks(search, sort, filter);
   // Chosen on each read, so the swap follows `next.loaded` wherever the rows are drawn.
   const list = () => hold(next, shown);
   const run = (query: Parameters<EngineClient['query']>[0]) =>
@@ -208,7 +211,7 @@ function libraryData(
     get currentKey() {
       return localKey(engine);
     },
-    play: (start) => void run({ type: 'play', search, sort, start }),
+    play: (start) => void run({ type: 'play', search, sort, filter, start }),
     playGroup: (g) => void run({ type: 'play_album', album: g.key, sort }),
     // The library keeps tracks whose files are gone or damaged, so they can
     // be found or replaced later; they show why they won't play.
@@ -223,6 +226,7 @@ function libraryData(
         return { message: 'No music folders yet.', hint: 'Add a folder and Motif will find the music in it.', addFolder: true };
       }
       if (search) return { message: `Nothing matches “${search}”.` };
+      if (filter.favourite) return { message: 'No favourites yet.', hint: 'Tap the heart on a song to keep it here.' };
       if (status.scanning) return { message: 'Scanning your music…', hint: `${status.scanned} files so far` };
       return { message: 'No music found in your folders.', addFolder: true };
     },

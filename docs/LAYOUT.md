@@ -135,7 +135,7 @@ The tracks of whatever is being browsed.
 | `max-width` | pixels; centres the list at this width on wide screens |
 
 Child `columns` lists the columns in order: `index`, `title`, `artist`,
-`album`, `format`, `duration`. Defaults: `columns index title artist album
+`album`, `format`, `rating` (♥ and stars), `duration`. Defaults: `columns index title artist album
 duration` without album breaks, `columns index artist title duration` with them.
 
 Title takes the remaining width. Drag the edge between two column headers to

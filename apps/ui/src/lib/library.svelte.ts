@@ -5,9 +5,13 @@ import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { PlayedTrack } from './protocol/PlayedTrack';
 import type { QueryResult } from './protocol/QueryResult';
 import type { SortRule } from './protocol/SortRule';
+import type { TrackFilter } from './protocol/TrackFilter';
 import type { TrackGroup } from './protocol/TrackGroup';
 import type { TrackImage } from './protocol/TrackImage';
 import type { TrackRef } from './protocol/TrackRef';
+
+/** Lists hold every track unless filtered. */
+export const NO_FILTER: TrackFilter = { favourite: false };
 
 /** Rows fetched per request. */
 const PAGE = 200;
@@ -39,11 +43,12 @@ abstract class PagedList<T> {
     protected engine: EngineClient,
     readonly search: string | null,
     readonly sort: SortRule[] = [],
+    readonly filter: TrackFilter = NO_FILTER,
   ) {}
 
   /** What the rows depend on: a number that grows whenever they may change. */
   protected version(): number | undefined {
-    return this.engine.library?.revision;
+    return changes(this.engine);
   }
 
   /** Refetches if the library changed. Call from an `$effect`. */
@@ -184,7 +189,7 @@ export class LibraryTracks extends PagedList<LibraryTrack> {
   }
 
   protected async fetch(offset: number, limit: number) {
-    const result = await this.engine.query({ type: 'tracks', search: this.search, sort: this.sort, offset, limit });
+    const result = await this.engine.query({ type: 'tracks', search: this.search, sort: this.sort, filter: this.filter, offset, limit });
     if (result.type !== 'tracks') throw new Error(`unexpected ${result.type}`);
     return { total: result.total, rows: result.tracks };
   }
@@ -225,10 +230,16 @@ export class RecentPlays extends PagedList<PlayedTrack> {
   }
 }
 
-/** Both counters only grow, so their sum changes whenever either does. */
+/** The library's changes, and its marks (hearts, ratings), which rows show: counters only grow, so their sum changes whenever any does. */
+function changes(engine: EngineClient) {
+  const status = engine.library;
+  return status ? status.revision + status.ratings : undefined;
+}
+
+/** As `changes`, with plays. */
 function playsVersion(engine: EngineClient) {
   const status = engine.library;
-  return status ? status.revision + status.plays : undefined;
+  return status ? status.revision + status.ratings + status.plays : undefined;
 }
 
 /** Albums with a track that counted as played, the latest play first. */
@@ -277,9 +288,8 @@ export class LibraryClient {
     return this.engine.library;
   }
 
-  tracks(search: string | null, sort: SortRule[] = []): LibraryTracks {
-    const list = cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort));
-    return list;
+  tracks(search: string | null, sort: SortRule[] = [], filter: TrackFilter = NO_FILTER): LibraryTracks {
+    return cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort, filter), filter);
   }
 
   albums(search: string | null, sort: SortRule[] = []): LibraryAlbums {
@@ -291,7 +301,7 @@ export class LibraryClient {
   details(track: TrackRef | undefined): LibraryTrack | null | undefined {
     if (track?.source !== 'local') return null;
     // Details can change with the library (e.g. new artwork).
-    const revision = this.engine.library?.revision ?? -1;
+    const revision = changes(this.engine) ?? -1;
     if (revision !== this.#revision && Date.now() - this.#refreshed >= SYNC_INTERVAL) {
       this.#revision = revision;
       this.#refreshed = Date.now();
@@ -306,6 +316,26 @@ export class LibraryClient {
       if (this.#wanted.size === 1) queueMicrotask(() => this.#lookup());
     }
     return known;
+  }
+
+  /** Marks (or unmarks) library tracks as favourites; shown at once, then sent. Safe to repeat. */
+  setFavourite(tracks: TrackRef[], favourite: boolean) {
+    this.#mark(tracks, { favourite }, (paths) => ({ type: 'set_favourite', paths, favourite }));
+  }
+
+  /** Rates library tracks in half stars (1 to 10), or clears the rating with `null`. */
+  setRating(tracks: TrackRef[], rating: number | null) {
+    this.#mark(tracks, { rating }, (paths) => ({ type: 'set_rating', paths, rating }));
+  }
+
+  #mark(tracks: TrackRef[], patch: Partial<LibraryTrack>, query: (paths: string[]) => Parameters<EngineClient['query']>[0]) {
+    const paths = tracks.filter((t) => t.source === 'local').map((t) => t.id);
+    if (!paths.length) return;
+    for (const path of paths) {
+      const known = this.#details.get(path);
+      if (known) this.#details.set(path, { ...known, ...patch });
+    }
+    this.engine.query(query(paths)).catch((e: Error) => (this.engine.error = e.message));
   }
 
   #lookup() {
@@ -383,8 +413,8 @@ export const BAR_ART_SIZE = 128;
 /** Thumbnail sizes the engine is asked for, in image pixels. */
 const ART_STEPS = [64, 128, 256, 512, 1024];
 
-function cached<T>(map: Map<string, T>, search: string | null, sort: SortRule[], make: () => T): T {
-  const key = JSON.stringify([search ?? '', sort]);
+function cached<T>(map: Map<string, T>, search: string | null, sort: SortRule[], make: () => T, filter?: TrackFilter): T {
+  const key = JSON.stringify([search ?? '', sort, filter ?? null]);
   let value = map.get(key);
   if (!value) {
     // Keep a handful of searches and orders; the oldest go first.

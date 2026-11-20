@@ -10,9 +10,10 @@
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
   import { demoLibrary, isDemo } from '../../demo';
   import { launcherItems } from '../../launcher';
-  import type { LibraryTracks, Shown } from '../../library.svelte';
+  import { NO_FILTER, type LibraryTracks, type Shown } from '../../library.svelte';
   import { libraryMenu } from '../../menus';
   import type { LibraryTrack } from '../../protocol/LibraryTrack';
+  import type { TrackFilter } from '../../protocol/TrackFilter';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { albumLine, matches } from '../../songs';
   import { DEFAULT_RULES, sortRules, viewSort } from '../../sort.svelte';
@@ -78,12 +79,12 @@
   const collection = $derived(view.kind === 'albums' || view.kind === 'playlists' || (recents && show === 'albums'));
   /** An album's or playlist's page: it always opens at the top (no scroll memory), so what flies to it lands where it rests. */
   const page = view.kind === 'album' || view.kind === 'playlist';
-  const songView = $derived(!collection && (view.kind === 'songs' || page || recents));
+  const songView = $derived(!collection && (view.kind === 'songs' || view.kind === 'favourites' || page || recents));
   const optionsKey = $derived.by((): OptionsKey | null => {
     if (view.kind === 'albums' || view.kind === 'playlists') return view.kind;
     if (recents) return show === 'albums' ? view.kind : `${view.kind}:songs`;
     if (view.kind === 'playlist') return `playlist:${view.id}`;
-    return view.kind === 'songs' || view.kind === 'album' ? view.kind : null;
+    return view.kind === 'songs' || view.kind === 'favourites' || view.kind === 'album' ? view.kind : null;
   });
   const options = $derived(optionsKey && viewOptions(settings.current.viewOptions, optionsKey));
   // Albums sort like songs, each kind by its own rules (viewOptions.ts).
@@ -162,12 +163,13 @@
 
   // Recently Added's songs, newest first, as its albums.
   const ADDED = viewOptions({}, 'added').sort ?? [];
+  const FAVOURITES: TrackFilter = { favourite: true };
   const shownList: Shown<LibraryTracks> = {};
   const songs = $derived.by(() => {
     if (page) return fixedData(engine, title, shown, playRows, area.browse.search ? 'No songs match.' : 'No songs here yet.');
     if (view.kind === 'played') return playedData(engine, library.recentPlays);
     const rules = view.kind === 'added' ? ADDED : viewSort(area);
-    return trackListData(engine, library, 'library', area.browse.search || null, rules, shownList);
+    return trackListData(engine, library, 'library', area.browse.search || null, rules, shownList, view.kind === 'favourites' ? FAVOURITES : NO_FILTER);
   });
   const openAlbum = (key: string, title: string) => views.open({ kind: 'album', key, title });
   // Select mode's Delete on a playlist's page: gone here at once, then from the playlist (a repeat removes nothing more).

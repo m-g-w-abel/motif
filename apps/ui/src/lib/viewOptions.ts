@@ -25,13 +25,14 @@ export type OptionsKey =
   | 'played'
   | 'added'
   | 'songs'
+  | 'favourites'
   | 'album'
   | 'played:songs'
   | 'added:songs'
   | `playlist:${string}`;
 
 /** Song views start as a song list; collections as a cover grid. */
-const SONG_VIEWS = /^(songs|album|playlist:.*|.*:songs)$/;
+const SONG_VIEWS = /^(songs|favourites|album|playlist:.*|.*:songs)$/;
 
 /** Saved options, only those that differ from the defaults. A client setting, per device. */
 export type SavedOptions = Record<string, Partial<ViewOptions>>;

@@ -33,6 +33,7 @@
     copy: 'M9 9h11v11H9zM5 15V4h11',
     lyrics: 'M8 7h8M5 12h14M8 17h8',
     'queue-add': 'M3 6h13M3 12h13M3 18h8M18 14v7M14.5 17.5h7',
+    heart: 'M12 20.5s-8-4.6-8-10.3A4.4 4.4 0 0 1 12 7.6a4.4 4.4 0 0 1 8 2.6c0 5.7-8 10.3-8 10.3Z',
     'playlist-add': 'M9 18V6l10-2v5M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM18 13v8M14 17h8',
   } as const;
 
@@ -42,7 +43,7 @@
 </script>
 
 <script lang="ts">
-  let { name, size = 20 }: { name: IconName; size?: number } = $props();
+  let { name, size = 20, solid = false }: { name: IconName; size?: number; /** Filled in, outline kept (a heart that is on). */ solid?: boolean } = $props();
 </script>
 
 <svg
@@ -50,7 +51,7 @@
   height={size}
   viewBox="0 0 24 24"
   aria-hidden="true"
-  fill={filled.has(name) ? 'currentColor' : 'none'}
+  fill={solid || filled.has(name) ? 'currentColor' : 'none'}
   stroke={filled.has(name) ? 'none' : 'currentColor'}
   stroke-width="2"
   stroke-linecap="square"

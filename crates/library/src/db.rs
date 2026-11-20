@@ -38,6 +38,8 @@ fn sort_expr(key: SortKey) -> &'static str {
         SortKey::Duration => "duration_ms",
         SortKey::Format => "lower(codec)",
         SortKey::Path => "path",
+        SortKey::Favourite => crate::ratings::FAVOURITE,
+        SortKey::Rating => concat!("coalesce(", rating!(), ", 0)"),
     }
 }
 
@@ -86,6 +88,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch(crate::history::SCHEMA)?;
+    conn.execute_batch(crate::ratings::SCHEMA)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -167,6 +170,9 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
          WHEN new.audio_hash != '' BEGIN
              UPDATE playlist_items SET hash = new.audio_hash WHERE file = new.path AND hash IS NULL;
              UPDATE plays SET hash = new.audio_hash WHERE track_path = new.path AND hash IS NULL;
+             -- shortcut: if the audio already has marks (another copy of it), these stay under the path.
+             UPDATE OR IGNORE ratings SET key = new.audio_hash, hash = new.audio_hash
+             WHERE key = new.path AND hash IS NULL;
          END;",
     )?;
     Ok(conn)
@@ -513,6 +519,8 @@ mod tests {
             SortKey::Duration,
             SortKey::Format,
             SortKey::Path,
+            SortKey::Favourite,
+            SortKey::Rating,
         ];
         let rules: Vec<_> = keys.iter().map(|&k| rule(k, false)).collect();
         conn.prepare(&format!("SELECT id FROM tracks {}", order(&rules)))

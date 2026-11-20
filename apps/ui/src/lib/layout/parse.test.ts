@@ -117,7 +117,7 @@ describe('parseLayout', () => {
         'layout version=1 icon=star',
         'split row {',
         '  tracklist colour=red {',
-        '    columns title rating',
+        '    columns title bpm',
         '  }',
         '  sidebar',
         '}',
@@ -126,7 +126,7 @@ describe('parseLayout', () => {
     expect(errors.map((e) => [e.line, e.message])).toEqual([
       [1, '`icon` must be one of `list`, `grid`, `split`, `info`, `columns`, got "star"'],
       [3, '`tracklist` has no property `colour`; expected `style`, `album-breaks`, `headers`, `max-width`, `size`'],
-      [4, 'unknown column `rating`; expected one of `index`, `title`, `artist`, `album`, `format`, `duration`'],
+      [4, 'unknown column `bpm`; expected one of `index`, `title`, `artist`, `album`, `format`, `rating`, `duration`'],
       [6, 'unknown widget `sidebar`; expected one of `split`, `tracklist`, `album-grid`, `artwork`, `track-info`, `controls`, `queue`, `visualiser`, `lyrics`'],
     ]);
   });

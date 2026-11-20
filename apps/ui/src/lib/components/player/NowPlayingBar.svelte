@@ -3,6 +3,7 @@
   import { formatTime } from '../../format';
   import { gesture, mapped, slide } from '../../gestures';
   import { BAR_ART_SIZE } from '../../library.svelte';
+  import Heart from '../Heart.svelte';
   import Icon from '../Icon.svelte';
   import PhoneMenu from '../shell/PhoneMenu.svelte';
   import SelectBar from '../shell/SelectBar.svelte';
@@ -18,7 +19,9 @@
   import { risen } from '../../motion/swap';
   import { Transition } from '../../motion/transition';
 
-  const { engine, position, sheet, settings, settingsView, views } = getApp();
+  const { engine, library, position, sheet, settings, settingsView, views } = getApp();
+  const playing = $derived(engine.current?.track);
+  const marks = $derived(library.details(playing));
   let sliding = $state<HTMLElement>();
   const duration = $derived(engine.current?.track.duration_ms ?? 0);
 
@@ -113,6 +116,7 @@
       <span class="time">
         {formatTime(position.ms)}<span class="total">{' / '}{duration ? formatTime(duration) : '-:--'}</span>
       </span>
+      {#if playing && marks && engine.can('library')}<Heart on={marks.favourite} size={18} set={(on) => library.setFavourite([playing], on)} />{/if}
       <ShuffleButton />
       <RepeatButton />
       <Volume />
