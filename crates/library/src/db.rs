@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use protocol::{SortKey, SortRule};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 /// The order lists use until the user picks one: album artist, album, disc, track.
 const DEFAULT_SORT: [SortRule; 4] = [
@@ -108,6 +108,9 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              PRIMARY KEY (playlist, item)
          );
          CREATE INDEX IF NOT EXISTS playlist_items_file ON playlist_items (file);
+         -- Files whose old audio hash (before version 15) is waiting for the
+         -- scanner's new one, so what is keyed by it follows (see move_hash()).
+         CREATE TABLE IF NOT EXISTS hash_moves (path TEXT PRIMARY KEY, old TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS tracks (
              id INTEGER PRIMARY KEY,
              path TEXT NOT NULL UNIQUE,
@@ -188,7 +191,7 @@ pub fn resolve(file: &str, hash: &str) -> String {
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 14;
+const VERSION: i32 = 15;
 
 fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -328,9 +331,40 @@ fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
              WHERE hash IS NULL;",
         )?;
     }
+    if version < 15 {
+        // Version 15 hashes lossy files by their compressed packets (#233),
+        // since decoders differ between platforms: hash them again, and note
+        // the old hash so playlists, plays and caches follow it.
+        conn.execute_batch(
+            "INSERT OR REPLACE INTO hash_moves SELECT path, audio_hash FROM tracks
+             WHERE audio_hash LIKE 'pcm-b3:%' AND codec NOT IN ('FLAC', 'WAV', 'AIFF', 'WavPack', 'APE');
+             UPDATE tracks SET audio_hash = NULL
+             WHERE path IN (SELECT path FROM hash_moves);",
+        )?;
+    }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
     }
+    Ok(())
+}
+
+/// Moves everything keyed by the audio hash `old` to `new`, once the file
+/// noted in `hash_moves` is hashed again.
+pub fn move_hash(conn: &Connection, path: &str, new: &str) -> rusqlite::Result<()> {
+    let old: Option<String> = conn
+        .query_row("SELECT old FROM hash_moves WHERE path = ?1", [path], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    let Some(old) = old else { return Ok(()) };
+    for table in ["playlist_items", "plays", "waveforms", "loudness", "lyrics"] {
+        // Keyed tables may already hold the new hash (a duplicate file): it wins.
+        conn.execute(
+            &format!("UPDATE OR REPLACE {table} SET hash = ?1 WHERE hash = ?2"),
+            [new, &old],
+        )?;
+    }
+    conn.execute("DELETE FROM hash_moves WHERE path = ?1", [path])?;
     Ok(())
 }
 
@@ -461,6 +495,58 @@ mod tests {
             let _ = std::fs::remove_file(format!("{}{end}", file.display()));
         }
         assert_eq!(hash.as_deref(), Some("h"));
+    }
+
+    #[test]
+    fn version_15_moves_what_the_old_hash_keyed_to_the_packet_hash() {
+        let file = std::env::temp_dir().join(format!("motif-db15-{}.db", std::process::id()));
+        let conn = open(&file).unwrap();
+        conn.execute_batch(
+            "INSERT INTO tracks (path, size, mtime, codec, audio_hash) VALUES
+                 ('a.opus', 1, 1, 'Opus', 'pcm-b3:old'),
+                 ('b.wav', 1, 1, 'WAV', 'pcm-b3:wav');
+             INSERT INTO playlists VALUES ('p', 'P');
+             INSERT INTO playlist_items VALUES ('p', 'i', 0, 'a.opus', 'pcm-b3:old');
+             INSERT INTO plays (track_path, played_at, hash) VALUES ('a.opus', 100, 'pcm-b3:old');
+             INSERT INTO waveforms VALUES ('pcm-b3:old', x'01');
+             INSERT INTO loudness VALUES ('pcm-b3:old', -9.0, 0.5);
+             INSERT INTO lyrics VALUES ('pcm-b3:old', 's', 'p', 1);
+             PRAGMA user_version = 14;",
+        )
+        .unwrap();
+        drop(conn);
+        let conn = open(&file).unwrap();
+        let hashes = |sql: &str| -> Vec<Option<String>> {
+            conn.prepare(sql)
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            hashes("SELECT audio_hash FROM tracks ORDER BY path"),
+            [None, Some("pcm-b3:wav".into())],
+            "lossy files are hashed again, lossless ones keep theirs"
+        );
+        conn.execute(
+            "UPDATE tracks SET audio_hash = 'pkt-b3:new' WHERE path = 'a.opus'",
+            [],
+        )
+        .unwrap();
+        move_hash(&conn, "a.opus", "pkt-b3:new").unwrap();
+        move_hash(&conn, "a.opus", "pkt-b3:new").unwrap(); // safe to repeat
+        for table in ["playlist_items", "plays", "waveforms", "loudness", "lyrics"] {
+            assert_eq!(
+                hashes(&format!("SELECT hash FROM {table}")),
+                [Some("pkt-b3:new".into())],
+                "{table}"
+            );
+        }
+        drop(conn);
+        for end in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{end}", file.display()));
+        }
     }
 
     const fn rule(key: SortKey, descending: bool) -> SortRule {

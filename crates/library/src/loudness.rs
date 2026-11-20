@@ -19,15 +19,10 @@ use crate::{Shared, hash};
 pub const REFERENCE: f64 = -18.0;
 
 /// Integrated loudness in LUFS (`None` if silent) and sample peak of the
-/// file at `path`. With `hash`, also its `pcm-b3:` audio hash from the same
-/// decode.
-pub fn measure(path: &Path, hash: bool) -> Result<(Option<f64>, f64, Option<String>), String> {
-    let mut pcm = hash.then(hash::PcmHash::default);
+/// file at `path`.
+pub fn measure(path: &Path) -> Result<(Option<f64>, f64), String> {
     let mut meter: Option<EbuR128> = None;
     hash::decode(path, |samples, rate, channels| {
-        if let Some(pcm) = &mut pcm {
-            pcm.update(samples);
-        }
         if meter.is_none() {
             meter = EbuR128::new(channels as u32, rate, Mode::I | Mode::SAMPLE_PEAK).ok();
         }
@@ -40,11 +35,7 @@ pub fn measure(path: &Path, hash: bool) -> Result<(Option<f64>, f64, Option<Stri
     let peak = (0..meter.channels())
         .filter_map(|c| meter.sample_peak(c).ok())
         .fold(0.0, f64::max);
-    Ok((
-        lufs.is_finite().then_some(lufs),
-        peak,
-        pcm.map(|p| p.finish()),
-    ))
+    Ok((lufs.is_finite().then_some(lufs), peak))
 }
 
 /// Measures `paths` that need it in the background: new requests go first,
@@ -119,7 +110,7 @@ fn measure_one(shared: &Shared, path: &Path) {
         {
             return Ok(());
         }
-        let (lufs, peak, pcm_hash) = match measure(path, hash.is_none()) {
+        let (lufs, peak) = match measure(path) {
             Ok(measured) => measured,
             Err(err) => {
                 tracing::debug!(%err, ?path, "can't measure loudness");
@@ -128,7 +119,8 @@ fn measure_one(shared: &Shared, path: &Path) {
                 return Ok(());
             }
         };
-        let Some(hash) = hash.or(pcm_hash) else {
+        // Not hashed yet: hash it now (the scanner will find the same hash).
+        let Ok(hash) = hash.map_or_else(|| hash::audio_hash(path), Ok) else {
             return Ok(());
         };
         conn.execute(
@@ -180,12 +172,11 @@ mod tests {
     }
 
     #[test]
-    fn measures_loudness_and_the_hash_in_one_decode() {
+    fn measures_loudness() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/Artist B/Second Album/02 Ending.ogg");
-        let (lufs, peak, hash) = measure(&path, true).unwrap();
+        let (lufs, peak) = measure(&path).unwrap();
         assert!(peak > 0.0 && peak <= 1.0, "{peak}");
         assert!(lufs.is_none_or(|l| l < 0.0), "{lufs:?}");
-        assert_eq!(hash.unwrap(), hash::audio_hash(&path).unwrap());
     }
 }

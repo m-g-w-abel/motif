@@ -14,17 +14,12 @@ pub const POINTS: usize = 1000;
 const BLOCK: usize = 512;
 
 /// The waveform of the file at `path`: RMS loudness per point, scaled so the
-/// loudest point is 255. With `hash`, also its `pcm-b3:` audio hash, made
-/// from the same decode.
-pub fn compute(path: &Path, hash: bool) -> Result<(Vec<u8>, Option<String>), String> {
-    let mut pcm = hash.then(hash::PcmHash::default);
+/// loudest point is 255.
+pub fn compute(path: &Path) -> Result<Vec<u8>, String> {
     // Mean square of each block of samples.
     let mut blocks = Vec::new();
     let (mut sum, mut n) = (0f64, 0usize);
     hash::decode(path, |samples, _, _| {
-        if let Some(pcm) = &mut pcm {
-            pcm.update(samples);
-        }
         for &s in samples {
             sum += f64::from(s * s);
             n += 1;
@@ -40,7 +35,7 @@ pub fn compute(path: &Path, hash: bool) -> Result<(Vec<u8>, Option<String>), Str
     if blocks.is_empty() {
         return Err("no audio".into());
     }
-    Ok((levels(&blocks), pcm.map(|p| p.finish())))
+    Ok(levels(&blocks))
 }
 
 /// Groups blocks' mean squares into [`POINTS`] RMS levels, scaled to 0–255.
@@ -80,11 +75,9 @@ mod tests {
     }
 
     #[test]
-    fn the_hash_made_in_passing_is_the_audio_hash() {
+    fn computes_a_waveform_of_a_file() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/Artist B/Second Album/02 Ending.ogg");
-        let (levels, hash) = compute(&path, true).unwrap();
-        assert_eq!(levels.len(), POINTS);
-        assert_eq!(hash.unwrap(), hash::audio_hash(&path).unwrap());
+        assert_eq!(compute(&path).unwrap().len(), POINTS);
     }
 }

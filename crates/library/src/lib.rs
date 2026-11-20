@@ -694,7 +694,7 @@ impl Library {
         if known.as_deref() == Some("") {
             return Err(Error::Other("the file can't be decoded".into()));
         }
-        // Not hashed yet: a FLAC's hash is free, others are hashed while decoding.
+        // Not hashed yet: a FLAC's hash is free, others are hashed after decoding.
         let hash = known.or_else(|| hash::flac_hash(Path::new(path)));
         if let Some(hash) = &hash {
             let cached = self
@@ -709,9 +709,8 @@ impl Library {
                 return Ok(levels);
             }
         }
-        let (levels, pcm_hash) =
-            waveform::compute(Path::new(path), hash.is_none()).map_err(Error::Other)?;
-        let Some(hash) = hash.or(pcm_hash) else {
+        let levels = waveform::compute(Path::new(path)).map_err(Error::Other)?;
+        let Ok(hash) = hash.map_or_else(|| hash::audio_hash(Path::new(path)), Ok) else {
             return Ok(levels);
         };
         let stored = levels.clone();
