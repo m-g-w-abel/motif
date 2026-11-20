@@ -1,7 +1,7 @@
 export interface MenuItem {
   label: string;
   run: () => void;
-  /** Draws a tick (shown) or an empty box (hidden) before the label. */
+  /** Draws a tick (checked) or blank space (unchecked) before the label. */
   checked?: boolean;
 }
 

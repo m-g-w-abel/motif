@@ -169,7 +169,8 @@
           checked: columns.includes(c),
           run: () => {
             if (!columns.includes(c)) oncolumns([...columns, c]);
-            else if (columns.length > 1) oncolumns(columns.filter((x) => x !== c));
+            // A narrow window hides some columns: keep one of the visible ones too.
+            else if (columns.length > 1 && (shown.length > 1 || !shown.includes(c))) oncolumns(columns.filter((x) => x !== c));
           },
         }))
       : [];
