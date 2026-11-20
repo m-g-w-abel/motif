@@ -101,20 +101,22 @@ pub fn run() {
             } else {
                 library::data_dir()
             };
-            let url = tauri::async_runtime::block_on(start_engine(
+            let (url, pairing) = tauri::async_runtime::block_on(start_engine(
                 media_controls,
                 built_in_ui(app),
                 data_dir,
             ))?;
             tracing::info!(%url, "engine");
             app.manage(EngineUrl(url));
+            app.manage(remote::OwnEngine(pairing));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             engine_url,
             show_in_folder,
             remote::discover_engines,
-            remote::pair_engine
+            remote::pair_engine,
+            remote::link_engine
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");
@@ -164,19 +166,19 @@ fn built_in_ui(app: &tauri::App) -> Option<server::Ui> {
     })))
 }
 
-/// Starts the embedded engine and returns its address. If another engine
-/// (e.g. the headless one) already owns this machine's library, the window
-/// connects to that one instead. `media_controls` mirrors the engine in the
+/// Starts the embedded engine and returns its address and pairing. If
+/// another engine (e.g. the headless one) already owns this machine's
+/// library, the window connects to that one instead, and there is no pairing. `media_controls` mirrors the engine in the
 /// OS media controls.
 async fn start_engine(
     media_controls: impl FnOnce(Engine, Option<library::Library>),
     ui: Option<server::Ui>,
     data_dir: Option<std::path::PathBuf>,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<(String, Option<server::Pairing>), Box<dyn std::error::Error>> {
     let library = match &data_dir {
         Some(dir) => match library::Claim::take(dir)? {
             Ok(claim) => Some((library::Library::open(dir)?, claim)),
-            Err(Some(owner)) => return Ok(owner),
+            Err(Some(owner)) => return Ok((owner, None)),
             Err(None) => {
                 return Err(format!("{} is locked by another engine", dir.display()).into());
             }
@@ -221,16 +223,17 @@ async fn start_engine(
         integrations.subscribe(),
     );
     let port_file = data_dir.as_ref().map(|dir| dir.join("desktop-port"));
+    let pairing = match &data_dir {
+        Some(dir) => server::Pairing::open(dir)?,
+        None => server::Pairing::in_memory(),
+    };
     let config = server::Config {
         // Loopback; pairing opens the LAN on the same port (server::bind).
         addr: SocketAddr::from(([127, 0, 0, 1], stable_port(port_file.as_deref()))),
         ui,
         library: library.as_ref().map(|(library, _)| library.clone()),
         integrations,
-        pairing: match &data_dir {
-            Some(dir) => server::Pairing::open(dir)?,
-            None => server::Pairing::in_memory(),
-        },
+        pairing: pairing.clone(),
     };
     let (addr, serve) = server::bind(engine, config).await?;
     if let Some(file) = &port_file {
@@ -247,7 +250,7 @@ async fn start_engine(
             tracing::error!(%err, "engine server stopped");
         }
     });
-    Ok(url)
+    Ok((url, Some(pairing)))
 }
 
 const DEFAULT_PORT: u16 = 7700;

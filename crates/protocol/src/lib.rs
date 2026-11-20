@@ -957,6 +957,9 @@ pub enum Scope {
     Settings,
     /// Pairing new devices and managing paired ones.
     Pairing,
+    /// Getting this engine's library and synced data: a linked engine
+    /// ([`PairedDevice::public_key`]).
+    Sync,
 }
 
 /// The sets of [`Scope`]s offered when approving a device.
@@ -978,6 +981,7 @@ impl Preset {
                 Scope::Library,
                 Scope::Settings,
                 Scope::Pairing,
+                Scope::Sync,
             ],
             Preset::ControlPlayback => vec![Scope::Playback, Scope::Queue],
             Preset::ViewOnly => vec![],
@@ -1036,6 +1040,12 @@ pub enum PairingCommand {
     /// leaving them read-only.
     SetMpdPassword {
         password: String,
+    },
+    /// The sending device's own engine key (ed25519, hex; the desktop app's
+    /// or the phone's), linking the two engines: pairings from before links
+    /// send it on connecting. Needs [`Scope::Sync`]; safe to repeat.
+    SetEngineKey {
+        key: String,
     },
 }
 
@@ -1112,6 +1122,9 @@ pub struct PendingDevice {
 pub struct PairedDevice {
     pub id: String,
     pub name: String,
+    /// Its engine's key, if it has one (Motif apps); with [`Scope::Sync`]
+    /// the engines are linked. A linked engine this one paired with has no
+    /// token here.
     pub public_key: Option<String>,
     pub scopes: Vec<Scope>,
     #[ts(type = "number")]
@@ -1153,6 +1166,8 @@ pub enum PairingAction {
     Revoked,
     Renamed,
     PresetChanged,
+    /// Its engine became linked (sent its key, or this one paired with it).
+    Linked,
 }
 
 /// Body of `POST /pair`, sent by a new device with the code it was shown.
@@ -1161,7 +1176,8 @@ pub enum PairingAction {
 pub struct PairRequest {
     pub code: String,
     pub name: String,
-    /// The device's ed25519 public key (hex), if it has one.
+    /// The device's own engine key (ed25519, hex), if it has one (Motif
+    /// apps; browsers have none).
     #[serde(default)]
     pub public_key: Option<String>,
 }

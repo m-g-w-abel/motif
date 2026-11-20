@@ -65,6 +65,7 @@
     revoked: 'removed',
     renamed: 'renamed',
     preset_changed: 'access changed',
+    linked: 'linked',
   };
   /** The device whose Remove waits for a second click. */
   let removing = $state<string | null>(null);
@@ -762,6 +763,9 @@
             {#each p.devices as device (device.id)}
               {@const connections = p.connected.filter((c) => c.device === device.id)}
               {@const preset = presetOf(device.scopes)}
+              {@const syncs = !!device.public_key && device.scopes.includes('sync')}
+              <!-- An engine this one paired with: no token here, so no access to choose. -->
+              {@const linkOnly = syncs && device.scopes.length === 1}
               <div class="device">
                 <input
                   class="select name"
@@ -771,24 +775,29 @@
                   onchange={(e) => rename(device.id, device.name, e.currentTarget)}
                   onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                 />
-                <select
-                  class="select preset"
-                  aria-label="Access for {device.name}"
-                  value={preset ?? ''}
-                  onchange={(e) => engine.pair({ type: 'set_preset', device: device.id, preset: e.currentTarget.value as Preset })}
-                >
-                  {#if !preset}<option value="" disabled>Custom</option>{/if}
-                  {#each PRESETS as [value, label] (value)}<option {value}>{label}</option>{/each}
-                </select>
+                {#if linkOnly}
+                  <span class="preset">Paired from here</span>
+                {:else}
+                  <select
+                    class="select preset"
+                    aria-label="Access for {device.name}"
+                    value={preset ?? ''}
+                    onchange={(e) => engine.pair({ type: 'set_preset', device: device.id, preset: e.currentTarget.value as Preset })}
+                  >
+                    {#if !preset}<option value="" disabled>Custom</option>{/if}
+                    {#each PRESETS as [value, label] (value)}<option {value}>{label}</option>{/each}
+                  </select>
+                {/if}
                 <button class="button" onclick={() => (removing = device.id)}>Remove</button>
                 {#if removing === device.id}
                   <p class="status confirm">
-                    Remove {device.name}? It will need a new code to connect again.
+                    Remove {device.name}? {linkOnly ? 'It stops syncing with this device.' : 'It will need a new code to connect again.'}
                     <button class="button" onclick={() => engine.pair({ type: 'revoke', device: device.id })}>Remove</button>
                     <button class="button" onclick={() => (removing = null)}>Cancel</button>
                   </p>
                 {/if}
                 <p class="status seen">
+                  {#if syncs}<span class="syncs" title="Shares its library and synced data with this device">⇄ Syncs</span>{/if}
                   {#if connections.length}
                     <span class="online">● Connected now</span>
                     {#each connections as c (c.id)}
@@ -1059,7 +1068,8 @@
     color: var(--danger);
   }
 
-  .online {
+  .online,
+  .syncs {
     color: var(--ok);
   }
 
