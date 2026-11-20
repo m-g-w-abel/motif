@@ -353,6 +353,7 @@ language for phone and desktop, not a separate mobile UI.
 - [x] Webview stress test on WebKitGTK (results below)
 - [x] Android background-audio spike (results below)
 - [x] P2P spike: iroh on desktop and Android (#234, results below; go)
+- [x] iroh transport between linked engines (#236): `crates/net`, notes below
 
 ### Webview stress test (2026-10-24)
 
@@ -643,6 +644,28 @@ relay to direct on its own. Things to carry into #236: own relay setting
 (public relays throttle to ~4 Mbit/s), one runtime and a memory budget
 (~25–30 MB now), pin iroh's own crates alongside `iroh`, and the
 mobile-data and unplugged-Doze runs still to do.
+
+### iroh transport (#236, 2026-11-20)
+
+`crates/net` wraps iroh 1.4.1 (its own crates pinned to 1.4.1, noq to 1.4.0);
+`crates/server/src/links.rs` runs it on the engine's tokio runtime, only
+while some engine is linked (no linked engine, no endpoint, no memory cost).
+- **Gate:** an `after_handshake` hook refuses every key that isn't linked,
+  before any stream, both ways.
+- **ALPNs:** `motif/{link,remote,sync,catalog,files}/1`. `link` is held open
+  to each linked engine and swaps addresses (`net::hello`); the others are
+  refused until #237/#239/#241 handle them (`keep_links` in `links.rs`).
+- **Address book:** `pairing.json` keeps each linked engine's last direct
+  addresses and home relay. Refreshed on every iroh meeting (what it says
+  replaces what we had) and on every LAN meeting: the app passes the
+  addresses it reached the other engine at to `link_engine`, and the endpoint
+  binds UDP on the HTTP server's port number so `ip:port` reaches it (another
+  port if taken; the relay still works then).
+- **Relays:** public by default, own URL settable, internet switch off =
+  no relays and only LAN addresses dialled. Changing them rebinds.
+- **Reach:** the link's selected path (direct / relayed), unreachable without
+  a link; redialled every 60 s while unreachable.
+- Not done: the mobile-data NAT run and the unplugged-Doze run from #234.
 
 ## Phase 1 plan: desktop player
 

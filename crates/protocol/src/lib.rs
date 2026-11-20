@@ -1079,6 +1079,15 @@ pub enum PairingCommand {
     SetMpdPassword {
         password: String,
     },
+    /// The internet switch ([`NetState::internet`]).
+    SetInternet {
+        allowed: bool,
+    },
+    /// Your own relay ([`NetState::own_relay`]); `None` or empty uses the
+    /// public ones.
+    SetRelay {
+        url: Option<String>,
+    },
     /// The sending device's own engine key (ed25519, hex; the desktop app's
     /// or the phone's), linking the two engines: pairings from before links
     /// send it on connecting. Needs [`Scope::Sync`]; safe to repeat.
@@ -1102,6 +1111,48 @@ pub struct PairingState {
     pub log: Vec<PairingLogEntry>,
     pub lan: LanState,
     pub mpd: MpdState,
+    pub net: NetState,
+}
+
+/// How linked engines reach each other (iroh, end-to-end encrypted).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NetState {
+    /// The switch, kept across restarts: off, linked engines meet only on
+    /// the LAN, directly.
+    pub internet: bool,
+    /// A relay URL of your own (`https://relay.example.com`); `None` uses
+    /// the public iroh relays, which are slow (~4 Mbit/s).
+    pub own_relay: Option<String>,
+    /// Each linked device ([`PairedDevice::id`]) and how it is reached now.
+    pub links: Vec<LinkState>,
+}
+
+impl Default for NetState {
+    fn default() -> Self {
+        Self {
+            internet: true,
+            own_relay: None,
+            links: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LinkState {
+    pub device: String,
+    pub reach: Reach,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Reach {
+    Direct,
+    /// Through a relay, which sees only encrypted traffic.
+    Relayed,
+    Unreachable,
 }
 
 /// The MPD server for third-party clients (ncmpcpp, M.A.L.P.…): off by

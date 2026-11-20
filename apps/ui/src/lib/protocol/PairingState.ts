@@ -2,6 +2,7 @@
 import type { Connection } from "./Connection";
 import type { LanState } from "./LanState";
 import type { MpdState } from "./MpdState";
+import type { NetState } from "./NetState";
 import type { PairedDevice } from "./PairedDevice";
 import type { PairingCode } from "./PairingCode";
 import type { PairingLogEntry } from "./PairingLogEntry";
@@ -20,4 +21,4 @@ pending: Array<PendingDevice>, devices: Array<PairedDevice>, connected: Array<Co
 /**
  * Newest last, capped.
  */
-log: Array<PairingLogEntry>, lan: LanState, mpd: MpdState, };
+log: Array<PairingLogEntry>, lan: LanState, mpd: MpdState, net: NetState, };

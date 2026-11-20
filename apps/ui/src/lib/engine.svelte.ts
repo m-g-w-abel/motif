@@ -225,7 +225,7 @@ export class EngineClient {
     this.#linked = true;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const key = await invoke<string>('link_engine', { key: id, name });
+      const key = await invoke<string>('link_engine', { key: id, name, addresses });
       this.pair({ type: 'set_engine_key', key });
     } catch (e) {
       // The headless engine serves this app: nothing here to link.

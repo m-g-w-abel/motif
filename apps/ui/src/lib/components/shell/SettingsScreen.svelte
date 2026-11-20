@@ -3,6 +3,7 @@
   import { getApp } from '../../context';
   import type { Preset } from '../../protocol/Preset';
   import type { Scope } from '../../protocol/Scope';
+  import type { Reach } from '../../protocol/Reach';
   import AddEngineDialog from '../pairing/AddEngineDialog.svelte';
   import PairDialog from '../pairing/PairDialog.svelte';
   import { addFolder, androidStorage } from '../../folders';
@@ -177,6 +178,8 @@
   let themeInput = $state<HTMLInputElement>();
   let listenBrainzToken = $state('');
   let mpdPassword = $state('');
+  let relayUrl = $state('');
+  const REACH: Record<Reach, string> = { direct: 'Reachable directly', relayed: 'Reachable through a relay', unreachable: 'Unreachable now' };
   /** Signs the host in to a scrobbling service (a ListenBrainz user token; anything for Last.fm and Libre.fm), or out with ''. */
   function signIn(service: 'listenbrainz' | 'lastfm' | 'librefm', credential: string) {
     const account = engine.integrations?.[service];
@@ -799,6 +802,10 @@
                 {/if}
                 <p class="status seen">
                   {#if syncs}<span class="syncs" title="Shares its library and synced data with this device">⇄ Syncs</span>{/if}
+                  {#if syncs}
+                    {@const reach = p.net.links.find((l) => l.device === device.id)?.reach ?? 'unreachable'}
+                    <span class:online={reach !== 'unreachable'} title="Over the encrypted link between the engines">{REACH[reach]}</span> ·
+                  {/if}
                   {#if connections.length}
                     <span class="online">● Connected now</span>
                     {#each connections as c (c.id)}
@@ -811,6 +818,36 @@
             {:else}
               <p class="status">No devices yet.</p>
             {/each}
+          </div>
+          <div class="row">
+            <span class="label">Linked devices over the internet</span>
+            <div class="segmented" role="radiogroup" aria-label="Linked devices over the internet">
+              {#each [[true, 'Allowed'], [false, 'Off']] as const as [value, text] (text)}
+                <button role="radio" aria-checked={p.net.internet === value} class:active={p.net.internet === value} onclick={() => engine.pair({ type: 'set_internet', allowed: value })}>{text}</button>
+              {/each}
+            </div>
+            <p class="status">
+              {#if p.net.internet}Devices that sync reach each other anywhere, end-to-end encrypted: directly, or through a relay that can't read what passes.
+              {:else}Devices that sync meet only on the same network, directly.{/if}
+            </p>
+            <form
+              class="actions token"
+              onsubmit={(e) => {
+                e.preventDefault();
+                engine.pair({ type: 'set_relay', url: relayUrl });
+                relayUrl = '';
+              }}
+            >
+              <input class="select" type="url" autocomplete="off" placeholder="https://relay.example.com" aria-label="Your own relay" bind:value={relayUrl} />
+              <button class="button" disabled={!relayUrl.trim()}>Use</button>
+              {#if p.net.own_relay}
+                <button class="button" type="button" onclick={() => engine.pair({ type: 'set_relay', url: null })}>Use public relays</button>
+              {/if}
+            </form>
+            <p class="status">
+              {#if p.net.own_relay}Using your relay at <span class="selectable">{p.net.own_relay}</span>.
+              {:else}Uses the public iroh relays, which are slow (about 4 Mbit/s). Your own relay makes syncing away from home faster.{/if}
+            </p>
           </div>
           <div class="row">
             <span class="label">Approve new devices automatically</span>

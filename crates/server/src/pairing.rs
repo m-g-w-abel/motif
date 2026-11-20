@@ -1,9 +1,11 @@
 //! Who may use this engine: its identity, the paired devices with their
 //! scopes and token hashes, one-time pairing codes and approval, and the
-//! clients connected now. Kept in the data directory (`identity.key`,
-//! `pairing.json`).
+//! clients connected now, and how linked engines are reached over iroh
+//! (their address book, the relay settings). Kept in the data directory
+//! (`identity.key`, `pairing.json`).
 
 use std::{
+    collections::HashMap,
     io::Write,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -14,8 +16,9 @@ use std::{
 use axum::http::StatusCode;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use protocol::{
-    Connection, LanState, MpdState, PairRequest, Paired, PairedDevice, PairingAction, PairingCode,
-    PairingCommand, PairingLogEntry, PairingState, PendingDevice, Preset, Scope,
+    Connection, LanState, LinkState, MpdState, NetState, PairRequest, Paired, PairedDevice,
+    PairingAction, PairingCode, PairingCommand, PairingLogEntry, PairingState, PendingDevice,
+    Preset, Reach, Scope,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, oneshot, watch};
@@ -26,6 +29,8 @@ const CODE_TTL_MS: u64 = 5 * 60 * 1000;
 const APPROVAL_WAIT: Duration = Duration::from_secs(5 * 60);
 const LOG_CAP: usize = 100;
 const NAME_CAP: usize = 64;
+/// Direct addresses kept per linked engine; the newest first.
+const ADDRESS_CAP: usize = 8;
 /// No 0/O or 1/I to mistype; 8 of them make 40 bits, too many to guess in a
 /// code's lifetime.
 const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -44,11 +49,13 @@ struct Shared {
     /// `pairing.json`, or `None` to keep everything in memory.
     file: Option<PathBuf>,
     engine_key: String,
+    /// The identity key's secret half, for the iroh endpoint.
+    secret: [u8; 32],
     inner: Mutex<Inner>,
     state: watch::Sender<PairingState>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct Saved {
     auto_approve: Option<Preset>,
     devices: Vec<Stored>,
@@ -58,6 +65,29 @@ struct Saved {
     lan: bool,
     #[serde(default)]
     mpd: SavedMpd,
+    /// The internet switch, [`NetState::internet`].
+    #[serde(default = "yes")]
+    internet: bool,
+    #[serde(default)]
+    own_relay: Option<String>,
+}
+
+impl Default for Saved {
+    fn default() -> Self {
+        Self {
+            auto_approve: None,
+            devices: Vec::new(),
+            log: Vec::new(),
+            lan: false,
+            mpd: SavedMpd::default(),
+            internet: true,
+            own_relay: None,
+        }
+    }
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -74,6 +104,9 @@ struct Stored {
     /// `None` for an engine this one paired with ([`Pairing::link`]): it
     /// connects by its key, not a token.
     token_hash: Option<String>,
+    /// A linked engine's address book entry: where it was last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    address: Option<net::PeerAddr>,
 }
 
 struct Inner {
@@ -87,6 +120,8 @@ struct Inner {
     lan: Option<Vec<SocketAddr>>,
     mpd_port: u16,
     mpd_listening: bool,
+    /// How linked engines are reached now, by key; missing is unreachable.
+    reach: HashMap<String, Reach>,
 }
 
 impl Pairing {
@@ -136,6 +171,7 @@ impl Pairing {
         let pairing = Self(Arc::new(Shared {
             file,
             engine_key,
+            secret,
             inner: Mutex::new(Inner {
                 saved,
                 code: None,
@@ -146,6 +182,7 @@ impl Pairing {
                 lan: None,
                 mpd_port: 6600,
                 mpd_listening: false,
+                reach: HashMap::new(),
             }),
             state: watch::Sender::new(PairingState::default()),
         }));
@@ -156,6 +193,59 @@ impl Pairing {
     /// The engine's public key (ed25519, hex).
     pub fn engine_key(&self) -> &str {
         &self.0.engine_key
+    }
+
+    pub(crate) fn secret(&self) -> [u8; 32] {
+        self.0.secret
+    }
+
+    /// The linked engines' keys and where they were last.
+    pub(crate) fn linked(&self) -> Vec<(String, net::PeerAddr)> {
+        self.lock()
+            .saved
+            .devices
+            .iter()
+            .filter_map(|d| {
+                Some((
+                    linked_key(d)?.to_owned(),
+                    d.address.clone().unwrap_or_default(),
+                ))
+            })
+            .collect()
+    }
+
+    pub(crate) fn is_linked(&self, key: &str) -> bool {
+        self.lock()
+            .saved
+            .devices
+            .iter()
+            .any(|d| linked_key(d) == Some(key))
+    }
+
+    /// Records where the linked engine with `key` said it is, on meeting it.
+    pub(crate) fn met(&self, key: &str, address: net::PeerAddr) {
+        let mut inner = self.lock();
+        let Some(stored) = inner
+            .saved
+            .devices
+            .iter_mut()
+            .find(|d| linked_key(d) == Some(key))
+        else {
+            return;
+        };
+        stored.device.last_seen_ms = Some(engine::wall_clock_ms());
+        stored.address = Some(address);
+        self.save(&inner);
+        self.publish(&inner);
+    }
+
+    /// Says how the linked engine with `key` is reached now.
+    pub(crate) fn set_reach(&self, key: &str, reach: Reach) {
+        let mut inner = self.lock();
+        if inner.reach.get(key).copied().unwrap_or(Reach::Unreachable) != reach {
+            inner.reach.insert(key.to_owned(), reach);
+            self.publish(&inner);
+        }
     }
 
     pub fn subscribe(&self) -> watch::Receiver<PairingState> {
@@ -387,8 +477,10 @@ impl Pairing {
 
     /// Links the engine with `key`, which this machine paired with and may
     /// sync with: a device that also paired here gains [`Scope::Sync`],
-    /// else it is listed with only that and no token. Safe to repeat.
-    pub fn link(&self, name: &str, key: &str) -> Result<(), String> {
+    /// else it is listed with only that and no token. `addresses` are where
+    /// this machine reached it on the LAN (`ip:port`), which its iroh
+    /// endpoint shares; they go first in its address book. Safe to repeat.
+    pub fn link(&self, name: &str, key: &str, addresses: &[String]) -> Result<(), String> {
         let key = parse_key(key).ok_or("bad engine key")?;
         let mut inner = self.lock();
         let inner = &mut *inner;
@@ -398,10 +490,30 @@ impl Pairing {
             .devices
             .iter_mut()
             .find(|d| d.device.public_key.as_ref() == Some(&key));
+        let lan: Vec<SocketAddr> = addresses.iter().filter_map(|a| a.parse().ok()).collect();
         let name = match known {
-            Some(stored) if stored.device.scopes.contains(&Scope::Sync) => return Ok(()),
+            Some(stored) if stored.device.scopes.contains(&Scope::Sync) => {
+                let address = stored.address.get_or_insert_default();
+                let mut direct = lan;
+                let rest: Vec<_> = address
+                    .direct
+                    .iter()
+                    .filter(|a| !direct.contains(a))
+                    .collect();
+                direct.extend(rest);
+                direct.truncate(ADDRESS_CAP);
+                if direct != address.direct {
+                    address.direct = direct;
+                    self.save(inner);
+                }
+                return Ok(());
+            }
             Some(stored) => {
                 stored.device.scopes.push(Scope::Sync);
+                stored.address = Some(net::PeerAddr {
+                    direct: lan,
+                    relay: None,
+                });
                 stored.device.name.clone()
             }
             None => {
@@ -416,6 +528,10 @@ impl Pairing {
                         last_seen_ms: None,
                     },
                     token_hash: None,
+                    address: Some(net::PeerAddr {
+                        direct: lan,
+                        relay: None,
+                    }),
                 });
                 name
             }
@@ -506,6 +622,14 @@ impl Pairing {
             PairingCommand::SetMpdPassword { password } => {
                 inner.saved.mpd.password = Some(password).filter(|p| !p.is_empty());
             }
+            PairingCommand::SetInternet { allowed } => inner.saved.internet = allowed,
+            PairingCommand::SetRelay { url } => {
+                let url = url.map(|u| u.trim().to_owned()).filter(|u| !u.is_empty());
+                if let Some(url) = &url {
+                    net::check_relay(url)?;
+                }
+                inner.saved.own_relay = url;
+            }
             PairingCommand::SetEngineKey { .. } => {
                 return Err("only a paired device has an engine key to send".into());
             }
@@ -545,6 +669,7 @@ impl Pairing {
         inner.saved.devices.push(Stored {
             device,
             token_hash: Some(hash(&token)),
+            address: None,
         });
         log(inner, now, action, name);
         self.save(inner);
@@ -608,8 +733,42 @@ impl Pairing {
                 port: inner.mpd_port,
                 listening: inner.mpd_listening,
             },
+            net: NetState {
+                internet: inner.saved.internet,
+                own_relay: inner.saved.own_relay.clone(),
+                links: inner
+                    .saved
+                    .devices
+                    .iter()
+                    .filter_map(|d| {
+                        let reach = inner.reach.get(linked_key(d)?);
+                        Some(LinkState {
+                            device: d.device.id.clone(),
+                            reach: reach.copied().unwrap_or(Reach::Unreachable),
+                        })
+                    })
+                    .collect(),
+            },
         });
     }
+}
+
+/// The relays [`NetState`] asks for.
+pub(crate) fn relays(net: &NetState) -> net::Relays {
+    match (net.internet, &net.own_relay) {
+        (false, _) => net::Relays::Off,
+        (true, Some(url)) => net::Relays::Own(url.clone()),
+        (true, None) => net::Relays::Public,
+    }
+}
+
+/// The key of a linked engine: one with [`Scope::Sync`].
+fn linked_key(stored: &Stored) -> Option<&str> {
+    let device = &stored.device;
+    device
+        .public_key
+        .as_deref()
+        .filter(|_| device.scopes.contains(&Scope::Sync))
 }
 
 /// What a pairing QR code holds: a phone's camera opens it in a browser, and
@@ -963,8 +1122,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("motif-link-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let pairing = Pairing::open(&dir).unwrap();
-        pairing.link("Desktop", &key(4)).unwrap();
-        pairing.link("Desktop again", &key(4)).unwrap();
+        pairing.link("Desktop", &key(4), &[]).unwrap();
+        pairing.link("Desktop again", &key(4), &[]).unwrap();
         let state = pairing.subscribe().borrow().clone();
         assert_eq!(state.devices.len(), 1, "a repeat adds no second link");
         let linked = &state.devices[0];
@@ -977,7 +1136,7 @@ mod tests {
             vec![Scope::Sync],
             "it gets our data but no control"
         );
-        assert!(pairing.link("Bad", "abcd").is_err());
+        assert!(pairing.link("Bad", "abcd", &[]).is_err());
 
         // An engine that also paired here keeps its access and gains Sync.
         pairing
@@ -990,7 +1149,7 @@ mod tests {
             ..request(&pairing.start().code)
         };
         let paired = pairing.redeem(request, peer()).await.unwrap();
-        pairing.link("Other", &key(5)).unwrap();
+        pairing.link("Other", &key(5), &[]).unwrap();
         let both = device(&pairing, &paired.device);
         assert_eq!(
             both.scopes,
@@ -1001,6 +1160,116 @@ mod tests {
         let again = Pairing::open(&dir).unwrap();
         assert_eq!(again.subscribe().borrow().devices.len(), 2);
         assert_eq!(again.authenticate(&paired.token), Some(paired.device));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_address_book_survives_a_restart_and_follows_meetings() {
+        let dir = std::env::temp_dir().join(format!("motif-book-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let addr = |direct: &[&str], relay: Option<&str>| net::PeerAddr {
+            direct: direct.iter().map(|a| a.parse().unwrap()).collect(),
+            relay: relay.map(str::to_owned),
+        };
+        let book = |p: &Pairing| p.linked();
+        let pairing = Pairing::open(&dir).unwrap();
+        pairing
+            .link(
+                "Desktop",
+                &key(4),
+                &["192.168.1.5:7700".into(), "junk".into()],
+            )
+            .unwrap();
+        assert_eq!(
+            book(&pairing),
+            [(key(4), addr(&["192.168.1.5:7700"], None))]
+        );
+        assert!(pairing.is_linked(&key(4)) && !pairing.is_linked(&key(5)));
+
+        // Meeting over iroh: what it says replaces what we had.
+        let told = addr(&["10.0.0.2:41000"], Some("https://relay.example.com./"));
+        pairing.met(&key(4), told.clone());
+        pairing.met(&key(5), told.clone());
+        let again = Pairing::open(&dir).unwrap();
+        assert_eq!(book(&again), [(key(4), told)]);
+
+        // Meeting on the LAN: that address goes first, the rest stays.
+        again
+            .link("Desktop", &key(4), &["192.168.1.9:7700".into()])
+            .unwrap();
+        let after = addr(
+            &["192.168.1.9:7700", "10.0.0.2:41000"],
+            Some("https://relay.example.com./"),
+        );
+        assert_eq!(book(&Pairing::open(&dir).unwrap()), [(key(4), after)]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn linked_engines_show_how_they_are_reached() {
+        let pairing = Pairing::in_memory();
+        pairing.link("Desktop", &key(4), &[]).unwrap();
+        let links = |p: &Pairing| p.subscribe().borrow().net.links.clone();
+        let id = links(&pairing)[0].device.clone();
+        assert_eq!(links(&pairing)[0].reach, Reach::Unreachable);
+        pairing.set_reach(&key(4), Reach::Relayed);
+        assert_eq!(
+            links(&pairing),
+            [LinkState {
+                device: id,
+                reach: Reach::Relayed
+            }]
+        );
+        let paired = {
+            let mut inner = pairing.lock();
+            pairing.add(
+                &mut inner,
+                "Tablet".into(),
+                None,
+                Preset::Full,
+                PairingAction::Paired,
+            )
+        };
+        assert!(
+            links(&pairing).iter().all(|l| l.device != paired.device),
+            "a device without an engine isn't linked"
+        );
+    }
+
+    #[test]
+    fn the_relay_settings_survive_a_restart() {
+        let dir = std::env::temp_dir().join(format!("motif-relay-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let relays_of = |p: &Pairing| relays(&p.subscribe().borrow().net);
+        let pairing = Pairing::open(&dir).unwrap();
+        assert_eq!(relays_of(&pairing), net::Relays::Public);
+        let set = |url: &str| {
+            pairing.command(PairingCommand::SetRelay {
+                url: Some(url.into()),
+            })
+        };
+        assert!(set("not a url").is_err());
+        set(" https://relay.example.com ").unwrap();
+        let own = net::Relays::Own("https://relay.example.com".into());
+        assert_eq!(relays_of(&Pairing::open(&dir).unwrap()), own);
+        pairing
+            .command(PairingCommand::SetInternet { allowed: false })
+            .unwrap();
+        let again = Pairing::open(&dir).unwrap();
+        assert_eq!(relays_of(&again), net::Relays::Off);
+        again
+            .command(PairingCommand::SetInternet { allowed: true })
+            .unwrap();
+        assert_eq!(relays_of(&again), own, "the own relay is kept while off");
+        again
+            .command(PairingCommand::SetRelay {
+                url: Some(String::new()),
+            })
+            .unwrap();
+        assert_eq!(
+            relays_of(&Pairing::open(&dir).unwrap()),
+            net::Relays::Public
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

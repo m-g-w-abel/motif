@@ -93,6 +93,10 @@ control isn't an add-on: it's the normal code path.
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable
   tokens (Full, Control playback, View only). Discovery over mDNS.
+- Linked engines (your desktop and phone) reach each other over
+  [iroh](https://iroh.computer) on their identity keys: end-to-end encrypted,
+  directly or through a relay (public, or your own), with no account or
+  lookup service. They remember each other's last addresses instead.
 - An **MPD server**, so existing MPD clients can drive Motif.
 - Scrobbling to Last.fm, ListenBrainz and Libre.fm, with an offline queue.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now
@@ -154,6 +158,7 @@ in [docs/PLAN.md](docs/PLAN.md).
 | `crates/library` | Folder scanning, tags, SQLite, artwork, waveforms |
 | `crates/integrations` | OS media controls, scrobbling, Discord, lyrics |
 | `crates/server` | WebSocket `/ws` endpoint, pairing, MPD, static web UI hosting |
+| `crates/net` | iroh transport between linked engines (one ALPN per purpose) |
 | `apps/ui` | Svelte 5 UI used by the desktop window, Android and browsers |
 | `apps/desktop` | Tauri 2 shell embedding the engine (desktop and Android) |
 | `apps/headless` | Engine daemon without a window, for a NAS or Raspberry Pi |
