@@ -635,7 +635,7 @@ debug APK; desktop on the same Wi-Fi.
   Battery not measured directly.
 - Seen in passing, not the spike: while paused and locked, the phone's
   `audio-decode` and `AudioTrack` threads wake ~6,400 and ~4,800 times a
-  minute: the output keeps running while paused. That costs far more than iroh.
+  minute: the output keeps running while paused (#254). That costs far more than iroh.
 
 **Go.** iroh 1.4 builds everywhere next to our pins, takes the engine key as
 it is, connects in well under a second without a lookup service and upgrades
