@@ -5,6 +5,11 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
+- **Linked devices reach each other anywhere**: a desktop and phone that sync
+  connect over an end-to-end encrypted link, directly or through a relay, at
+  home or away, with no account. Settings → Devices shows how each is reached,
+  can use your own relay instead of the slow public ones, and can keep them to
+  the same network.
 - **Stars or hearts**: rate songs with stars (a rating column in the table, the
   now-playing sheet) or love them with a heart (a song's menu), as you choose
   in Settings → Interface; the other is hidden and nothing is lost by

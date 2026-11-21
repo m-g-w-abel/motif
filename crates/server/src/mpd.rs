@@ -153,7 +153,7 @@ pub(crate) async fn serve(live: Live, library: Option<Library>, pairing: Pairing
                         tracing::info!(%addr, "MPD listening");
                         listener = Some(bound);
                         if addr.ip().is_unspecified() {
-                            _advert = Advert::start("_mpd._tcp", &pairing, addr.port());
+                            _advert = Advert::start("_mpd._tcp", &pairing, addr.port(), None);
                         }
                     }
                     Err(err) => tracing::warn!(%addr, %err, "can't serve MPD"),

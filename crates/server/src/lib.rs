@@ -11,6 +11,7 @@
 //! MPD clients have a server of their own (see `mpd.rs`), off by default.
 
 mod lan;
+mod links;
 mod live;
 mod mpd;
 mod pairing;
@@ -88,7 +89,8 @@ const ART_SLOTS: usize = 6;
 /// Binds the listener and returns its address plus a future that serves it.
 /// Binding first lets callers use port 0 and learn the real port. While the
 /// LAN is open the server listens on every interface on that port. The
-/// future also serves MPD while [`Pairing`] says so.
+/// future also serves MPD while [`Pairing`] says so, and links engines over
+/// iroh on the same port (UDP) while any are linked.
 pub async fn bind(
     engine: Engine,
     config: Config,
@@ -99,11 +101,13 @@ pub async fn bind(
     let listener = axum::serve::ListenerExt::tap_io(listener, |_| {});
     let live = live::Live::new(engine.clone());
     let mpd = mpd::serve(live.clone(), config.library.clone(), config.pairing.clone());
+    let links = links::run(config.pairing.clone(), addr.port());
     let app = app(live, config).into_make_service_with_connect_info::<SocketAddr>();
     Ok((addr, async move {
         tokio::select! {
             result = axum::serve(listener, app).into_future() => result,
             () = mpd => Ok(()),
+            () = links => Ok(()),
         }
     }))
 }

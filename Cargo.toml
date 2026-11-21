@@ -14,6 +14,7 @@ engine = { path = "crates/engine" }
 library = { path = "crates/library" }
 integrations = { path = "crates/integrations" }
 server = { path = "crates/server" }
+net = { path = "crates/net" }
 
 axum = { version = "0.8.9", features = ["ws"] }
 futures-util = "0.3.34"
