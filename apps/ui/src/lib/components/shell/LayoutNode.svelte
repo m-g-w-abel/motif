@@ -204,7 +204,7 @@
       {/each}
     </div>
   {:else if node.panel === 'tracklist'}
-    <TrackList albumBreaks={node.albumBreaks} headers={node.headers} columns={node.columns} maxWidth={node.maxWidth} at={path} />
+    <TrackList albumBreaks={node.albumBreaks} headers={node.headers} columns={node.columns} oncolumns={(columns) => layout.setColumns(at, columns)} maxWidth={node.maxWidth} at={path} />
   {:else if node.panel === 'album-grid'}
     <AlbumGrid cardSize={node.cardSize} columns={node.columns} at={path} />
   {:else if node.panel === 'artwork'}

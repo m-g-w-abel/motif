@@ -1,6 +1,6 @@
 import { format, parse } from '@bgotink/kdl';
 import { MediaQuery } from 'svelte/reactivity';
-import type { Layout, LayoutNode, Size, Widget } from './model';
+import type { Column, Layout, LayoutNode, Size, Widget } from './model';
 import * as edit from './overlay';
 import { fingerprint, shownRoot, type At, type Overlay, type Side } from './overlay';
 import { serializeLayout } from './serialize';
@@ -243,6 +243,11 @@ export class LayoutStore {
   /** Sets or (with no size) clears the size of the node at `at`. */
   resize(at: At, size: Size | undefined) {
     this.#setShown(edit.resize(this.shown, at, size));
+  }
+
+  /** Sets the columns of the tracklist at `at`. */
+  setColumns(at: At, columns: Column[]) {
+    this.#setShown(edit.setColumns(this.shown, at, columns));
   }
 
   /** Moves the node at `from` beside the one at `to`. */

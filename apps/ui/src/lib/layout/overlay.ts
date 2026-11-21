@@ -1,4 +1,4 @@
-import type { LayoutNode, PanelNode, Size, Widget } from './model';
+import type { Column, LayoutNode, PanelNode, Size, Widget } from './model';
 import { parseLayout } from './parse';
 
 /**
@@ -77,6 +77,16 @@ const one = (nodes: LayoutNode[], fallback: LayoutNode) => (nodes.length === 1 ?
 export function resize(root: LayoutNode, at: At, size: Size | undefined): LayoutNode {
   return one(
     editAt(root, at, (node) => [rebuilt(node, { ...node, size })]),
+    root,
+  );
+}
+
+/** Sets the columns of the tracklist at `at`. A table keeps at least one column. */
+export function setColumns(root: LayoutNode, at: At, columns: Column[]): LayoutNode {
+  const node = nodeAt(root, at);
+  if (node?.kind !== 'panel' || node.panel !== 'tracklist' || !columns.length) return root;
+  return one(
+    editAt(root, at, () => [rebuilt(node, { ...node, columns })]),
     root,
   );
 }

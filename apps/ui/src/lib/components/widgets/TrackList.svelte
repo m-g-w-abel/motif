@@ -5,7 +5,7 @@
   import { isDemo } from '../../demo';
   import { addFolder } from '../../folders';
   import { formatTime, trackFormat, trackTitle } from '../../format';
-  import type { Column } from '../../layout/model';
+  import { COLUMNS, type Column } from '../../layout/model';
   import type { SortKey } from '../../protocol/SortKey';
   import type { TrackGroup } from '../../protocol/TrackGroup';
   import { nextOneOff, sortLabel, viewSort } from '../../sort.svelte';
@@ -13,7 +13,7 @@
   import { trackListData, type ListSource } from '../../sources.svelte';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { scrollMemory } from '../../scrollMemory';
-  import { menu } from '../../contextMenu.svelte';
+  import { menu, type MenuItem } from '../../contextMenu.svelte';
   import { gesture, mapped, swipeRow } from '../../gestures';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
   import Stars from '../Stars.svelte';
@@ -30,6 +30,7 @@
     columns,
     maxWidth,
     at,
+    oncolumns,
   }: {
     /** Defaults to whatever the music area is showing. */
     source?: ListSource;
@@ -40,6 +41,8 @@
     maxWidth?: number;
     /** Where the list sits in its layout; its scroll position is remembered per layout. */
     at?: string;
+    /** Saves a new choice or order of columns; without it the header has no picker. */
+    oncolumns?: (columns: Column[]) => void;
   } = $props();
 
   const { engine, library, settings, playlists } = getApp();
@@ -156,6 +159,62 @@
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end, { once: true });
     handle.addEventListener('pointercancel', end, { once: true });
+  }
+
+  /** Right-click on the header: every column with a tick for the shown ones; the last one can't be hidden. */
+  const columnMenu = (): MenuItem[] =>
+    oncolumns
+      ? COLUMNS.map((c) => ({
+          label: labels[c],
+          checked: columns.includes(c),
+          run: () => {
+            if (!columns.includes(c)) oncolumns([...columns, c]);
+            // A narrow window hides some columns: keep one of the visible ones too.
+            else if (columns.length > 1 && (shown.length > 1 || !shown.includes(c))) oncolumns(columns.filter((x) => x !== c));
+          },
+        }))
+      : [];
+
+  /** The column being dragged and the one it will take the place of. */
+  let reorder = $state<{ from: Column; to: Column } | null>(null);
+
+  /** Drag a title sideways to move its column; a plain click still sorts. */
+  function startReorder(e: PointerEvent, column: Column) {
+    if (!oncolumns || e.button !== 0 || (e.target as Element).closest('.resize') || columns.length < 2) return;
+    const row = (e.currentTarget as HTMLElement).parentElement!;
+    const startX = e.clientX;
+    let dragging = false;
+    const move = (ev: PointerEvent) => {
+      if (!dragging && Math.abs(ev.clientX - startX) < 6) return;
+      dragging = true;
+      const over = [...row.querySelectorAll<HTMLElement>('th[data-column]')].find((th) => {
+        const box = th.getBoundingClientRect();
+        return ev.clientX >= box.left && ev.clientX < box.right;
+      });
+      reorder = { from: column, to: (over?.dataset.column as Column) ?? column };
+    };
+    const end = (ev: PointerEvent) => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', end);
+      removeEventListener('pointercancel', end);
+      const drop = reorder;
+      reorder = null;
+      if (!dragging) return;
+      // The click that ends a drag must not sort.
+      const swallow = (c: Event) => c.stopPropagation();
+      addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => removeEventListener('click', swallow, true));
+      if (ev.type === 'pointerup' && drop && drop.to !== drop.from) {
+        const next = columns.filter((c) => c !== drop.from);
+        const at = columns.indexOf(drop.to);
+        // Lands after a later column and before an earlier one.
+        next.splice(at, 0, drop.from);
+        oncolumns!(next);
+      }
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', end);
+    addEventListener('pointercancel', end);
   }
 
   /** Resets both columns next to a boundary to their default widths. */
@@ -546,9 +605,17 @@
         </colgroup>
         {#if headers}
           <thead>
-            <tr>
+            <tr use:menu={columnMenu}>
               {#each shown as column, i (column)}
-                <th class={column} scope="col" aria-sort={sortState(column)}>
+                <th
+                  class={column}
+                  class:dragged={reorder?.from === column}
+                  class:drop-target={reorder && reorder.to === column && reorder.from !== column}
+                  data-column={column}
+                  scope="col"
+                  aria-sort={sortState(column)}
+                  onpointerdown={(e) => startReorder(e, column)}
+                >
                   {#if sortable(column)}
                     <button
                       class="label sort"
@@ -722,6 +789,14 @@
     box-shadow: inset 0 -1px 0 var(--border);
     font-size: 11px;
     color: var(--text-muted);
+  }
+
+  th.dragged {
+    opacity: 0.5;
+  }
+
+  th.drop-target {
+    box-shadow: inset 2px 0 var(--accent);
   }
 
   .label {

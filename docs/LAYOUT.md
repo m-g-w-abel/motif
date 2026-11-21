@@ -140,6 +140,8 @@ duration` without album breaks, `columns index artist title duration` with them.
 
 `rating` shows five stars you click to rate a song (whole stars; clicking the lit star clears it), or, with the Hearts setting, a heart on loved songs. Its header sorts by rating or by loved.
 
+Right-click a column title (long press on a touch screen wider than a phone) for a checklist of every column; tick to show or hide one (at least one stays). Drag a title sideways to reorder. Like a dragged divider, this is saved in the layout's overlay for that layout and variant on this device: the `.kdl` file is not rewritten, and editing the file drops the changes. Tables with `headers=#false` have no picker.
+
 Title takes the remaining width. Drag the edge between two column headers to
 move it (double-click to reset). Widths are remembered per layout on each
 device and still apply when `headers=#false`, but can't be changed then. Double-click a track to play the list from it.
