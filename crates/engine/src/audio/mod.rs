@@ -19,7 +19,7 @@ use std::{
         mpsc,
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use cpal::{
@@ -55,11 +55,21 @@ struct Shared {
     /// Underruns only count once audio has arrived after a flush; an empty
     /// buffer right after a load or seek is expected.
     armed: AtomicBool,
-    /// Set by the decode thread to have the callback discard buffered audio;
-    /// the callback clears it once done.
-    flush: AtomicBool,
     /// The callback copies what it plays into the tap buffer.
     tap: AtomicBool,
+}
+
+impl Shared {
+    fn new() -> Self {
+        Self {
+            playing: AtomicBool::new(false),
+            gain: AtomicU32::new(1.0f32.to_bits()),
+            played: AtomicU64::new(0),
+            underruns: AtomicU64::new(0),
+            armed: AtomicBool::new(false),
+            tap: AtomicBool::new(false),
+        }
+    }
 }
 
 enum Command {
@@ -84,6 +94,8 @@ enum Command {
     ClearPreload,
     Seek(Duration),
     Stop,
+    /// Playback resumed: the decode thread, idle while paused, fills again.
+    Wake,
 }
 
 /// A handle to an open output device.
@@ -95,8 +107,10 @@ pub struct Audio {
     tap: Consumer<f32>,
     channels: usize,
     analyser: Analyser,
-    /// Dropping this stops the output thread and closes the device.
-    _stop: mpsc::Sender<()>,
+    /// Starts (`true`) or pauses the stream. Dropping it stops the output
+    /// thread and closes the device.
+    output: mpsc::Sender<bool>,
+    playing: bool,
 }
 
 impl Audio {
@@ -107,38 +121,49 @@ impl Audio {
         events: UnboundedSender<AudioEvent>,
         plugins: Arc<Mutex<Vec<&'static Plugin>>>,
     ) -> Result<Self, String> {
-        let shared = Arc::new(Shared {
-            playing: AtomicBool::new(false),
-            gain: AtomicU32::new(1.0f32.to_bits()),
-            played: AtomicU64::new(0),
-            underruns: AtomicU64::new(0),
-            armed: AtomicBool::new(false),
-            flush: AtomicBool::new(false),
-            tap: AtomicBool::new(false),
-        });
+        let shared = Arc::new(Shared::new());
         let (ready_tx, ready_rx) = mpsc::channel();
-        let (stop, stop_rx) = mpsc::channel::<()>();
+        let (output, output_rx) = mpsc::channel::<bool>();
         {
             let shared = shared.clone();
             let events = events.clone();
             thread::Builder::new()
                 .name("audio-output".into())
-                .spawn(
-                    move || match open_stream(device.as_deref(), shared, events) {
-                        Ok((stream, producer, tap, rate, channels)) => {
-                            let _ = ready_tx.send(Ok((producer, tap, rate, channels)));
-                            // Keep the stream alive until the handle is dropped.
-                            let _ = stop_rx.recv();
-                            drop(stream);
+                .spawn(move || {
+                    match open_stream(device.as_deref(), shared.clone(), events.clone()) {
+                        Ok((stream, producer, consumer, tap, rate, channels)) => {
+                            let _ = ready_tx.send(Ok((producer, consumer, tap, rate, channels)));
+                            // The stream lives until the handle is dropped. Paused,
+                            // it stops calling back, so the device stops waking the
+                            // app every buffer (#254).
+                            while let Ok(playing) = output_rx.recv() {
+                                if playing {
+                                    // Again here: a pause queued before this one cleared it.
+                                    shared.playing.store(true, Ordering::Relaxed);
+                                    if let Err(err) = stream.play() {
+                                        let _ =
+                                            events.send(AudioEvent::DeviceLost(err.to_string()));
+                                    }
+                                } else {
+                                    // Paused before the flag, so the device keeps the
+                                    // audio it holds and resumes without a gap. A device
+                                    // that can't pause plays silence instead.
+                                    if let Err(err) = stream.pause() {
+                                        tracing::debug!(%err, "cannot pause the output stream");
+                                    }
+                                    shared.playing.store(false, Ordering::Relaxed);
+                                }
+                            }
                         }
                         Err(err) => {
                             let _ = ready_tx.send(Err(err));
                         }
-                    },
-                )
+                    }
+                })
                 .map_err(|e| e.to_string())?;
         }
-        let (producer, tap, rate, channels) = ready_rx.recv().map_err(|e| e.to_string())??;
+        let (producer, consumer, tap, rate, channels) =
+            ready_rx.recv().map_err(|e| e.to_string())??;
         tracing::info!(rate, channels, "audio output open");
 
         let timeline = Arc::new(Mutex::new(Timeline::new(rate)));
@@ -146,6 +171,7 @@ impl Audio {
         let feeder = Feeder {
             commands: commands_rx,
             producer,
+            consumer,
             shared: shared.clone(),
             timeline: timeline.clone(),
             rate,
@@ -165,7 +191,8 @@ impl Audio {
             tap,
             channels,
             analyser: Analyser::new(rate),
-            _stop: stop,
+            output,
+            playing: false,
         })
     }
 
@@ -214,8 +241,16 @@ impl Audio {
         let _ = self.commands.send(Command::Stop);
     }
 
-    pub fn set_playing(&self, playing: bool) {
-        self.shared.playing.store(playing, Ordering::Relaxed);
+    pub fn set_playing(&mut self, playing: bool) {
+        if self.playing == playing {
+            return;
+        }
+        self.playing = playing;
+        if playing {
+            self.shared.playing.store(true, Ordering::Relaxed);
+            let _ = self.commands.send(Command::Wake);
+        }
+        let _ = self.output.send(playing);
     }
 
     /// `volume` in `0.0..=1.0`, on a cubic curve so the slider feels even.
@@ -270,7 +305,14 @@ impl Audio {
     }
 }
 
-type Opened = (cpal::Stream, Producer<f32>, Consumer<f32>, u32, usize);
+type Opened = (
+    cpal::Stream,
+    Producer<f32>,
+    Arc<Mutex<Consumer<f32>>>,
+    Consumer<f32>,
+    u32,
+    usize,
+);
 
 /// The output devices worth offering. ALSA lists every plugin and alias
 /// for every card; only the sound servers, the default and one entry per
@@ -323,24 +365,26 @@ fn open_stream(
     // Half a second: enough to ride out disk hiccups, short enough that
     // queue changes reach the speakers quickly.
     let (producer, consumer) = RingBuffer::new(rate as usize * channels / 2);
+    // Shared so the decode thread can flush it while the stream is paused.
+    let consumer = Arc::new(Mutex::new(consumer));
     // A quarter second: the engine reads it 30 times a second.
     let (tap, tapped) = RingBuffer::new(rate as usize * channels / 4);
     let config = supported.config();
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build::<f32>(&device, &config, consumer, tap, shared, events),
-        SampleFormat::I16 => build::<i16>(&device, &config, consumer, tap, shared, events),
-        SampleFormat::U16 => build::<u16>(&device, &config, consumer, tap, shared, events),
-        SampleFormat::I32 => build::<i32>(&device, &config, consumer, tap, shared, events),
+        SampleFormat::F32 => build::<f32>(&device, &config, consumer.clone(), tap, shared, events),
+        SampleFormat::I16 => build::<i16>(&device, &config, consumer.clone(), tap, shared, events),
+        SampleFormat::U16 => build::<u16>(&device, &config, consumer.clone(), tap, shared, events),
+        SampleFormat::I32 => build::<i32>(&device, &config, consumer.clone(), tap, shared, events),
         other => Err(format!("unsupported output sample format {other}")),
     }?;
-    stream.play().map_err(|e| e.to_string())?;
-    Ok((stream, producer, tapped, rate, channels))
+    // Started by the first `set_playing(true)`.
+    Ok((stream, producer, consumer, tapped, rate, channels))
 }
 
 fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    mut consumer: Consumer<f32>,
+    consumer: Arc<Mutex<Consumer<f32>>>,
     mut tap: Producer<f32>,
     shared: Arc<Shared>,
     events: UnboundedSender<AudioEvent>,
@@ -353,13 +397,12 @@ fn build<T: SizedSample + FromSample<f32>>(
         .build_output_stream(
             *config,
             move |data: &mut [T], _| {
-                if shared.flush.load(Ordering::Acquire) {
-                    if let Ok(chunk) = consumer.read_chunk(consumer.slots()) {
-                        chunk.commit_all();
-                    }
-                    shared.flush.store(false, Ordering::Release);
-                }
                 let silence = T::from_sample(0.0f32);
+                // Never waits: only a flush holds the lock, and a flush is a cut anyway.
+                let Ok(mut consumer) = consumer.try_lock() else {
+                    data.fill(silence);
+                    return;
+                };
                 if !shared.playing.load(Ordering::Relaxed) {
                     data.fill(silence);
                     return;
@@ -406,6 +449,7 @@ fn build<T: SizedSample + FromSample<f32>>(
 struct Feeder {
     commands: mpsc::Receiver<Command>,
     producer: Producer<f32>,
+    consumer: Arc<Mutex<Consumer<f32>>>,
     shared: Arc<Shared>,
     timeline: Arc<Mutex<Timeline>>,
     rate: u32,
@@ -446,7 +490,9 @@ impl Feeder {
                 }
             }
             let busy = current.is_some() || sent < pending.len();
-            let command = if !busy {
+            // Paused and full, nothing changes until a command (or `Wake`).
+            let paused = full && !self.shared.playing.load(Ordering::Relaxed);
+            let command = if !busy || paused {
                 match self.commands.recv() {
                     Ok(command) => Some(command),
                     Err(_) => return,
@@ -543,7 +589,7 @@ impl Feeder {
                     next = None;
                     next_request = None;
                 }
-                None => {}
+                Some(Command::Wake) | None => {}
             }
 
             // Decode more once the previous block is in the buffer.
@@ -639,12 +685,15 @@ impl Feeder {
         pending.clear();
         *sent = 0;
         self.shared.armed.store(false, Ordering::Relaxed);
-        self.shared.flush.store(true, Ordering::Release);
-        // The callback runs every few milliseconds; give up after a while in
-        // case the device has stalled.
-        let deadline = Instant::now() + Duration::from_millis(500);
-        while self.shared.flush.load(Ordering::Acquire) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(1));
+        // Held to the end: the callback can't play anything meanwhile, so
+        // `played` is final.
+        let mut consumer = self
+            .consumer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let stale = consumer.slots();
+        if let Ok(chunk) = consumer.read_chunk(stale) {
+            chunk.commit_all();
         }
         self.lock().clear();
         stream.reset(self.shared.played.load(Ordering::Acquire));
@@ -711,6 +760,33 @@ impl Level {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn a_flush_while_paused_empties_the_buffer_at_once() {
+        // Paused, the stream is stopped: no callback runs to drain anything.
+        let (mut producer, consumer) = RingBuffer::new(64);
+        producer
+            .write_chunk_uninit(32)
+            .unwrap()
+            .fill_from_iter(std::iter::repeat(0.5));
+        let consumer = Arc::new(Mutex::new(consumer));
+        let mut feeder = Feeder {
+            commands: mpsc::channel().1,
+            producer,
+            consumer: consumer.clone(),
+            shared: Arc::new(Shared::new()),
+            timeline: Arc::new(Mutex::new(Timeline::new(1000))),
+            rate: 1000,
+            channels: 2,
+            events: tokio::sync::mpsc::unbounded_channel().0,
+            plugins: Arc::default(),
+        };
+        let started = Instant::now();
+        feeder.flush(&mut Stream::new(1000, 2), &mut Vec::new(), &mut 0);
+        assert!(started.elapsed() < Duration::from_millis(100), "no waiting");
+        assert_eq!(consumer.lock().unwrap().slots(), 0, "stale audio gone");
+    }
 
     /// Applies `target` to `frames` mono frames of 1.0, returning each frame's level.
     fn run(level: &mut Level, frames: usize, target: f32) -> Vec<f32> {

@@ -93,10 +93,12 @@ impl Output {
             _ => None,
         };
         let Some((item, path, gain)) = wanted else {
-            if self.loaded.take().is_some()
-                && let Some(audio) = &self.audio
-            {
-                audio.stop();
+            if let Some(audio) = &mut self.audio {
+                if self.loaded.take().is_some() {
+                    audio.stop();
+                }
+                // Stopped or ended: a running stream would keep waking the device (#254).
+                audio.set_playing(false);
             }
             self.preloaded = None;
             return;
