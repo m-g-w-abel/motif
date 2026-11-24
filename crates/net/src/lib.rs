@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-pub use iroh::endpoint::Connection;
+pub use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey, TransportAddr,
     endpoint::{AfterHandshakeOutcome, BindOpts, EndpointHooks, presets},

@@ -674,6 +674,38 @@ while some engine is linked (no linked engine, no endpoint, no memory cost).
   a link; redialled every 60 s while unreachable.
 - Not done: the mobile-data NAT run and the unplugged-Doze run from #234.
 
+### Metadata sync (#239, 2026-11-24)
+
+`crates/library/src/sync.rs` holds the op log; `crates/server/src/sync.rs`
+runs a session over `motif/sync/1`.
+- **Log:** `ops (device, seq, at, op)`: `device` is the engine key (not
+  backed up, so a restored phone logs as a new engine), `seq` counts from 1
+  per engine, `at` is a Lamport time in ms (later than every op seen), `op`
+  JSON. Every local change to playlists, plays and marks is logged and
+  applied by the same code that applies other engines' ops; a change that
+  changes nothing logs nothing, so retried commands stay out of the log.
+  The first time an engine knows its key, what its library already held
+  becomes ops; changes made before the key is known are claimed after.
+- **Merge:** plays insert-or-ignore (a grow-only set; the same track at the
+  same second is one listen); playlist names, item positions, favourite and
+  rating last-writer-wins by (`at`, key), stamps in `stamps`; deletes and
+  removals are tombstones there, so they win and stay. Positions are f64
+  halfway between neighbours (only the moved item changes). Ops apply in
+  `at` order, which puts causes first (an item never arrives before its
+  playlist).
+- **Tracks** travel as audio hash, MusicBrainz ID, ISRC and tags, never
+  paths; the receiver finds its own file. One it doesn't have is kept by
+  hash (plays, items, marks) and shows once that audio arrives.
+- **Session:** both send their versions (last seq per engine), then the ops
+  the other lacks, 500 at a time, applied as they come; an interrupted
+  session resumes. Each end runs one when a link comes up and one second after
+  each change to playlists, plays or marks (including ones synced in, which
+  passes them on). A failed session (a lost connection) is tried again
+  5 s later.
+- Not done: compaction (a play is ~300 bytes of log, 100k plays ~30 MB);
+  ops for a track neither hashed nor found on the receiver are logged but
+  show nowhere until the catalog (#241).
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game

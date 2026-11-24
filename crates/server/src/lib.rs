@@ -18,6 +18,7 @@ mod pairing;
 pub mod playback;
 mod resolver;
 pub mod settings;
+mod sync;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
@@ -101,7 +102,7 @@ pub async fn bind(
     let listener = axum::serve::ListenerExt::tap_io(listener, |_| {});
     let live = live::Live::new(engine.clone());
     let mpd = mpd::serve(live.clone(), config.library.clone(), config.pairing.clone());
-    let links = links::run(config.pairing.clone(), addr.port());
+    let links = links::run(config.pairing.clone(), addr.port(), config.library.clone());
     let app = app(live, config).into_make_service_with_connect_info::<SocketAddr>();
     Ok((addr, async move {
         tokio::select! {
@@ -121,6 +122,13 @@ pub fn router(engine: Engine, config: Config) -> Router {
 fn app(live: live::Live, config: Config) -> Router {
     if let Some(library) = &config.library {
         tokio::spawn(live.clone().follow(library.clone()));
+        // Changes are logged under the engine's key, for sync (sync.rs).
+        let (library, key) = (library.clone(), config.pairing.engine_key().to_string());
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = library.set_device(&key) {
+                tracing::warn!(%err, "sync: can't log changes");
+            }
+        });
     }
     // A phone opening a pairing QR code GETs /pair: the UI answers it.
     let pair_route = match &config.ui {

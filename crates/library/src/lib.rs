@@ -16,6 +16,7 @@ mod loudness;
 mod lyrics;
 mod playlists;
 mod scan;
+pub mod sync;
 mod tags;
 mod waveform;
 
@@ -71,6 +72,8 @@ struct Shared {
     measured: AtomicBool,
     /// When LRCLIB last failed (see [`lyrics::BACKOFF`]).
     lrclib_failed: Mutex<Option<std::time::Instant>>,
+    /// The engine key changes are logged under ([`Library::set_device`]).
+    device: Mutex<String>,
 }
 
 impl Shared {
@@ -113,6 +116,7 @@ impl Library {
             unmeasurable: Mutex::default(),
             measured: AtomicBool::new(false),
             lrclib_failed: Mutex::default(),
+            device: Mutex::default(),
         });
         let (scanner, requests) = mpsc::channel();
         let scanner_conn = db::open(&db_path)?;
@@ -166,6 +170,7 @@ impl Library {
             _ => {}
         }
         let conn = self.db();
+        let device = self.device();
         Ok(match query {
             LibraryQuery::Status => QueryResult::Status {
                 status: self.status(),
@@ -376,27 +381,27 @@ impl Library {
                 entries: playlists::entries(&conn, &id)?,
             },
             LibraryQuery::CreatePlaylist { id, name, paths } => {
-                playlists::create(&conn, &id, &name, &paths)?;
+                playlists::create(&conn, &device, &id, &name, &paths)?;
                 self.playlists_changed()
             }
             LibraryQuery::RenamePlaylist { id, name } => {
-                playlists::rename(&conn, &id, &name)?;
+                playlists::rename(&conn, &device, &id, &name)?;
                 self.playlists_changed()
             }
             LibraryQuery::DeletePlaylist { id } => {
-                playlists::delete(&conn, &id)?;
+                playlists::delete(&conn, &device, &id)?;
                 self.playlists_changed()
             }
             LibraryQuery::AddToPlaylist { id, op, paths } => {
-                playlists::add(&conn, &id, &op, &paths)?;
+                playlists::add(&conn, &device, &id, &op, &paths)?;
                 self.playlists_changed()
             }
             LibraryQuery::RemoveFromPlaylist { id, items } => {
-                playlists::remove(&conn, &id, &items)?;
+                playlists::remove(&conn, &device, &id, &items)?;
                 self.playlists_changed()
             }
             LibraryQuery::MovePlaylistItem { id, item, before } => {
-                playlists::move_item(&conn, &id, &item, before.as_deref())?;
+                playlists::move_item(&conn, &device, &id, &item, before.as_deref())?;
                 self.playlists_changed()
             }
             LibraryQuery::SetFavourite { paths, favourite } => {
@@ -564,38 +569,7 @@ impl Library {
     /// hash, MusicBrainz recording, ISRC) or, failing those, by artist, title
     /// and duration. Used for references queued on other devices.
     pub fn find(&self, track: &TrackRef) -> Option<PathBuf> {
-        let conn = self.db();
-        let by = |column: &str, value: &Option<String>| -> Option<String> {
-            let value = value.as_ref().filter(|v| !v.is_empty())?;
-            conn.query_row(
-                &format!("SELECT path FROM tracks WHERE {column} = ?1 AND missing = 0 LIMIT 1"),
-                [value],
-                |r| r.get(0),
-            )
-            .optional()
-            .ok()
-            .flatten()
-        };
-        let keys = &track.keys;
-        let path = by("audio_hash", &keys.audio_hash)
-            .or_else(|| by("musicbrainz_recording", &keys.musicbrainz_recording))
-            .or_else(|| by("isrc", &keys.isrc))
-            .or_else(|| {
-                let (title, artist) = (track.title.as_ref()?, track.artist.as_ref()?);
-                let duration = track.duration_ms.map_or(-1, |d| d as i64);
-                conn.query_row(
-                    "SELECT path FROM tracks
-                     WHERE missing = 0 AND lower(title) = lower(?1)
-                       AND lower(coalesce(artist, album_artist)) = lower(?2)
-                       AND (?3 < 0 OR abs(coalesce(duration_ms, ?3) - ?3) <= 2000)
-                     ORDER BY lower(coalesce(album, '')) = lower(coalesce(?4, '')) DESC LIMIT 1",
-                    params![title.trim(), artist.trim(), duration, track.album],
-                    |r| r.get(0),
-                )
-                .optional()
-                .ok()
-                .flatten()
-            })?;
+        let path = sync::locate(&self.db(), &track.into())?;
         let path = PathBuf::from(path);
         path.is_file().then_some(path)
     }

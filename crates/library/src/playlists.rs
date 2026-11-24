@@ -1,10 +1,14 @@
 //! Saved playlists, in the `playlists` and `playlist_items` tables. Every
 //! change is safe to repeat: playlists and entries carry the client's ids.
+//! Changes are logged as sync ops (sync.rs), which make them.
 
 use protocol::{Playlist, PlaylistEntry};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension};
 
-use crate::{Error, Result, TRACK_COLUMNS, db, library_track};
+use crate::{
+    Error, Result, TRACK_COLUMNS, db, library_track,
+    sync::{self, Op},
+};
 
 fn exists(conn: &Connection, id: &str) -> Result<()> {
     conn.query_row("SELECT 1 FROM playlists WHERE id = ?1", [id], |_| Ok(()))
@@ -47,7 +51,7 @@ pub fn entries(conn: &Connection, id: &str) -> Result<Vec<PlaylistEntry>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {TRACK_COLUMNS}, i.item FROM playlist_items i
          JOIN tracks ON tracks.id = {}
-         WHERE i.playlist = ?1 ORDER BY i.pos",
+         WHERE i.playlist = ?1 ORDER BY i.pos, i.item",
         db::resolve("i.file", "i.hash")
     ))?;
     let entries = stmt
@@ -72,105 +76,175 @@ pub fn named_entries(conn: &Connection, id: &str) -> Result<(String, Vec<Playlis
     Ok((name, entries(conn, id)?))
 }
 
-pub fn create(conn: &Connection, id: &str, name_: &str, paths: &[String]) -> Result<()> {
+pub fn create(
+    conn: &Connection,
+    device: &str,
+    id: &str,
+    name_: &str,
+    paths: &[String],
+) -> Result<()> {
     let name = name(name_)?;
     if id.is_empty() {
         return Err(Error::Other("a playlist needs an id".into()));
     }
     let tx = conn.unchecked_transaction()?;
-    // Made already: a repeat, so its tracks are in too.
-    if tx.execute(
-        "INSERT OR IGNORE INTO playlists (id, name) VALUES (?1, ?2)",
-        [id, name],
-    )? == 1
-    {
-        append(&tx, id, id, paths)?;
+    // Made already (or deleted since, which stays): a repeat, so its tracks are in too.
+    if exists(&tx, id).is_err() && !sync::tombstoned(&tx, &format!("deleted/{id}"))? {
+        let op = Op::Name {
+            playlist: id.into(),
+            name: name.into(),
+        };
+        sync::record(&tx, device, op, None)?;
+        append(&tx, device, id, id, paths)?;
     }
     tx.commit()?;
     Ok(())
 }
 
-pub fn add(conn: &Connection, id: &str, op: &str, paths: &[String]) -> Result<()> {
+pub fn add(conn: &Connection, device: &str, id: &str, op: &str, paths: &[String]) -> Result<()> {
     if op.is_empty() {
         return Err(Error::Other("an addition needs an id".into()));
     }
     let tx = conn.unchecked_transaction()?;
     exists(&tx, id)?;
-    append(&tx, id, op, paths)?;
+    append(&tx, device, id, op, paths)?;
     tx.commit()?;
     Ok(())
 }
 
-/// Adds entries `<op>/<index>` at the end; ones already there stay put.
-fn append(conn: &Connection, id: &str, op: &str, paths: &[String]) -> Result<()> {
-    let end: i64 = conn.query_row(
+/// Adds entries `<op>/<index>` at the end; ones already there (or removed
+/// since) stay as they are, and files not in the library are left out.
+fn append(conn: &Connection, device: &str, id: &str, op: &str, paths: &[String]) -> Result<()> {
+    let end: f64 = conn.query_row(
         "SELECT coalesce(max(pos) + 1, 0) FROM playlist_items WHERE playlist = ?1",
         [id],
         |r| r.get(0),
     )?;
-    let mut insert = conn.prepare(
-        "INSERT OR IGNORE INTO playlist_items (playlist, item, pos, file, hash)
-         VALUES (?1, ?2, ?3, ?4, (SELECT nullif(audio_hash, '') FROM tracks WHERE path = ?4))",
-    )?;
     for (i, path) in paths.iter().enumerate() {
-        insert.execute(params![id, format!("{op}/{i}"), end + i as i64, path])?;
+        let item = format!("{op}/{i}");
+        let there = conn
+            .query_row(
+                "SELECT 1 FROM playlist_items WHERE playlist = ?1 AND item = ?2",
+                [id, &item],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if there || sync::tombstoned(conn, &format!("removed/{id}/{item}"))? {
+            continue;
+        }
+        let Some(track) = sync::track_at(conn, path)? else {
+            continue;
+        };
+        let op = Op::Add {
+            playlist: id.into(),
+            item,
+            track,
+            pos: end + i as f64,
+        };
+        sync::record(conn, device, op, Some(path))?;
     }
     Ok(())
 }
 
-pub fn rename(conn: &Connection, id: &str, name_: &str) -> Result<()> {
+pub fn rename(conn: &Connection, device: &str, id: &str, name_: &str) -> Result<()> {
     let name = name(name_)?;
-    if conn.execute("UPDATE playlists SET name = ?2 WHERE id = ?1", [id, name])? == 0 {
-        return Err(Error::Other(format!("no playlist {id}")));
+    let old: Option<String> = conn
+        .query_row("SELECT name FROM playlists WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    match old {
+        None => Err(Error::Other(format!("no playlist {id}"))),
+        Some(old) if old == name => Ok(()),
+        Some(_) => {
+            let op = Op::Name {
+                playlist: id.into(),
+                name: name.into(),
+            };
+            sync::record(conn, device, op, None)?;
+            Ok(())
+        }
+    }
+}
+
+pub fn delete(conn: &Connection, device: &str, id: &str) -> Result<()> {
+    if exists(conn, id).is_ok() {
+        let op = Op::Delete {
+            playlist: id.into(),
+        };
+        sync::record(conn, device, op, None)?;
     }
     Ok(())
 }
 
-pub fn delete(conn: &Connection, id: &str) -> Result<()> {
+pub fn remove(conn: &Connection, device: &str, id: &str, items: &[String]) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM playlist_items WHERE playlist = ?1", [id])?;
-    tx.execute("DELETE FROM playlists WHERE id = ?1", [id])?;
-    tx.commit()?;
-    Ok(())
-}
-
-pub fn remove(conn: &Connection, id: &str, items: &[String]) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    let mut delete = tx.prepare("DELETE FROM playlist_items WHERE playlist = ?1 AND item = ?2")?;
     for item in items {
-        delete.execute([id, item])?;
+        let there = tx
+            .query_row(
+                "SELECT 1 FROM playlist_items WHERE playlist = ?1 AND item = ?2",
+                [id, item],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if there {
+            let op = Op::Remove {
+                playlist: id.into(),
+                item: item.clone(),
+            };
+            sync::record(&tx, device, op, None)?;
+        }
     }
-    drop(delete);
     tx.commit()?;
     Ok(())
 }
 
-/// Moves `item` before `before` (to the end if `None`). An entry already
-/// removed stays removed; one to go before that is gone means the end.
-pub fn move_item(conn: &Connection, id: &str, item: &str, before: Option<&str>) -> Result<()> {
+/// Moves `item` before `before` (to the end if `None`), halfway between its
+/// new neighbours so only it changes. An entry already removed stays
+/// removed; one to go before that is gone means the end.
+// shortcut: f64 halves run out after ~50 moves into the same gap, then ties
+// fall back to item order (nothing is lost); use string keys if that shows.
+pub fn move_item(
+    conn: &Connection,
+    device: &str,
+    id: &str,
+    item: &str,
+    before: Option<&str>,
+) -> Result<()> {
     if before == Some(item) {
         return Ok(());
     }
-    let tx = conn.unchecked_transaction()?;
-    let mut order: Vec<String> = tx
-        .prepare("SELECT item FROM playlist_items WHERE playlist = ?1 ORDER BY pos")?
-        .query_map([id], |r| r.get(0))?
+    let mut order: Vec<(String, f64)> = conn
+        .prepare("SELECT item, pos FROM playlist_items WHERE playlist = ?1 ORDER BY pos, item")?
+        .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let Some(from) = order.iter().position(|i| i == item) else {
+    let Some(from) = order.iter().position(|(i, _)| i == item) else {
         return Ok(());
     };
-    let moved = order.remove(from);
+    order.remove(from);
     let to = before
-        .and_then(|b| order.iter().position(|i| i == b))
+        .and_then(|b| order.iter().position(|(i, _)| i == b))
         .unwrap_or(order.len());
-    order.insert(to, moved);
-    let mut set =
-        tx.prepare("UPDATE playlist_items SET pos = ?3 WHERE playlist = ?1 AND item = ?2")?;
-    for (pos, item) in order.iter().enumerate() {
-        set.execute(params![id, item, pos as i64])?;
+    if to == from {
+        return Ok(());
     }
-    drop(set);
-    tx.commit()?;
+    let pos = match (
+        to.checked_sub(1).map(|i| order[i].1),
+        order.get(to).map(|o| o.1),
+    ) {
+        (Some(prev), Some(next)) => (prev + next) / 2.0,
+        (Some(prev), None) => prev + 1.0,
+        (None, Some(next)) => next - 1.0,
+        (None, None) => 0.0,
+    };
+    let op = Op::Move {
+        playlist: id.into(),
+        item: item.into(),
+        pos,
+    };
+    sync::record(conn, device, op, None)?;
     Ok(())
 }
 
