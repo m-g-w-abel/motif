@@ -77,7 +77,7 @@ control isn't an add-on: it's the normal code path.
   the in-app [changelog](CHANGELOG.md) and Help, also in the desktop left panel),
   a full-screen now-playing sheet that steps by drag or handle between now
   playing, a half and a full reorderable queue, and lyrics, and touch
-  gestures (swipe right to go back, swipe a song left to queue it or out of
+  gestures (swipe right to go back and left on the Library home to go forward, swipe a song left to queue it or out of
   the queue, swipe now playing down to close it), each remappable in Settings, which on a phone is a list of groups
   with a search. Screen changes animate: an album's cover and title fly from
   its tile to its page, now playing grows out of the bar with each part moving

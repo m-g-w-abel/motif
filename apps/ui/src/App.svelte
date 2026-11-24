@@ -14,7 +14,7 @@
   import { installLayoutFiles } from './lib/layout/install';
   import { LayoutStore } from './lib/layout/store.svelte';
   import { SettingsStore } from './lib/settings.svelte';
-  import { gesture, mapped } from './lib/gestures';
+  import { gesture, mapped, viewMap } from './lib/gestures';
   import { SYSTEM_THEMES, themeById } from './lib/themes';
   import { FONT_LIST } from './lib/themeFile';
   import { UserThemes } from './lib/userThemes.svelte';
@@ -416,14 +416,18 @@
     ]),
   );
   const player = $derived(settings.current.player);
-  /** Touch: swiping right on a view or Settings goes back, unless the press drags a control or scrolls a row (Search's chips) sideways. */
+  /** Forward to the view back last left, from the Library home only. */
+  const forward = () => {
+    if (!settingsView.group && views.top.kind === 'home') views.forward();
+  };
+  /** Touch: swiping right on a view or Settings goes back, swiping left on the Library home forward, unless the press drags a control or scrolls a row (Search's chips) sideways. */
   function swipeBack(e: PointerEvent) {
     if ((e.target as Element).closest('[role="slider"], input, textarea, .resize, .divider, .grip, .chips')) return;
     // The screen follows the finger, when there is somewhere to go back to.
     gesture(
       e,
-      mapped(settings.current.gestures, 'view'),
-      { back },
+      viewMap(mapped(settings.current.gestures, 'view'), !settingsView.group && views.top.kind === 'home'),
+      { back, forward },
       swipeBackDrag,
     );
   }

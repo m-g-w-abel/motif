@@ -232,9 +232,10 @@ impl Library {
                 )?;
                 let mut stmt = conn.prepare(&format!(
                     "SELECT {key} AS k, coalesce(album, ''), coalesce(album_artist, artist, ''), min(coalesce(original_year, year)),
-                            count(*), sum(coalesce(duration_ms, 0)), max(art)
+                            count(*), sum(coalesce(duration_ms, 0)), {art}
                      FROM tracks WHERE {filter} GROUP BY k {order} LIMIT ?2 OFFSET ?3",
                     key = db::ALBUM_KEY,
+                    art = db::ALBUM_ART,
                     order = db::album_order(&sort)
                 ))?;
                 let albums = stmt

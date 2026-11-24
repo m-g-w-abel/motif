@@ -20,6 +20,7 @@
   import { sortLabel, viewSort } from '../../sort.svelte';
   import Icon from '../Icon.svelte';
   import Artwork from '../player/Artwork.svelte';
+  import { gridRows } from '../../gridRows';
   import Scrollbar from '../Scrollbar.svelte';
   import { scrollMemory } from '../../scrollMemory';
   
@@ -342,8 +343,9 @@
   });
   const rowHeight = $derived((cardHeight || (grid ? cardSize + 48 : 48)) + GAP);
   const rowCount = $derived(Math.ceil(count / columns));
-  const firstRow = $derived(Math.max(0, Math.floor(rowsTop / rowHeight) - 1));
-  const lastRow = $derived(Math.min(rowCount, Math.ceil((rowsTop + viewHeight) / rowHeight) + 1));
+  const rows = $derived(gridRows(rowsTop, viewHeight, rowHeight, rowCount));
+  const firstRow = $derived(rows.first);
+  const lastRow = $derived(rows.last);
   const visible = $derived.by(() => {
     const indices = [];
     for (let i = firstRow * columns; i < Math.min(count, lastRow * columns); i++) indices.push(i);

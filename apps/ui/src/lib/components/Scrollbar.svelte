@@ -10,6 +10,8 @@
   top of the view, shown in a bubble beside the thumb while dragging.
 -->
 <script lang="ts">
+  import { rootZoom } from '../motion/mover';
+  import { dragScroll } from '../scrollbarDrag';
   import { nearest } from '../table';
 
   let {
@@ -104,13 +106,14 @@
     dragging = true;
     lastLabel = '';
     const startY = e.clientY;
-    const startTop = el.scrollTop;
-    const max = el.scrollHeight - el.clientHeight;
-    const ratio = max / Math.max(1, el.clientHeight - size);
+    const grabbed = offset;
+    const zoom = rootZoom();
     // The end stays reachable even if the last group starts above it.
-    const points = snaps?.length ? [...snaps.filter((s) => s < max), max] : undefined;
     const move = (ev: PointerEvent) => {
-      const to = Math.min(max, Math.max(0, startTop + (ev.clientY - startY) * ratio));
+      // Sizes are read live: rows loading under the finger change the range.
+      const max = el.scrollHeight - el.clientHeight;
+      const to = dragScroll(grabbed, ev.clientY - startY, zoom, el.clientHeight, size, max);
+      const points = snaps?.length ? [...snaps.filter((s) => s < max), max] : undefined;
       el.scrollTop = points ? nearest(points, to) : to;
     };
     const end = () => {
