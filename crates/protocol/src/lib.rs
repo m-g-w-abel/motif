@@ -614,6 +614,8 @@ pub enum LibraryQuery {
         #[serde(default)]
         sort: Vec<SortRule>,
         album: String,
+        #[serde(default)]
+        filter: TrackFilter,
     },
     /// Library details (artwork, format…) for tracks by path, e.g. the queue
     /// or the playing track. Paths not in the library are left out.
@@ -637,6 +639,9 @@ pub enum LibraryQuery {
         #[serde(default)]
         #[ts(optional)]
         start: Option<u32>,
+        /// The album's tracks it lets through, as its card counts them.
+        #[serde(default)]
+        filter: TrackFilter,
     },
     /// Makes the tracks in a folder and the folders below it the context,
     /// by path, and plays from `start`.
@@ -650,6 +655,8 @@ pub enum LibraryQuery {
         albums: Vec<String>,
         #[serde(default)]
         sort: Vec<SortRule>,
+        #[serde(default)]
+        filter: TrackFilter,
     },
     AddRoot {
         path: String,

@@ -646,7 +646,8 @@ mod tests {
     #[test]
     fn the_this_device_filter_leaves_out_other_engines_tracks() {
         let a = engine("a", &[("A1", Some("h1"))]);
-        let b = engine("b", &[("B1", Some("h1")), ("B2", None)]);
+        // B3 is on album Alpha with A1, but only on b.
+        let b = engine("b", &[("B1", Some("h1")), ("B2", None), ("B3", Some("h3"))]);
         b.sql("UPDATE tracks SET album = 'Beta', artist = 'Other' WHERE title = 'B2'");
         meet(&a, &b);
         let here = TrackFilter {
@@ -706,6 +707,38 @@ mod tests {
             panic!()
         };
         assert_eq!(tracks.len(), 1);
+        // An album's page and play agree with its card.
+        let alpha = "Band\u{1f}Alpha".to_string();
+        let QueryResult::Tracks { tracks, .. } = query(LibraryQuery::AlbumTracks {
+            albums: vec![alpha.clone()],
+            sort: vec![],
+            filter: here,
+        }) else {
+            panic!()
+        };
+        assert_eq!(tracks.len(), 1, "{tracks:?}");
+        let Command::SetContext { tracks, .. } = a
+            .library
+            .selection(&LibraryQuery::PlayAlbum {
+                album: alpha.clone(),
+                sort: vec![],
+                start: None,
+                filter: here,
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(tracks.len(), 1);
+        let QueryResult::Position { index } = query(LibraryQuery::AlbumPosition {
+            search: None,
+            sort: vec![],
+            album: "Other\u{1f}Beta".into(),
+            filter: here,
+        }) else {
+            panic!()
+        };
+        assert_eq!(index, None, "Beta isn't here");
         // Without it, both engines' music shows.
         let QueryResult::Albums { total, .. } = query(LibraryQuery::Albums {
             search: None,

@@ -122,7 +122,7 @@
         label: album.title,
       });
     } else {
-      engine.query({ type: 'play_album', album: album.key, sort }).catch((e: Error) => (engine.error = e.message));
+      engine.query({ type: 'play_album', album: album.key, sort, filter: library.scope() }).catch((e: Error) => (engine.error = e.message));
     }
   }
 
@@ -136,7 +136,7 @@
         return start < 0 ? [] : demoLibrary.slice(start, start + album!.tracks);
       });
     }
-    const result = await engine.query({ type: 'album_tracks', albums: keys, sort });
+    const result = await engine.query({ type: 'album_tracks', albums: keys, sort, filter: library.scope() });
     return result.type === 'tracks' ? result.tracks.map((t) => t.track) : [];
   }
 

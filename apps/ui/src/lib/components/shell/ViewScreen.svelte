@@ -127,7 +127,7 @@
       }
       void engine.library?.revision;
       engine
-        .query({ type: 'album_tracks', albums: [view.key], sort: [] })
+        .query({ type: 'album_tracks', albums: [view.key], sort: [], filter: library.scope() })
         .then((r) => r.type === 'tracks' && (rows = r.tracks.map((details) => ({ track: details.track, details }))))
         .catch(() => {})
         .finally(() => (arrived = true));
@@ -144,7 +144,7 @@
   function playRows(start: number) {
     if (shown.length === rows.length && view.kind === 'playlist') return playlists.play(view.id, start);
     if (shown.length === rows.length && view.kind === 'album' && !isDemo) {
-      return engine.query({ type: 'play_album', album: view.key, sort: [], start }).catch((e: Error) => (engine.error = e.message));
+      return engine.query({ type: 'play_album', album: view.key, sort: [], start, filter: library.scope() }).catch((e: Error) => (engine.error = e.message));
     }
     const kind = view.kind === 'album' ? 'album' : 'list';
     engine.run({ type: 'set_context', tracks: shown.map((r) => r.track), start, kind, label: title });

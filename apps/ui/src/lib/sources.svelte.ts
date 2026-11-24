@@ -65,6 +65,7 @@ function reachable(engine: EngineClient, details: (i: number) => LibraryTrack | 
   return (start: number) => {
     const t = details(start);
     const away = cantReach(t, engine.pairing);
+    // shortcut: only the chosen song is checked; later unreachable ones go in, and the engine (#243) fails them with a reason.
     if (!away) return play(start);
     engine.error = `“${t?.track.title ?? 'This song'}” is on ${away}, which can’t be reached now.`;
   };
@@ -223,7 +224,7 @@ function libraryData(
       return localKey(engine);
     },
     play: reachable(engine, (i) => list().get(i), (start) => void run({ type: 'play', search, sort, filter: next.filter, start })),
-    playGroup: (g) => void run({ type: 'play_album', album: g.key, sort }),
+    playGroup: (g) => void run({ type: 'play_album', album: g.key, sort, filter: next.filter }),
     // The library keeps tracks whose files are gone or damaged, so they can
     // be found or replaced later; they show why they won't play.
     error: (i) => {

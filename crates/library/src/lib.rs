@@ -345,8 +345,9 @@ impl Library {
                 search,
                 sort,
                 album,
+                filter,
             } => QueryResult::Position {
-                index: groups(&conn, search.as_deref(), &sort, &TrackFilter::default())?
+                index: groups(&conn, search.as_deref(), &sort, &filter)?
                     .into_iter()
                     .find(|g| g.key == album)
                     .map(|g| g.start),
@@ -367,10 +368,15 @@ impl Library {
                     tracks,
                 }
             }
-            LibraryQuery::AlbumTracks { albums, sort } => {
+            LibraryQuery::AlbumTracks {
+                albums,
+                sort,
+                filter,
+            } => {
                 let mut stmt = conn.prepare(&format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 {}",
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 AND {} {}",
                     db::ALBUM_KEY,
+                    ratings::filter(&filter),
                     db::order(&sort)
                 ))?;
                 let mut tracks = Vec::new();
@@ -539,10 +545,16 @@ impl Library {
                 *start,
                 ContextKind::List,
             ),
-            LibraryQuery::PlayAlbum { album, sort, start } => (
+            LibraryQuery::PlayAlbum {
+                album,
+                sort,
+                start,
+                filter,
+            } => (
                 format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 {}",
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 AND {} {}",
                     db::ALBUM_KEY,
+                    ratings::filter(filter),
                     db::order(sort)
                 ),
                 Some(album.clone()),

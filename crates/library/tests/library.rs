@@ -183,6 +183,7 @@ fn scans_queries_matches_and_rescans() {
         search: None,
         sort: vec![],
         album: albums[1].key.clone(),
+        filter: TrackFilter::default(),
     };
     assert_eq!(
         library.query(query).unwrap(),
@@ -270,6 +271,7 @@ fn scans_queries_matches_and_rescans() {
                 search: None,
                 sort: by_title.clone(),
                 album: albums[1].key.clone(),
+                filter: TrackFilter::default(),
             })
             .unwrap(),
         QueryResult::Position { index: Some(0) }
@@ -299,6 +301,7 @@ fn scans_queries_matches_and_rescans() {
                 descending: true,
             }],
             start: None,
+            filter: TrackFilter::default(),
         })
         .unwrap()
     else {
@@ -314,6 +317,7 @@ fn scans_queries_matches_and_rescans() {
             album: albums[0].key.clone(),
             sort: vec![],
             start: Some(1),
+            filter: TrackFilter::default(),
         })
         .unwrap()
     else {
@@ -325,6 +329,7 @@ fn scans_queries_matches_and_rescans() {
         .query(LibraryQuery::AlbumTracks {
             albums: vec![albums[1].key.clone(), albums[0].key.clone()],
             sort: vec![],
+            filter: TrackFilter::default(),
         })
         .unwrap()
     else {
