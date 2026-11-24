@@ -63,20 +63,27 @@ again straight after ("second"). Three repeats, medians:
    and the grids are already windowed (#259).
 
 4. **Fix kept: the sheet's corners snap** (the user's choice). The backdrop's
-   `border-radius` no longer animates: it keeps the bar's corners while the
-   sheet opens and takes the square ones at the end, and on closing takes the
-   bar's at once (`step-end` on the first keyframe, `ExpandedPlayer.svelte`).
-   Measured on the same test page, collapse, median of three runs:
+   `border-radius` no longer animates, on a track of its own so the grow still
+   does: opening keeps the bar's corners until the end, closing takes the bar's
+   at once (`ExpandedPlayer.svelte`; checked at 0.25, 0.5, 0.75 of a collapse:
+   corners fixed at the bar's, the backdrop partway scaled). Collapse on the
+   test page, median of three runs:
 
    | | First: late frames / over | Second: late / over |
    |---|---|---|
    | before | 6 / 167 ms | 7 / 217 ms |
-   | after (corners snap) | 5 / 167 ms | 4 / 117 ms |
+   | corners snap to the bar's at once (kept) | 6 / 167 ms | 7 / 184 ms |
+   | corners square until the end, then snap (tried) | 5 / 134 ms | 5 / 134 ms |
 
-   The gain is smaller than the CSS experiment suggested for the first run
-   (the experiment removed the radius altogether, so nothing was painted at
-   all): the first run's frames are still late, so what remains there is
-   the native cost of the first raster of the sheet's layers, not the corners.
+   **Snapping the corners does not help measurably.** An earlier version of
+   this change put the easing on the whole keyframe, which also froze the
+   grow, and looked better for that reason only. What helped in the CSS
+   experiment was having no rounded clip on the backdrop at all (3 / 134 ms),
+   so the cost is the rounded clip of a large scaling layer, not the
+   animation of its radius; square corners until the end is the only snap
+   with a small gain, and it is within the runs' noise (about 2 frames).
+   The cost that remains is native: raster about 160-190 ms and paint about
+   100-130 ms in a 1 s collapse.
    `scripts/landing.mjs` against a muted test engine: all shared elements of
    screens and the sheet's open, close and held frames still land (47 checks;
    it stops at the queue checks, which need a longer album than the generated

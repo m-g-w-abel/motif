@@ -75,9 +75,12 @@
     const grow = onto({ ...b, left: 0, top: 0 }, { ...o, left: o.left - b.left, top: o.top - b.top });
     // Phones: the bar is a rounded card inset from the edges; its corners, undone by the scale.
     const r = views.phone ? parseFloat(getComputedStyle(origin).borderTopLeftRadius) || 0 : 0;
-    // The corners snap instead of animating: animated, they repaint the whole backdrop every frame (a third of the
-    // collapse's late frames on the phone, docs/DECISION-UI-STACK.md). They keep the bar's until the sheet is open, and take the bar's at once on closing.
-    t.add({ el: backdrop, frames: [{ transform: css(grow), borderRadius: `${r / grow.sx}px / ${r / grow.sy}px`, easing: 'step-end' }, { transform: 'none', borderRadius: '0px' }], span: GROW });
+    // The corners snap instead of animating (their own track: a keyframe's easing would hold the grow too): animated,
+    // they repaint the whole backdrop every frame (docs/DECISION-UI-STACK.md). Opening keeps the bar's until the end;
+    // closing plays the keyframes reversed (`Transition`), so each carries the easing that makes it the first one drawn:
+    // the bar's corners at once.
+    t.add({ el: backdrop, frames: [{ transform: css(grow) }, { transform: 'none' }], span: GROW });
+    t.add({ el: backdrop, frames: [{ borderRadius: `${r / grow.sx}px / ${r / grow.sy}px`, easing: 'step-end' }, { borderRadius: '0px', easing: 'step-start' }], span: GROW });
     t.add({ el: tint, frames: [{ opacity: 1 }, { opacity: 0 }], span: GROW });
     return t;
   }
