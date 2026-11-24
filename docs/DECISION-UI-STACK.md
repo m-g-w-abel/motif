@@ -55,8 +55,8 @@ again straight after ("second"). Three repeats, medians:
    | `will-change: transform, border-radius` on the backdrop | 5 / 167 ms | 6 / 150 ms |
    | hide the tint layer | 4 / 133 ms | 4 / 117 ms |
 
-   Animating `border-radius` on a full-screen element repaints it every frame
-   (it is not compositor-driven); removing it halves the late frames. Layer
+   Having no rounded corners on the full-screen backdrop at all halves the late
+   frames (see 4 for what that is and is not). Layer
    hints did nothing; the tint layer is within noise. Nothing here is a clear
    win without a visual change. Image pre-decoding and
    `content-visibility` were not tried: image decode is zero in every window,
