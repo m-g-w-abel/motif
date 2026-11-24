@@ -152,4 +152,33 @@ describe('launcher links', () => {
     expect(parseViewLink('motif://view/playlist?name=p')).toBeNull();
     expect(parseViewLink('not a link')).toBeNull();
   });
+
+  it('go forward to what back left, step by step, and nowhere when nothing was left', () => {
+    const views = new Views();
+    expect(views.forward()).toBe(false);
+    views.show({ kind: 'album', key: 'a1', title: 'Amnesiac' });
+    views.back();
+    views.back();
+    expect(views.top).toEqual({ kind: 'home' });
+    expect(views.forward()).toBe(true);
+    expect(views.top).toEqual({ kind: 'albums' });
+    expect(views.forward()).toBe(true);
+    expect(views.top).toEqual(album);
+    expect(views.forward()).toBe(false);
+    expect(views.stack.map((v) => v.kind)).toEqual(['home', 'albums', 'album']);
+  });
+
+  it('forget what back left when another view is opened or shown, but not when the same one is opened again', () => {
+    const views = new Views();
+    views.open({ kind: 'albums' });
+    views.back();
+    views.open({ kind: 'home' });
+    expect(views.canForward).toBe(true);
+    views.open({ kind: 'playlists' });
+    expect(views.canForward).toBe(false);
+    views.back();
+    expect(views.canForward).toBe(true);
+    views.show({ kind: 'search' });
+    expect(views.canForward).toBe(false);
+  });
 });

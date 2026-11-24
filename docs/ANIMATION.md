@@ -281,7 +281,9 @@ it, and its stage isn't itself moving), the real element moves by transform.
 Otherwise a **copy** travels in the **motion layer** (one fixed layer above
 everything, `pointer-events: none`) and the real one is hidden until the copy
 lands. Screens always use copies (both screens scroll and clip); the sheet
-mostly moves its own elements.
+mostly moves its own elements. On screens, an element scrolled out of view at
+either end (clear of the window or of a scroller it sits in: `onScreen`) doesn't
+fly: it comes and goes with its screen.
 
 **Where it lands.** The destination box is measured in the final layout
 *without* its stage's transform (a screen sliding in is measured where it

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { plan, type Part } from './plan';
+import { onScreen, plan, type Part } from './plan';
 
 const box = (left: number, top: number, width = 100, height = 50) => ({ left, top, width, height });
 const STAGE = box(0, 0, 400, 800);
@@ -134,5 +134,19 @@ describe('plan', () => {
     const p = plan([part('title', box(0, 700), { name: 'title' })], [part('t', box(0, 300), { name: 'title' }), part('q', box(0, 600), { enter: 'below' })], STAGE);
     expect(p.distance).toBe(400);
     expect(plan([], [part('x', box(0, 0), { enter: 'fade' })], STAGE).distance).toBe(100);
+  });
+
+  it('says a box lies on screen only when it meets every box that clips it', () => {
+    const view = box(0, 0, 400, 800);
+    expect(onScreen(box(10, 100), [view])).toBe(true);
+    // Scrolled out of its scroller, above, below or beside it.
+    const scroller = box(0, 100, 400, 300);
+    expect(onScreen(box(10, 20), [view, scroller])).toBe(false);
+    expect(onScreen(box(10, 450), [view, scroller])).toBe(false);
+    expect(onScreen(box(500, 150), [view, scroller])).toBe(false);
+    // Partly in view counts: it flies from what shows of it.
+    expect(onScreen(box(10, 80), [view, scroller])).toBe(true);
+    // Below the window, though inside a scroller that is itself taller.
+    expect(onScreen(box(10, 900), [view, box(0, 0, 400, 2000)])).toBe(false);
   });
 });

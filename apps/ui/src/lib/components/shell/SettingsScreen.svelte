@@ -155,6 +155,7 @@
     seek: 'Seek',
     remove: 'Remove from queue',
     back: 'Go back',
+    forward: 'Go forward',
     close: 'Close or show the queue',
     select: 'Select',
     none: 'None',

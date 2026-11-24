@@ -81,6 +81,14 @@ fn order_by(rules: &[SortRule], albums: bool) -> String {
 /// joined by a unit separator.
 pub const ALBUM_KEY: &str = "coalesce(album_artist, artist, '') || char(31) || coalesce(album, '')";
 
+/// An album's cover, in a query grouping `tracks` by [`ALBUM_KEY`]: the first track's that
+/// has one, in the order the album page lists its tracks (disc, track, path), so
+/// the card and the page agree even when the tracks carry different covers.
+pub const ALBUM_ART: &str = "(SELECT f.art FROM tracks f WHERE f.art IS NOT NULL
+         AND coalesce(f.album_artist, f.artist, '') || char(31) || coalesce(f.album, '')
+             = coalesce(tracks.album_artist, tracks.artist, '') || char(31) || coalesce(tracks.album, '')
+         ORDER BY coalesce(f.disc_no, 1), coalesce(f.track_no, 0), f.path LIMIT 1)";
+
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     // WAL lets queries read while the scanner writes.
@@ -444,6 +452,38 @@ mod tests {
             )
             .unwrap();
         assert!(plan.contains("tracks_album"), "{plan}");
+        drop(conn);
+        for end in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{end}", file.display()));
+        }
+    }
+
+    #[test]
+    fn an_album_shows_its_first_tracks_cover() {
+        let file = std::env::temp_dir().join(format!("motif-dbart-{}.db", std::process::id()));
+        let conn = open(&file).unwrap();
+        // "b" sorts after "a" by name, but its track number is first; the first track has no cover.
+        for (path, track, art) in [
+            ("/a", 3, Some("zzz")),
+            ("/b", 2, Some("mmm")),
+            ("/c", 1, None),
+            ("/d", 4, Some("aaa")),
+        ] {
+            conn.execute(
+                "INSERT INTO tracks (path, size, mtime, album, track_no, art) VALUES (?1, 0, 0, 'Gemini', ?2, ?3)",
+                params![path, track, art],
+            )
+            .unwrap();
+        }
+        let art: Option<String> = conn
+            .query_row(
+                &format!("SELECT {ALBUM_KEY} AS k, {ALBUM_ART} FROM tracks GROUP BY k"),
+                [],
+                |r| r.get(1),
+            )
+            .unwrap();
+        // max(art) would say "zzz".
+        assert_eq!(art.as_deref(), Some("mmm"));
         drop(conn);
         for end in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{end}", file.display()));

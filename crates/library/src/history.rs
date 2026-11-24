@@ -107,13 +107,14 @@ impl Library {
         )?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {key} AS k, coalesce(album, ''), coalesce(album_artist, artist, ''), min(coalesce(original_year, year)),
-                    count(*), sum(coalesce(duration_ms, 0)), max(art)
+                    count(*), sum(coalesce(duration_ms, 0)), {art}
              FROM tracks JOIN (
                  SELECT {key} AS played_key, max(played_at) AS last
                  FROM {played} GROUP BY played_key
              ) ON played_key = {key}
              GROUP BY k ORDER BY last DESC, k LIMIT ?1 OFFSET ?2",
-            key = db::ALBUM_KEY
+            key = db::ALBUM_KEY,
+            art = db::ALBUM_ART
         ))?;
         let albums = stmt
             .query_map(params![limit, offset], library_album)?
