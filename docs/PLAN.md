@@ -700,7 +700,8 @@ runs a session over `motif/sync/1`.
   the other lacks, 500 at a time, applied as they come; an interrupted
   session resumes. Each end runs one when a link comes up and one second after
   each change to playlists, plays or marks (including ones synced in, which
-  passes them on).
+  passes them on). A failed session (a lost connection) is tried again
+  5 s later.
 - Not done: compaction (a play is ~300 bytes of log, 100k plays ~30 MB);
   ops for a track neither hashed nor found on the receiver are logged but
   show nowhere until the catalog (#241).

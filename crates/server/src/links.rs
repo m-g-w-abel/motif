@@ -28,6 +28,8 @@ const RETRY: Duration = Duration::from_secs(60);
 /// How long changes may gather before they are synced: a burst of edits
 /// (a playlist being reordered) goes in one session.
 const SETTLE: Duration = Duration::from_secs(1);
+/// How soon a failed sync session is tried again.
+const AGAIN: Duration = Duration::from_secs(5);
 
 /// Runs the endpoint on UDP `port` (another if taken), which LAN addresses
 /// of this engine share with its HTTP server ([`Pairing::link`]), syncing
@@ -279,6 +281,7 @@ async fn keep_in_sync(net: &Net, pairing: &Pairing, library: Option<&Library>, k
     loop {
         let before = synced(&changes.borrow_and_update());
         let addr = pairing.linked().into_iter().find(|(k, _)| k == key);
+        let mut failed = false;
         if let Some((_, addr)) = addr {
             let synced = match net.connect(key, &addr, Alpn::Sync).await {
                 Ok(conn) => sync::session(library, &conn, true).await,
@@ -286,10 +289,22 @@ async fn keep_in_sync(net: &Net, pairing: &Pairing, library: Option<&Library>, k
             };
             if let Err(err) = synced {
                 tracing::debug!(%key, %err, "sync: failed");
+                failed = true;
             }
         }
-        if changes.wait_for(|s| synced(s) != before).await.is_err() {
-            return std::future::pending().await;
+        // A failed session (a lost connection) is tried again soon.
+        let retry = async {
+            match failed {
+                true => tokio::time::sleep(AGAIN).await,
+                false => std::future::pending().await,
+            }
+        };
+        let closed = async { changes.wait_for(|s| synced(s) != before).await.is_err() };
+        tokio::select! {
+            closed = closed => if closed {
+                return std::future::pending().await;
+            },
+            () = retry => {}
         }
         tokio::time::sleep(SETTLE).await;
     }
