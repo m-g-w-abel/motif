@@ -327,12 +327,19 @@ mod tests {
             .unwrap();
     }
 
-    fn port() -> u16 {
-        std::net::UdpSocket::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
+    /// The UDP port `pairing`'s endpoint bound, once it has. Picking a free
+    /// port up front races other tests binding port 0.
+    async fn bound(pairing: &Pairing) -> u16 {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(port) = pairing.iroh_port() {
+                    return port;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("never bound")
     }
 
     fn advert(key: &str, ip: &str, iroh: Option<&str>) -> ResolvedService {
@@ -423,12 +430,12 @@ mod tests {
                 paths: vec![],
             })
             .unwrap();
-        let b_port = port();
+        b.link("A", a.engine_key(), &[]).unwrap();
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        b.link("A", a.engine_key(), &[]).unwrap();
         tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
-        tokio::spawn(run(b.clone(), b_port, Some(library_b.clone())));
         until(&library_b, |l| playlists(l) == ["Before"]).await;
         // A change on the end that was dialled goes the other way.
         library_b
@@ -450,13 +457,13 @@ mod tests {
             p.command(protocol::PairingCommand::SetInternet { allowed: false })
                 .unwrap();
         }
-        let b_port = port();
         // A met B on the LAN; B knows nothing of A yet.
+        b.link("A", a.engine_key(), &[]).unwrap();
+        tokio::spawn(run(b.clone(), 0, None));
+        let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        b.link("A", a.engine_key(), &[]).unwrap();
         tokio::spawn(run(a.clone(), 0, None));
-        tokio::spawn(run(b.clone(), b_port, None));
         let direct = |s: &PairingState| s.net.links.iter().all(|l| l.reach == Reach::Direct);
         wait_for(&a, direct).await;
         wait_for(&b, direct).await;
