@@ -55,6 +55,10 @@ export interface Plan {
 export const RISE_BY = 40;
 const LEAST_DISTANCE = 100;
 
+/** Whether `b` meets every box in `clips` (the window, and each scroller or clip it sits in): else it is scrolled out of sight. */
+export const onScreen = (b: Box, clips: Box[]) =>
+  clips.every((c) => b.left < c.left + c.width && b.left + b.width > c.left && b.top < c.top + c.height && b.top + b.height > c.top);
+
 const shift = (x: number, y: number): Map2 => ({ sx: 1, sy: 1, x, y });
 
 /** Where a part with box `b` starts when it comes in as `enter`. */

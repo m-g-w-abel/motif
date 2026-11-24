@@ -1,4 +1,5 @@
 import { boxFlight, css, fitted, textFlight, type Box, type Fit } from './fit';
+import { onScreen } from './plan';
 import type { Track } from './transition';
 
 /**
@@ -103,6 +104,23 @@ const resolution = (el: HTMLElement) => {
   const img = el.querySelector('img');
   return img?.complete ? img.naturalWidth : 0;
 };
+
+/**
+ * Whether `el` (at `box`) is scrolled out of view: clear of the window or of a box that clips it inside `root`.
+ * `dx` is how far `root` is slid from where it rests (its clips move with it; `box` is already corrected).
+ */
+export function unseen(el: HTMLElement, root: HTMLElement, box: DOMRect, dx = 0) {
+  const clips: Box[] = [{ left: 0, top: 0, width: innerWidth, height: innerHeight }];
+  for (let up = el.parentElement; up && up !== document.body; up = up.parentElement) {
+    const s = getComputedStyle(up);
+    if (up !== root && (s.overflowX !== 'visible' || s.overflowY !== 'visible')) {
+      const c = up.getBoundingClientRect();
+      clips.push({ left: c.left - dx, top: c.top, width: c.width, height: c.height });
+    }
+    if (up === root) break;
+  }
+  return !onScreen(box, clips);
+}
 
 export function see(el: HTMLElement, box = el.getBoundingClientRect()): Seen {
   const text = !el.firstElementChild && !!el.textContent?.trim();
