@@ -27,7 +27,7 @@ shadow "0 8px 32px rgb(0 0 0 / 0.5)"
 | `version` | Required, `1`. |
 | `scheme` | Required, `"light"` or `"dark"`. Sets native controls and picks the built-in theme that fills any token you leave out. |
 | `name` | Shown in Settings. Defaults to the file name. |
-| `font-sans`, `font-mono` | Optional comma-separated font names (letters, digits, spaces, commas, quotes, hyphens). Only installed fonts work; end with a generic family such as `sans-serif`. |
+| `font-sans`, `font-mono` | Optional comma-separated font names (letters, digits, spaces, commas, quotes, hyphens). Only installed fonts work, and Allo, which Motif ships (`apps/ui/src/fonts`, SIL OFL 1.1); end with a generic family such as `sans-serif`. |
 
 ## Tokens
 

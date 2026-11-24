@@ -172,7 +172,7 @@
   let scaleDraft = $state<number>();
   const scaleShown = $derived(scaleDraft ?? settings.current.scale);
   const OTHER = '\0other';
-  const FONTS = [['', 'Theme default'], ['system-ui', 'System UI'], ['sans-serif', 'Sans-serif'], ['serif', 'Serif'], ['monospace', 'Monospace'], ['Inter', 'Inter']];
+  const FONTS = [['', 'Theme default'], ['system-ui', 'System UI'], ['sans-serif', 'Sans-serif'], ['serif', 'Serif'], ['monospace', 'Monospace'], ['Inter', 'Inter'], ['Allo', 'Allo']];
   let fontOther = $state(!FONTS.some(([v]) => v === settings.current.font));
 
   let themeInput = $state<HTMLInputElement>();
