@@ -56,8 +56,8 @@
   /**
    * Bar (0) to sheet (1): shared parts move from the bar to their places
    * here, the bar's other parts go and the sheet's come, and the
-   * background grows out of the bar's box, its corners opening out to the
-   * screen's and its colour turning to the sheet's. Without a player to
+   * background grows out of the bar's box, its corners snapping to the
+   * screen's at the end (the bar's again at once when closing) and its colour turning to the sheet's. Without a player to
    * grow out of, or with reduced motion, the whole sheet fades.
    */
   function toggle(): Transition | null {
@@ -75,7 +75,9 @@
     const grow = onto({ ...b, left: 0, top: 0 }, { ...o, left: o.left - b.left, top: o.top - b.top });
     // Phones: the bar is a rounded card inset from the edges; its corners, undone by the scale.
     const r = views.phone ? parseFloat(getComputedStyle(origin).borderTopLeftRadius) || 0 : 0;
-    t.add({ el: backdrop, frames: [{ transform: css(grow), borderRadius: `${r / grow.sx}px / ${r / grow.sy}px` }, { transform: 'none', borderRadius: '0px' }], span: GROW });
+    // The corners snap instead of animating: animated, they repaint the whole backdrop every frame (a third of the
+    // collapse's late frames on the phone, docs/DECISION-UI-STACK.md). They keep the bar's until the sheet is open, and take the bar's at once on closing.
+    t.add({ el: backdrop, frames: [{ transform: css(grow), borderRadius: `${r / grow.sx}px / ${r / grow.sy}px`, easing: 'step-end' }, { transform: 'none', borderRadius: '0px' }], span: GROW });
     t.add({ el: tint, frames: [{ opacity: 1 }, { opacity: 0 }], span: GROW });
     return t;
   }

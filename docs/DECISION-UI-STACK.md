@@ -58,18 +58,40 @@ again straight after ("second"). Three repeats, medians:
    Animating `border-radius` on a full-screen element repaints it every frame
    (it is not compositor-driven); removing it halves the late frames. Layer
    hints did nothing; the tint layer is within noise. Nothing here is a clear
-   win without a visual change, so no fix was committed. Image pre-decoding and
+   win without a visual change. Image pre-decoding and
    `content-visibility` were not tried: image decode is zero in every window,
    and the grids are already windowed (#259).
 
+4. **Fix kept: the sheet's corners snap** (the user's choice). The backdrop's
+   `border-radius` no longer animates: it keeps the bar's corners while the
+   sheet opens and takes the square ones at the end, and on closing takes the
+   bar's at once (`step-end` on the first keyframe, `ExpandedPlayer.svelte`).
+   Measured on the same test page, collapse, median of three runs:
+
+   | | First: late frames / over | Second: late / over |
+   |---|---|---|
+   | before | 6 / 167 ms | 7 / 217 ms |
+   | after (corners snap) | 5 / 167 ms | 4 / 117 ms |
+
+   The gain is smaller than the CSS experiment suggested for the first run
+   (the experiment removed the radius altogether, so nothing was painted at
+   all): the first run's frames are still late, so what remains there is
+   the native cost of the first raster of the sheet's layers, not the corners.
+   `scripts/landing.mjs` against a muted test engine: all shared elements of
+   screens and the sheet's open, close and held frames still land (47 checks;
+   it stops at the queue checks, which need a longer album than the generated
+   test library has, as before the change).
+
 ### What was *not* measured (and why it matters)
 
-- **A cold app start.** The WebView process here was warm. Restarting the app
-  (`am force-stop`) would interrupt the user's player, so it was not done. A
-  cold renderer (empty JIT, no raster caches, first GPU shader compiles) is the
-  likeliest source of the *first-time* jank the user feels. This needs one
-  run with the app force-stopped and relaunched, which the user should
-  approve (and not while music plays).
+- **A cold app start.** The WebView process here was warm. A cold renderer
+  (empty JIT, no raster caches, first GPU shader compiles) is the likeliest
+  source of the *first-time* jank the user feels. The user approved a run that
+  force-stops and relaunches the real app (nothing was playing), but the
+  session's permission check refused to drive the installed app, so it was
+  **not run**. The script is written (`scripts/cold.mjs`, read-only: element
+  positions, a performance mark, a trace) and not yet tried; it needs the user
+  to allow it or to run `node scripts/cold.mjs 3` with the phone connected.
 - **The user's real library** (thousands of albums, real covers, their engine
   over a network). The test library is 24 albums of generated covers.
 - WebKitGTK on the desktop (not the point of this ticket).
