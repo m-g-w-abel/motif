@@ -58,7 +58,7 @@ pub fn entries(conn: &Connection, id: &str) -> Result<Vec<PlaylistEntry>> {
         .query_map([id], |r| {
             Ok(PlaylistEntry {
                 track: library_track(r)?,
-                item: r.get(25)?,
+                item: r.get(26)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

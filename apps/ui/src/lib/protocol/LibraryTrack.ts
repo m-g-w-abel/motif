@@ -33,4 +33,10 @@ problem: string | null, favourite: boolean,
 /**
  * Half stars, 1 to 10; none if unrated.
  */
-rating: number | null, };
+rating: number | null, 
+/**
+ * The linked engines holding this audio, by key, this engine's own for
+ * a file here; empty until the engine knows its key. Clients show
+ * whether each is reachable from `NetState`.
+ */
+devices: Array<string>, };

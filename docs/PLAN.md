@@ -706,6 +706,48 @@ runs a session over `motif/sync/1`.
   ops for a track neither hashed nor found on the receiver are logged but
   show nowhere until the catalog (#241).
 
+### Catalog sharing (#241, 2026-11-24)
+
+`crates/library/src/catalog.rs` holds catalogs; `crates/server/src/catalog.rs`
+swaps them over `motif/catalog/1` with directly linked engines only (not
+passed on), when a link comes up and after each library change, and again
+5 s after a failed one, as sync does.
+- **Rows in `tracks`:** another engine's track is a row with its key in
+  `device` and path `remote:<key>:<its id>` (paths stay home), so search,
+  sort, FTS and every list query work unchanged. The scanner, hashing,
+  folders and `LibraryStatus.tracks` only count this engine's rows.
+- **Owner-versioned deltas:** triggers number each change to this engine's
+  rows (`tracks.version`, `catalog_clock`) and deletions (`catalog_gone`);
+  a session sends the changes after the last one the other holds
+  (`catalogs`), 1000 a page. Missing or damaged files go as deletions. A
+  new library on the owner (another `catalog_epoch`) replaces what was
+  held. Applying a change again is skipped, so it's safe to repeat and an
+  interrupted exchange resumes. Unlinking drops that engine's rows.
+- **Dedupe:** `shadowed` is kept by triggers on every insert, hash change
+  and delete: a row is hidden if a row with its audio hash has a smaller
+  `device` ('' = here, so a local copy wins, then the smallest key). Lists
+  filter `shadowed = 0`; tracks without a hash never merge.
+- **`LibraryTrack.devices`:** the keys of the engines holding the audio
+  (this engine's own key for a file here); the UI joins it with reach.
+- **Timings** (`catalog::tests::timings`, desktop, debug build with
+  optimised SQLite, load ~5 from another build; a 200-row page at offset
+  20,000):
+
+| | 58k local | 8k local + 50k remote |
+|---|---|---|
+| Tracks page | 13–15 ms | 15–20 ms |
+| Search | 36–39 ms | 41–57 ms |
+| Albums page | 100–109 ms | 101–167 ms |
+| Artists page | 62–67 ms | 61–131 ms |
+| Groups (whole list) | 66–75 ms | 67–107 ms |
+| First merge of the 50k catalog | – | 5.8–10.5 s (~180 µs a track, 1000 per transaction) |
+
+  Within the #133 phone budgets once scaled (the phone is ~3× slower). The
+  first merge holds the database ~0.2 s a page here, so a phone browsing
+  while it runs waits up to ~0.5 s a query.
+- Not done: other engines' artwork (follow-up ticket; their tracks show the
+  placeholder), playing them and the UI mark (#242).
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game

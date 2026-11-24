@@ -90,6 +90,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     conn.execute_batch(crate::history::SCHEMA)?;
     conn.execute_batch(crate::ratings::SCHEMA)?;
     conn.execute_batch(crate::sync::SCHEMA)?;
+    conn.execute_batch(crate::catalog::SCHEMA)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -130,7 +131,14 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              missing INTEGER NOT NULL DEFAULT 0,
              problem TEXT,
              added INTEGER,
-             musicbrainz_album TEXT
+             musicbrainz_album TEXT,
+             -- '' for this engine's files, else the key of the linked engine
+             -- whose catalog the row is (catalog.rs), with its audio on
+             -- another row that wins (`shadowed`).
+             device TEXT NOT NULL DEFAULT '',
+             shadowed INTEGER NOT NULL DEFAULT 0,
+             -- The catalog change that last touched this engine's row.
+             version INTEGER
          );
          CREATE INDEX IF NOT EXISTS tracks_mb ON tracks (musicbrainz_recording);
          CREATE INDEX IF NOT EXISTS tracks_isrc ON tracks (isrc);
@@ -158,15 +166,63 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
              INSERT INTO tracks_fts (tracks_fts, rowid, title, artist, album, album_artist)
              VALUES ('delete', old.id, old.title, old.artist, old.album, old.album_artist);
          END;
-         CREATE TRIGGER IF NOT EXISTS tracks_au AFTER UPDATE ON tracks BEGIN
+",
+    )?;
+    upgrade(&conn, &path.with_file_name("art"))?;
+    // After the upgrade, which adds `plays.hash` and the catalog columns.
+    // Triggers are made anew each time, so older libraries get their latest body.
+    let shadow = |hash: &str| {
+        format!(
+            "UPDATE tracks SET shadowed = {SHADOWED} WHERE audio_hash = {hash} AND shadowed IS NOT {SHADOWED};"
+        )
+    };
+    let next = "UPDATE catalog_clock SET n = n + 1;";
+    let now = "(SELECT n FROM catalog_clock)";
+    let columns = crate::catalog::COLUMNS;
+    conn.execute_batch(&format!(
+        "CREATE INDEX IF NOT EXISTS tracks_device ON tracks (device);
+         CREATE INDEX IF NOT EXISTS tracks_version ON tracks (version);
+         INSERT INTO catalog_clock SELECT coalesce(max(version), 0) FROM tracks
+         WHERE NOT EXISTS (SELECT 1 FROM catalog_clock);
+         -- Only searched columns: the triggers below update others.
+         DROP TRIGGER IF EXISTS tracks_au;
+         CREATE TRIGGER tracks_au AFTER UPDATE OF title, artist, album, album_artist ON tracks BEGIN
              INSERT INTO tracks_fts (tracks_fts, rowid, title, artist, album, album_artist)
              VALUES ('delete', old.id, old.title, old.artist, old.album, old.album_artist);
              INSERT INTO tracks_fts (rowid, title, artist, album, album_artist)
              VALUES (new.id, new.title, new.artist, new.album, new.album_artist);
+         END;
+         -- Each change to this engine's tracks is numbered, for linked
+         -- engines' copies of its catalog (catalog.rs).
+         DROP TRIGGER IF EXISTS tracks_catalog_ai;
+         CREATE TRIGGER tracks_catalog_ai AFTER INSERT ON tracks WHEN new.device = '' BEGIN
+             {next} UPDATE tracks SET version = {now} WHERE id = new.id;
+         END;
+         DROP TRIGGER IF EXISTS tracks_catalog_au;
+         CREATE TRIGGER tracks_catalog_au AFTER UPDATE OF {columns}, missing, problem ON tracks
+         WHEN new.device = '' BEGIN
+             {next} UPDATE tracks SET version = {now} WHERE id = new.id;
+         END;
+         DROP TRIGGER IF EXISTS tracks_catalog_ad;
+         CREATE TRIGGER tracks_catalog_ad AFTER DELETE ON tracks WHEN old.device = '' BEGIN
+             {next} INSERT OR REPLACE INTO catalog_gone (id, version) VALUES (old.id, {now});
+         END;
+         -- One row of each audio shows ([`SHADOWED`]).
+         DROP TRIGGER IF EXISTS tracks_shadow_ai;
+         CREATE TRIGGER tracks_shadow_ai AFTER INSERT ON tracks WHEN coalesce(new.audio_hash, '') != '' BEGIN
+             {new}
+         END;
+         DROP TRIGGER IF EXISTS tracks_shadow_au;
+         CREATE TRIGGER tracks_shadow_au AFTER UPDATE OF audio_hash, device ON tracks BEGIN
+             {old} {new}
+         END;
+         DROP TRIGGER IF EXISTS tracks_shadow_ad;
+         CREATE TRIGGER tracks_shadow_ad AFTER DELETE ON tracks WHEN coalesce(old.audio_hash, '') != '' BEGIN
+             {old}
          END;",
-    )?;
-    upgrade(&conn, &path.with_file_name("art"))?;
-    // After the upgrade, which adds `plays.hash`.
+        new = shadow("new.audio_hash"),
+        old = shadow("old.audio_hash"),
+    ))?;
     conn.execute_batch(
         "-- Entries naming a file get its audio hash once the scanner knows it, so
          -- they find the file again after it moves (see resolve()). Made anew
@@ -189,23 +245,29 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Whether a row of `tracks` is hidden behind another holding its audio:
+/// this engine's own, else the linked engine with the smallest key.
+/// Duplicates of one engine all show.
+const SHADOWED: &str = "(audio_hash != '' AND EXISTS (
+    SELECT 1 FROM tracks t WHERE t.audio_hash = tracks.audio_hash AND t.device < tracks.device))";
+
 /// The library track an entry naming its file (`file`, a column) and its
 /// audio (`hash`) stands for: its file, else a present file with the same
 /// audio (it moved; the same title first, since tracks of silence or
-/// duplicates share audio), else its file marked missing.
+/// duplicates share audio; the copy shown first), else its file marked missing.
 pub fn resolve(file: &str, hash: &str) -> String {
     format!(
         "coalesce(
             (SELECT id FROM tracks WHERE path = {file} AND missing = 0),
             (SELECT id FROM tracks WHERE audio_hash = {hash} AND missing = 0
-             ORDER BY title IS (SELECT title FROM tracks WHERE path = {file}) DESC, id DESC LIMIT 1),
+             ORDER BY shadowed, title IS (SELECT title FROM tracks WHERE path = {file}) DESC, id DESC LIMIT 1),
             (SELECT id FROM tracks WHERE path = {file}))"
     )
 }
 
 /// Bumped when the scanner reads files better, so rows it got wrong are
 /// re-read at the next scan, or when the table changes.
-const VERSION: i32 = 15;
+const VERSION: i32 = 16;
 
 fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -356,6 +418,23 @@ fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
              WHERE path IN (SELECT path FROM hash_moves);",
         )?;
     }
+    if version < 16 {
+        // Version 16 shares the catalog with linked engines (#241): rows
+        // say whose they are, and the tracks already here count as changes.
+        for (column, kind) in [
+            ("device", "TEXT NOT NULL DEFAULT ''"),
+            ("shadowed", "INTEGER NOT NULL DEFAULT 0"),
+            ("version", "INTEGER"),
+        ] {
+            if !has(column)? {
+                conn.execute(
+                    &format!("ALTER TABLE tracks ADD COLUMN {column} {kind}"),
+                    [],
+                )?;
+            }
+        }
+        conn.execute("UPDATE tracks SET version = id WHERE version IS NULL", [])?;
+    }
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
     }
@@ -393,8 +472,8 @@ pub fn fts_query(search: Option<&str>) -> Option<String> {
 }
 
 /// `WHERE` clause limiting tracks to a search (bound as `?1`, may be NULL).
-pub const SEARCH: &str =
-    "(?1 IS NULL OR id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?1))";
+/// Other copies of audio shown once ([`SHADOWED`]) are left out too.
+pub const SEARCH: &str = "(shadowed = 0 AND (?1 IS NULL OR id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?1)))";
 
 /// `WHERE` clause for tracks inside the root folder bound as `?1`. The
 /// separator matters: `/music` must not match `/music2/…`.
@@ -425,7 +504,11 @@ pub fn roots(conn: &Connection) -> rusqlite::Result<Vec<String>> {
 }
 
 pub fn track_count(conn: &Connection) -> rusqlite::Result<u32> {
-    conn.query_row("SELECT count(*) FROM tracks", params![], |row| row.get(0))
+    conn.query_row(
+        "SELECT count(*) FROM tracks WHERE device = ''",
+        params![],
+        |row| row.get(0),
+    )
 }
 
 #[cfg(test)]

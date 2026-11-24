@@ -897,6 +897,10 @@ pub struct LibraryTrack {
     pub favourite: bool,
     /// Half stars, 1 to 10; none if unrated.
     pub rating: Option<u8>,
+    /// The linked engines holding this audio, by key, this engine's own for
+    /// a file here; empty until the engine knows its key. Clients show
+    /// whether each is reachable from `NetState`.
+    pub devices: Vec<String>,
 }
 
 /// A library track and when it was played.

@@ -9,6 +9,7 @@
 
 #[macro_use]
 mod ratings;
+pub mod catalog;
 mod db;
 mod hash;
 mod history;
@@ -265,7 +266,8 @@ impl Library {
                     )
                 };
                 let fts = db::fts_query(search.as_deref()).map(|q| format!("({q})"));
-                let filter = format!("{name} IS NOT NULL AND (?1 IS NULL OR {filter})");
+                let filter =
+                    format!("{name} IS NOT NULL AND shadowed = 0 AND (?1 IS NULL OR {filter})");
                 let total = conn.query_row(
                     &format!("SELECT count(DISTINCT {name}) FROM tracks WHERE {filter}"),
                     [&fts],
@@ -299,7 +301,7 @@ impl Library {
             } => {
                 let mut stmt = conn.prepare(&format!(
                     "SELECT {FOLDER} AS dir, count(*), sum(coalesce(duration_ms, 0)), max(art)
-                     FROM tracks GROUP BY dir ORDER BY dir"
+                     FROM tracks WHERE device = '' GROUP BY dir ORDER BY dir"
                 ))?;
                 let wanted = words(search.as_deref().unwrap_or_default());
                 let mut folders = Vec::new();
@@ -357,7 +359,7 @@ impl Library {
             }
             LibraryQuery::AlbumTracks { albums, sort } => {
                 let mut stmt = conn.prepare(&format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 {}",
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 {}",
                     db::ALBUM_KEY,
                     db::order(&sort)
                 ))?;
@@ -529,7 +531,7 @@ impl Library {
             ),
             LibraryQuery::PlayAlbum { album, sort, start } => (
                 format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 {}",
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 {}",
                     db::ALBUM_KEY,
                     db::order(sort)
                 ),
@@ -1077,7 +1079,15 @@ const TRACK_COLUMNS: &str = concat!(
      missing, problem, original_year, ",
     favourite!(),
     ", ",
-    rating!()
+    rating!(),
+    ", ",
+    // The engines holding the audio ([`LibraryTrack::devices`]), this one
+    // under its own key: the row's, and those of rows with its audio hash.
+    "(SELECT group_concat(d, ' ') FROM (
+         SELECT CASE device WHEN '' THEN (SELECT value FROM settings WHERE key = 'device') ELSE device END AS d
+         FROM tracks t WHERE t.id = tracks.id
+         UNION SELECT CASE device WHEN '' THEN (SELECT value FROM settings WHERE key = 'device') ELSE device END
+         FROM tracks t WHERE t.audio_hash = nullif(tracks.audio_hash, '')))"
 );
 
 #[cfg(not(windows))]
@@ -1150,6 +1160,16 @@ fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
         original_year: r.get(22)?,
         favourite: r.get(23)?,
         rating: r.get(24)?,
+        devices: {
+            let devices: Option<String> = r.get(25)?;
+            let mut devices: Vec<String> = devices
+                .iter()
+                .flat_map(|d| d.split(' '))
+                .map(str::to_string)
+                .collect();
+            devices.sort();
+            devices
+        },
     })
 }
 
