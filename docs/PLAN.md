@@ -722,7 +722,12 @@ passed on), when a link comes up and after each library change, and again
   (`catalogs`), 1000 a page. Missing or damaged files go as deletions. A
   new library on the owner (another `catalog_epoch`) replaces what was
   held. Applying a change again is skipped, so it's safe to repeat and an
-  interrupted exchange resumes. Unlinking drops that engine's rows.
+  interrupted exchange resumes. A page is refused if it comes from an older
+  library than the one held (epochs are creation times, so a session held
+  up from before the owner's library was made anew can't wipe the new
+  copy), or doesn't follow on from what is held (each page says which
+  change it follows); the session then fails and is tried again. Unlinking
+  drops that engine's rows.
 - **Dedupe:** `shadowed` is kept by triggers on every insert, hash change
   and delete: a row is hidden if a row with its audio hash has a smaller
   `device` ('' = here, so a local copy wins, then the smallest key). Lists
@@ -746,7 +751,7 @@ passed on), when a link comes up and after each library change, and again
   first merge holds the database ~0.2 s a page here, so a phone browsing
   while it runs waits up to ~0.5 s a query.
 - Not done: other engines' artwork (follow-up ticket; their tracks show the
-  placeholder), playing them and the UI mark (#242).
+  placeholder), playing them (#243) and the UI mark (#242).
 
 ## Phase 1 plan: desktop player
 

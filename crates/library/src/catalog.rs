@@ -61,10 +61,13 @@ pub struct Change {
     pub track: Option<CatalogTrack>,
 }
 
-/// Changes of the owner's library `epoch`, oldest first.
+/// Changes of the owner's library `epoch` after its change `from`, oldest
+/// first. Pages are refused if they come from an older library than the
+/// one held, or don't follow on from what is held.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Page {
     pub epoch: String,
+    pub from: u64,
     pub changes: Vec<Change>,
 }
 
@@ -128,7 +131,11 @@ impl Library {
         }
         changes.sort_by_key(|c| c.version);
         changes.truncate(limit as usize);
-        Ok(Page { epoch, changes })
+        Ok(Page {
+            epoch,
+            from: since as u64,
+            changes,
+        })
     }
 
     /// Applies a page of `device`'s catalog. Changes already applied are
@@ -143,12 +150,20 @@ impl Library {
             let conn = self.db();
             let tx = conn.unchecked_transaction()?;
             let seen = seen(&tx, device)?;
-            let mut version = if seen.epoch.as_ref() == Some(&page.epoch) {
-                seen.version
-            } else {
-                // Another library of the owner's: what it had is no more.
-                changed |= tx.execute("DELETE FROM tracks WHERE device = ?1", [device])? > 0;
-                0
+            let refuse = |why: &str| Err(Error::Other(format!("catalog of {device}: {why}")));
+            let mut version = match &seen.epoch {
+                // Held up from before the owner's library was made anew.
+                Some(held) if page.epoch < *held => return refuse("from an older library"),
+                Some(held) if page.epoch == *held && page.from > seen.version => {
+                    return refuse("changes missing before these");
+                }
+                Some(held) if page.epoch == *held => seen.version,
+                _ if page.from != 0 => return refuse("a new library's changes from the middle"),
+                _ => {
+                    // Another library of the owner's: what it had is no more.
+                    changed |= tx.execute("DELETE FROM tracks WHERE device = ?1", [device])? > 0;
+                    0
+                }
             };
             let sets = COLUMNS
                 .split(", ")
@@ -258,14 +273,18 @@ fn seen(conn: &Connection, device: &str) -> Result<Seen> {
 }
 
 /// This library's epoch, made the first time it is asked for: its changes
-/// count from 1 again if the library is made anew.
+/// count from 1 again if the library is made anew. It is when that was, in
+/// fixed-width hex, so a later library's sorts after an earlier one's.
+// shortcut: a library made anew while the clock is behind the old one's
+// first share is refused by engines holding the old; key it on a counter
+// kept outside library.db if that ever happens.
 fn epoch(conn: &Connection) -> Result<String> {
     let made = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     conn.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('catalog_epoch', ?1)",
-        [format!("{made:x}-{:x}", std::process::id())],
+        [format!("{made:032x}")],
     )?;
     Ok(conn.query_row(
         "SELECT value FROM settings WHERE key = 'catalog_epoch'",
@@ -568,6 +587,46 @@ mod tests {
     }
 
     #[test]
+    fn a_page_from_an_older_library_or_after_a_gap_is_refused() {
+        let old = engine("a", &[("Old", Some("h1"))]);
+        let b = engine("b", &[]);
+        give(&old, &b);
+        // Held up in a session from before the owner's library was made anew.
+        let stale = old.library.catalog_page(&Seen::default(), 10).unwrap();
+        let fresh = engine("a", &[("New", Some("h2"))]);
+        give(&fresh, &b);
+        assert!(b.library.merge_catalog("a", stale).is_err());
+        assert_eq!(b.shown(), [("New".into(), keys(&["a"]))]);
+        // A new library's changes must start from the beginning.
+        let newest = engine("a", &[("X", None), ("Y", None)]);
+        let tail = newest
+            .library
+            .catalog_page(
+                &Seen {
+                    epoch: None,
+                    version: 0,
+                },
+                10,
+            )
+            .unwrap();
+        let mut partial = tail.clone();
+        partial.from = 1;
+        partial.changes.remove(0);
+        assert!(b.library.merge_catalog("a", partial).is_err());
+        assert_eq!(b.shown(), [("New".into(), keys(&["a"]))]);
+        // Changes after ones not held yet would leave a hole.
+        fresh.add("Later", Some("h3"));
+        fresh.add("Latest", Some("h4"));
+        let mut seen = b.library.catalog_seen("a").unwrap();
+        seen.version += 1;
+        let gap = fresh.library.catalog_page(&seen, 10).unwrap();
+        assert!(b.library.merge_catalog("a", gap).is_err());
+        give(&fresh, &b);
+        assert_eq!(b.shown().len(), 3);
+        drop((old, newest));
+    }
+
+    #[test]
     fn unlinking_drops_an_engines_tracks() {
         let a = engine("a", &[("A1", Some("h1"))]);
         let b = engine("b", &[("B1", Some("h1")), ("B2", None)]);
@@ -673,6 +732,7 @@ mod tests {
             for page in changes.chunks(1000) {
                 let page = Page {
                     epoch: "e".into(),
+                    from: 0,
                     changes: page.to_vec(),
                 };
                 a.library.merge_catalog("b", page).unwrap();
