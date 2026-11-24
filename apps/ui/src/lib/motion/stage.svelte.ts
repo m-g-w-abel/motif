@@ -1,5 +1,5 @@
 import { tick } from 'svelte';
-import { fly, rootZoom, see, type Flight, type Seen } from './mover';
+import { fly, rootZoom, see, unseen, type Flight, type Seen } from './mover';
 import { follow, Transition, type Drive, type Track } from './transition';
 
 /** Into a deeper screen, back out of one, or across to another at the same depth. */
@@ -169,7 +169,10 @@ export class Stage<S extends Screen> {
     for (const el of [fromEl, toEl]) if (getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)') el.style.background = 'var(--bg)';
 
     // Shared elements, measured at rest; those whose counterpart hasn't come yet are looked for as it goes.
-    let waiting: Seen[] = [...fromEl.querySelectorAll<HTMLElement>('[data-move]')].filter((el) => el.offsetWidth).map((el) => see(el));
+    // Scrolled out of view at either end, one doesn't fly: it goes and comes with its screen.
+    let waiting: Seen[] = [...fromEl.querySelectorAll<HTMLElement>('[data-move]')]
+      .filter((el) => el.offsetWidth && !unseen(el, fromEl, el.getBoundingClientRect()))
+      .map((el) => see(el));
     const flights: Flight[] = [];
     let t: Transition | null = null;
     const pair = () => {
@@ -180,7 +183,9 @@ export class Stage<S extends Screen> {
         const box = to.getBoundingClientRect();
         // Its transform is in CSS pixels, the box on screen: the root's zoom between them.
         const shift = new DOMMatrix(getComputedStyle(toEl).transform).m41 * rootZoom();
-        const f = fly(from, to, new DOMRect(box.x - shift, box.y, box.width, box.height));
+        const rest = new DOMRect(box.x - shift, box.y, box.width, box.height);
+        if (unseen(to, toEl, rest, shift)) return false;
+        const f = fly(from, to, rest);
         flights.push(f);
         if (t) for (const track of f.tracks) t.add(track);
         else tracks.push(...f.tracks);
