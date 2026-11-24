@@ -5,6 +5,11 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
+- **Playlists, history and ratings sync**: linked devices share playlists
+  (names, songs, order), what you played (so Recently Played and play counts
+  cover every device) and favourites and ratings. Changes made apart merge
+  when they meet, a deleted playlist stays deleted, and a device in between
+  passes changes on.
 - **Linked devices reach each other anywhere**: a desktop and phone that sync
   connect over an end-to-end encrypted link, directly or through a relay, at
   home or away, with no account. Settings → Devices shows how each is reached,

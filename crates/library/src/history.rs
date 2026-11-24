@@ -1,12 +1,15 @@
 //! Play history: one row per listen that counted as played (see the
 //! integrations crate's scrobble rule), newest first for Recently Played.
 //! Rows are only ever added, each with its time, so devices can merge their
-//! histories later.
+//! histories (sync.rs).
 
 use protocol::{PlayedTrack, QueryResult, TrackRef};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::{Library, Result, TRACK_COLUMNS, db, library_album, library_track};
+use crate::{
+    Library, Result, TRACK_COLUMNS, db, library_album, library_track,
+    sync::{self, Op},
+};
 
 pub(crate) const SCHEMA: &str = "
     -- A listen of the track at track_path that started at played_at (Unix
@@ -39,16 +42,36 @@ impl Library {
         } else {
             return Ok(false);
         };
-        let added = self.db().execute(
-            "INSERT OR IGNORE INTO plays (track_path, played_at, hash)
-             VALUES (?1, ?2, (SELECT nullif(audio_hash, '') FROM tracks WHERE path = ?1))",
-            params![path, started_at as i64],
-        )?;
-        if added > 0 {
+        let added = {
+            let conn = self.db();
+            let tx = conn.unchecked_transaction()?;
+            let there = tx
+                .query_row(
+                    "SELECT 1 FROM plays WHERE track_path = ?1 AND played_at = ?2",
+                    params![path, started_at as i64],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            let track = sync::track_at(&tx, &path)?;
+            let added = match track.filter(|_| !there) {
+                Some(track) => {
+                    let op = Op::Play {
+                        track,
+                        started: started_at,
+                    };
+                    sync::record(&tx, &self.device(), op, Some(&path))?
+                }
+                None => false,
+            };
+            tx.commit()?;
+            added
+        };
+        if added {
             // Clients refetch Recently Played; the library itself is unchanged.
             self.shared.update(|s| s.plays += 1);
         }
-        Ok(added > 0)
+        Ok(added)
     }
 
     pub(crate) fn recently_played(&self, offset: u32, limit: u32) -> Result<QueryResult> {

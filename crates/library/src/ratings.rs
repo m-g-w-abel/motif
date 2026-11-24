@@ -4,9 +4,12 @@
 //! `tracks_hashed` trigger in db.rs then moves them to the hash).
 
 use protocol::TrackFilter;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::{Error, Library, Result};
+use crate::{
+    Error, Library, Result,
+    sync::{self, Op, Track},
+};
 
 pub(crate) const SCHEMA: &str = "
     -- `key` is `hash`, or the track's path while it has none. `rating` counts
@@ -61,10 +64,7 @@ impl Library {
     /// library are left out. Safe to repeat: clients hear of it only when
     /// something changed.
     pub fn set_favourite(&self, paths: &[String], on: bool) -> Result<()> {
-        self.mark(paths, |old| Marks {
-            favourite: on,
-            ..old
-        })
+        self.mark(paths, |track| Op::Favourite { track, on })
     }
 
     /// Rates the tracks at `paths` from 1 to 10 half stars, or clears the
@@ -73,16 +73,26 @@ impl Library {
         if rating.is_some_and(|r| !(1..=10).contains(&r)) {
             return Err(Error::Other("a rating is 1 to 10 half stars".into()));
         }
-        self.mark(paths, |old| Marks { rating, ..old })
+        self.mark(paths, |track| Op::Rating { track, rating })
     }
 
-    fn mark(&self, paths: &[String], change: impl Fn(Marks) -> Marks) -> Result<()> {
+    fn mark(&self, paths: &[String], op: impl Fn(Track) -> Op) -> Result<()> {
         let mut changed = false;
         {
             let conn = self.db();
+            let device = self.device();
+            let tx = conn.unchecked_transaction()?;
             for path in paths {
-                changed |= mark(&conn, path, &change)?;
+                let Some(track) = sync::track_at(&tx, path)? else {
+                    continue;
+                };
+                let key = track.hash.clone().unwrap_or_else(|| path.clone());
+                let (op, old) = (op(track), marks(&tx, &key)?);
+                if sync::marked(&op, old) != old {
+                    changed |= sync::record(&tx, &device, op, Some(path))?;
+                }
             }
+            tx.commit()?;
         }
         if changed {
             // Lists show the marks; the library itself is unchanged.
@@ -93,22 +103,14 @@ impl Library {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-struct Marks {
-    favourite: bool,
-    rating: Option<u8>,
+pub(crate) struct Marks {
+    pub favourite: bool,
+    pub rating: Option<u8>,
 }
 
-/// Applies `change` to the marks of the track at `path`; whether they changed.
-fn mark(conn: &Connection, path: &str, change: &impl Fn(Marks) -> Marks) -> Result<bool> {
-    let Ok(hash) = conn.query_row(
-        "SELECT nullif(audio_hash, '') FROM tracks WHERE path = ?1",
-        [path],
-        |r| r.get::<_, Option<String>>(0),
-    ) else {
-        return Ok(false);
-    };
-    let key = hash.as_deref().unwrap_or(path);
-    let old = conn
+/// The marks stored under `key`.
+pub(crate) fn marks(conn: &Connection, key: &str) -> Result<Marks> {
+    let marks = conn
         .query_row(
             "SELECT favourite, rating FROM ratings WHERE key = ?1",
             [key],
@@ -119,12 +121,16 @@ fn mark(conn: &Connection, path: &str, change: &impl Fn(Marks) -> Marks) -> Resu
                 })
             },
         )
-        .unwrap_or(Marks {
-            favourite: false,
-            rating: None,
-        });
-    let new = change(old);
-    if new == old {
+        .optional()?;
+    Ok(marks.unwrap_or(Marks {
+        favourite: false,
+        rating: None,
+    }))
+}
+
+/// Stores `new` under `key` (the audio `hash`, else the path); whether they changed.
+pub(crate) fn write(conn: &Connection, key: &str, hash: Option<&str>, new: Marks) -> Result<bool> {
+    if marks(conn, key)? == new {
         return Ok(false);
     }
     if !new.favourite && new.rating.is_none() {

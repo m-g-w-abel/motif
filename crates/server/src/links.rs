@@ -4,8 +4,10 @@
 //! each is reached ([`Pairing::set_reach`]). While the LAN switch is on it
 //! also browses `_motif._tcp` over mDNS, whose adverts carry the iroh port,
 //! so engines whose addresses changed find each other again without relays.
-//! It binds again when the relay settings change. Connections for other
-//! purposes are refused until the features that use them exist.
+//! It binds again when the relay settings change. Over each link's life it
+//! syncs playlists, plays and marks ([`net::Alpn::Sync`], sync.rs) when they
+//! meet and after each change here. Connections for other purposes are
+//! refused until the features that use them exist.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -13,19 +15,24 @@ use std::{
     time::Duration,
 };
 
+use library::Library;
 use mdns_sd::{ResolvedService, ServiceDaemon, ServiceEvent};
 use net::{Alpn, Connection, Net};
-use protocol::Reach;
+use protocol::{LibraryStatus, Reach};
 use tokio::task::JoinSet;
 
-use crate::{Pairing, pairing::relays};
+use crate::{Pairing, pairing::relays, sync};
 
 // shortcut: a fixed retry; back off if unreachable engines cost battery.
 const RETRY: Duration = Duration::from_secs(60);
+/// How long changes may gather before they are synced: a burst of edits
+/// (a playlist being reordered) goes in one session.
+const SETTLE: Duration = Duration::from_secs(1);
 
 /// Runs the endpoint on UDP `port` (another if taken), which LAN addresses
-/// of this engine share with its HTTP server ([`Pairing::link`]). Never ends.
-pub(crate) async fn run(pairing: Pairing, port: u16) {
+/// of this engine share with its HTTP server ([`Pairing::link`]), syncing
+/// `library` if there is one. Never ends.
+pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
     let mut states = pairing.subscribe();
     loop {
         let wanted = {
@@ -53,7 +60,7 @@ pub(crate) async fn run(pairing: Pairing, port: u16) {
         let changed = states.wait_for(|s| s.net.links.is_empty() || relays(&s.net) != wanted);
         tokio::select! {
             // The endpoint closed under us: start again.
-            () = keep_links(&net, &pairing) => {}
+            () = keep_links(&net, &pairing, library.as_ref()) => {}
             _ = changed => {}
         }
         net.close().await;
@@ -76,7 +83,7 @@ struct Links {
     dialling: HashSet<String>,
 }
 
-async fn keep_links(net: &Net, pairing: &Pairing) {
+async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
     let links = Arc::new(Mutex::new(Links::default()));
     // Dropped with this future, which ends every connection's task.
     let mut tasks = JoinSet::new();
@@ -88,17 +95,27 @@ async fn keep_links(net: &Net, pairing: &Pairing) {
         tokio::select! {
             accepted = net.accept() => {
                 let Some((alpn, conn)) = accepted else { return };
-                if alpn == Alpn::Link {
-                    let dialler = net::key(&conn);
-                    tasks.spawn(keep(net.clone(), pairing.clone(), links.clone(), conn, dialler));
-                } else {
-                    conn.close(2u32.into(), b"not yet");
+                match (alpn, library) {
+                    (Alpn::Link, _) => {
+                        let dialler = net::key(&conn);
+                        let library = library.cloned();
+                        tasks.spawn(keep(net.clone(), pairing.clone(), links.clone(), library, conn, dialler));
+                    }
+                    (Alpn::Sync, Some(library)) => {
+                        let library = library.clone();
+                        tasks.spawn(async move {
+                            if let Err(err) = sync::session(&library, &conn, false).await {
+                                tracing::debug!(key = %net::key(&conn), %err, "sync: failed");
+                            }
+                        });
+                    }
+                    _ => conn.close(2u32.into(), b"not yet"),
                 }
             }
-            _ = retry.tick() => dial(net, pairing, &links, &mut tasks),
+            _ = retry.tick() => dial(net, pairing, library, &links, &mut tasks),
             Ok(()) = states.changed() => {
                 forget_unlinked(pairing, &links);
-                dial(net, pairing, &links, &mut tasks);
+                dial(net, pairing, library, &links, &mut tasks);
             }
             Some(_) = tasks.join_next() => {}
             () = &mut browse => {}
@@ -164,7 +181,13 @@ fn found_on_lan(pairing: &Pairing, me: &str, found: &ResolvedService) {
 }
 
 /// Dials every linked engine without a link or a dial under way.
-fn dial(net: &Net, pairing: &Pairing, links: &Arc<Mutex<Links>>, tasks: &mut JoinSet<()>) {
+fn dial(
+    net: &Net,
+    pairing: &Pairing,
+    library: Option<&Library>,
+    links: &Arc<Mutex<Links>>,
+    tasks: &mut JoinSet<()>,
+) {
     for (key, addr) in pairing.linked() {
         let mut shared = lock(links);
         if addr == net::PeerAddr::default()
@@ -175,11 +198,12 @@ fn dial(net: &Net, pairing: &Pairing, links: &Arc<Mutex<Links>>, tasks: &mut Joi
         }
         drop(shared);
         let (net, pairing, links) = (net.clone(), pairing.clone(), links.clone());
+        let library = library.cloned();
         tasks.spawn(async move {
             let dialled = net.connect(&key, &addr, Alpn::Link).await;
             lock(&links).dialling.remove(&key);
             match dialled {
-                Ok(conn) => keep(net.clone(), pairing, links, conn, net.key()).await,
+                Ok(conn) => keep(net.clone(), pairing, links, library, conn, net.key()).await,
                 Err(err) => tracing::debug!(%key, %err, "iroh: can't reach"),
             }
         });
@@ -197,13 +221,14 @@ fn forget_unlinked(pairing: &Pairing, links: &Arc<Mutex<Links>>) {
     });
 }
 
-/// Swaps addresses on a new link and shows its reach until it closes. Of two
-/// links between the same engines (both dialled at once), both ends keep the
-/// one the smaller key dialled.
+/// Swaps addresses on a new link, then shows its reach and keeps `library`
+/// in sync until it closes. Of two links between the same engines (both
+/// dialled at once), both ends keep the one the smaller key dialled.
 async fn keep(
     net: Net,
     pairing: Pairing,
     links: Arc<Mutex<Links>>,
+    library: Option<Library>,
     conn: Connection,
     dialler: String,
 ) {
@@ -228,7 +253,10 @@ async fn keep(
         Ok(addr) => pairing.met(&key, addr),
         Err(err) => tracing::debug!(%key, %err, "iroh: no hello"),
     }
-    net::follow_reach(&conn, |reach| pairing.set_reach(&key, reach)).await;
+    tokio::select! {
+        () = net::follow_reach(&conn, |reach| pairing.set_reach(&key, reach)) => {}
+        () = keep_in_sync(&net, &pairing, library.as_ref(), &key) => {}
+    }
     let mut shared = lock(&links);
     if shared
         .live
@@ -237,6 +265,33 @@ async fn keep(
     {
         shared.live.remove(&key);
         pairing.set_reach(&key, Reach::Unreachable);
+    }
+}
+
+/// Syncs with the linked engine `key` now and after every change here to
+/// what syncs (the engine at the other end does the same). Never ends.
+async fn keep_in_sync(net: &Net, pairing: &Pairing, library: Option<&Library>, key: &str) {
+    let Some(library) = library else {
+        return std::future::pending().await;
+    };
+    let synced = |s: &LibraryStatus| (s.playlists, s.plays, s.ratings);
+    let mut changes = library.subscribe();
+    loop {
+        let before = synced(&changes.borrow_and_update());
+        let addr = pairing.linked().into_iter().find(|(k, _)| k == key);
+        if let Some((_, addr)) = addr {
+            let synced = match net.connect(key, &addr, Alpn::Sync).await {
+                Ok(conn) => sync::session(library, &conn, true).await,
+                Err(err) => Err(err),
+            };
+            if let Err(err) = synced {
+                tracing::debug!(%key, %err, "sync: failed");
+            }
+        }
+        if changes.wait_for(|s| synced(s) != before).await.is_err() {
+            return std::future::pending().await;
+        }
+        tokio::time::sleep(SETTLE).await;
     }
 }
 
@@ -308,6 +363,71 @@ mod tests {
         assert_eq!(pairing.linked()[0].1.direct, direct);
     }
 
+    fn library(name: &str) -> (Library, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("motif-links-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        (Library::open(&dir).unwrap(), dir)
+    }
+
+    fn playlists(library: &Library) -> Vec<String> {
+        let protocol::QueryResult::Playlists { playlists } =
+            library.query(protocol::LibraryQuery::Playlists).unwrap()
+        else {
+            panic!()
+        };
+        playlists.into_iter().map(|p| p.name).collect()
+    }
+
+    async fn until(library: &Library, done: impl Fn(&Library) -> bool) {
+        let mut changes = library.subscribe();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while !done(library) {
+                changes.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("timed out");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn linked_engines_sync_when_they_meet_and_on_change() {
+        let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
+        for p in [&a, &b] {
+            p.command(protocol::PairingCommand::SetInternet { allowed: false })
+                .unwrap();
+        }
+        let ((library_a, dir_a), (library_b, dir_b)) = (library("a"), library("b"));
+        library_a.set_device(a.engine_key()).unwrap();
+        library_b.set_device(b.engine_key()).unwrap();
+        // Made before they meet.
+        library_a
+            .query(protocol::LibraryQuery::CreatePlaylist {
+                id: "p".into(),
+                name: "Before".into(),
+                paths: vec![],
+            })
+            .unwrap();
+        let b_port = port();
+        a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
+            .unwrap();
+        b.link("A", a.engine_key(), &[]).unwrap();
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
+        tokio::spawn(run(b.clone(), b_port, Some(library_b.clone())));
+        until(&library_b, |l| playlists(l) == ["Before"]).await;
+        // A change on the end that was dialled goes the other way.
+        library_b
+            .query(protocol::LibraryQuery::RenamePlaylist {
+                id: "p".into(),
+                name: "After".into(),
+            })
+            .unwrap();
+        until(&library_a, |l| playlists(l) == ["After"]).await;
+        for dir in [dir_a, dir_b] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
     #[tokio::test]
     async fn linked_engines_meet_and_learn_each_others_address() {
         let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
@@ -320,8 +440,8 @@ mod tests {
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(a.clone(), 0));
-        tokio::spawn(run(b.clone(), b_port));
+        tokio::spawn(run(a.clone(), 0, None));
+        tokio::spawn(run(b.clone(), b_port, None));
         let direct = |s: &PairingState| s.net.links.iter().all(|l| l.reach == Reach::Direct);
         wait_for(&a, direct).await;
         wait_for(&b, direct).await;

@@ -89,6 +89,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch(crate::history::SCHEMA)?;
     conn.execute_batch(crate::ratings::SCHEMA)?;
+    conn.execute_batch(crate::sync::SCHEMA)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -168,14 +169,21 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     // After the upgrade, which adds `plays.hash`.
     conn.execute_batch(
         "-- Entries naming a file get its audio hash once the scanner knows it, so
-         -- they find the file again after it moves (see resolve()).
-         CREATE TRIGGER IF NOT EXISTS tracks_hashed AFTER UPDATE OF audio_hash ON tracks
+         -- they find the file again after it moves (see resolve()). Made anew
+         -- each time, so older libraries get its latest body.
+         DROP TRIGGER IF EXISTS tracks_hashed;
+         CREATE TRIGGER tracks_hashed AFTER UPDATE OF audio_hash ON tracks
          WHEN new.audio_hash != '' BEGIN
              UPDATE playlist_items SET hash = new.audio_hash WHERE file = new.path AND hash IS NULL;
              UPDATE plays SET hash = new.audio_hash WHERE track_path = new.path AND hash IS NULL;
              -- shortcut: if the audio already has marks (another copy of it), these stay under the path.
              UPDATE OR IGNORE ratings SET key = new.audio_hash, hash = new.audio_hash
              WHERE key = new.path AND hash IS NULL;
+             -- Their sync stamps follow (sync.rs).
+             UPDATE OR IGNORE stamps SET key = 'favourite/' || new.audio_hash
+             WHERE key = 'favourite/' || new.path;
+             UPDATE OR IGNORE stamps SET key = 'rating/' || new.audio_hash
+             WHERE key = 'rating/' || new.path;
          END;",
     )?;
     Ok(conn)

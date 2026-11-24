@@ -97,6 +97,11 @@ control isn't an add-on: it's the normal code path.
   [iroh](https://iroh.computer) on their identity keys: end-to-end encrypted,
   directly or through a relay (public, or your own), with no account or
   lookup service. They remember each other's last addresses instead.
+- Linked engines keep playlists, play history, favourites and ratings in
+  step, even through a device in between: a hand-rolled op log in SQLite
+  (plays a grow-only set, names and marks last-writer-wins on Lamport
+  stamps, playlist order by fractional positions, deletes as tombstones),
+  property-tested across three engines meeting in random orders.
 - An **MPD server**, so existing MPD clients can drive Motif.
 - Scrobbling to Last.fm, ListenBrainz and Libre.fm, with an offline queue.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now
@@ -143,7 +148,7 @@ Some of the measured results (details in [docs/PLAN.md](docs/PLAN.md)):
 
 ## Roadmap
 
-Next: peer-to-peer sync between devices over
+Next: a combined library and file sync between devices over
 [iroh](https://iroh.computer) (encrypted, no account), shared jam sessions and
 synchronised listen-along, more sources (internet radio, Subsonic/Jellyfin),
 and audiophile output (bit-perfect/exclusive, EQ, crossfade). The full plan is
