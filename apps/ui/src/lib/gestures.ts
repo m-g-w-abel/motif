@@ -14,7 +14,7 @@ export const SWIPE = 50;
 export const HOLD = 500;
 
 export type Gesture = 'swipe-left' | 'swipe-right' | 'long-press' | 'drag-vertical';
-/** `queued` is a row in the queue; `view` is the music area (any view or Settings). */
+/** `queued` is a row in the queue; `view` is the music area (any view or Settings; forward only does something on the Library home). */
 export type Surface = 'bar' | 'artwork' | 'row' | 'queued' | 'view';
 
 /**
@@ -22,7 +22,7 @@ export type Surface = 'bar' | 'artwork' | 'row' | 'queued' | 'view';
  * drag (down closes now playing, up shows the queue), so the artwork leaves it be.
  * `select` starts select mode with the row picked.
  */
-type Once = 'next' | 'previous' | 'queue' | 'play-next' | 'remove' | 'back' | 'close' | 'select';
+type Once = 'next' | 'previous' | 'queue' | 'play-next' | 'remove' | 'back' | 'forward' | 'close' | 'select';
 /** Actions that follow the finger while it drags. */
 type Follow = 'volume' | 'seek';
 export type Action = Once | Follow;
@@ -33,7 +33,7 @@ export const GESTURES: Record<Surface, GestureMap> = {
   artwork: { 'swipe-left': 'next', 'swipe-right': 'previous', 'drag-vertical': 'close' },
   row: { 'long-press': 'select', 'swipe-left': 'queue' },
   queued: { 'swipe-left': 'remove' },
-  view: { 'swipe-right': 'back' },
+  view: { 'swipe-right': 'back', 'swipe-left': 'forward' },
 };
 
 const SKIP: Action[] = ['next', 'previous'];
@@ -44,7 +44,7 @@ export const CHOICES: Record<Surface, Partial<Record<Gesture, Action[]>>> = {
   artwork: { 'swipe-left': SKIP, 'swipe-right': SKIP, 'drag-vertical': ['close', 'volume', 'seek'] },
   row: { 'long-press': ['select'], 'swipe-left': QUEUE },
   queued: { 'swipe-left': ['remove'] },
-  view: { 'swipe-right': ['back'] },
+  view: { 'swipe-right': ['back'], 'swipe-left': ['forward'] },
 };
 
 /** The user's remappings (Settings), per surface: an action, or none to turn the gesture off. */

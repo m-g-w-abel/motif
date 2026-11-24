@@ -81,9 +81,18 @@ export class Views {
   /** Where back goes; the Library home is under every view, even when it isn't on the stack. */
   parent: View | null = $derived(this.stack.at(-2) ?? (this.top.kind === 'home' ? null : HOME));
 
+  /** The views back popped, the next forward last; a view opened afresh clears them. */
+  #ahead = $state.raw<View[]>([]);
+  get canForward() {
+    return this.#ahead.length > 0;
+  }
+
   /** Opens `view` above the current one; safe to repeat. */
   open(view: View) {
-    if (!same(view, this.top)) this.stack = [...this.stack, view];
+    if (!same(view, this.top)) {
+      this.stack = [...this.stack, view];
+      this.#ahead = [];
+    }
     this.options = this.sorting = this.selecting = false;
   }
 
@@ -91,13 +100,25 @@ export class Views {
   show(view: View) {
     this.menu = null;
     this.stack = stackOf(view);
+    this.#ahead = [];
     this.options = this.sorting = this.selecting = false;
   }
 
   /** Goes back a view. False when already at the Library home. */
   back(): boolean {
     if (!this.parent) return false;
+    this.#ahead = [...this.#ahead, this.top];
     this.stack = this.stack.length > 1 ? this.stack.slice(0, -1) : [HOME];
+    this.options = this.sorting = this.selecting = false;
+    return true;
+  }
+
+  /** Goes forward to the view back last left. False when there is none. */
+  forward(): boolean {
+    const next = this.#ahead.at(-1);
+    if (!next) return false;
+    this.stack = [...this.stack, next];
+    this.#ahead = this.#ahead.slice(0, -1);
     this.options = this.sorting = this.selecting = false;
     return true;
   }
