@@ -144,7 +144,9 @@ async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
                         });
                     }
                     (Alpn::Files, Some(library)) => {
-                        tasks.spawn(files::serve(library.clone(), conn, None));
+                        let gate = pairing.clone();
+                        let linked: net::Linked = Arc::new(move |key| gate.is_linked(key));
+                        tasks.spawn(files::serve(library.clone(), conn, linked, None));
                     }
                     _ => conn.close(2u32.into(), b"not yet"),
                 }

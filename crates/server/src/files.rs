@@ -5,8 +5,9 @@
 //! (sync.rs's framing), then the owner's answer frame, `{"Ok": size of the
 //! file}` or `{"Err": why}`, then up to `len` bytes (fewer only at the end of
 //! the file) and the end of the stream. The owner serves only its own tracks,
-//! by id, never a path, and only to linked engines (the endpoint lets in no
-//! others). Originals only; transcoding is #244.
+//! by id, never a path, and only to linked engines: the endpoint lets in no
+//! others, and each range is refused once the asker is unlinked. Originals
+//! only; transcoding is #244.
 
 use std::{
     collections::HashMap,
@@ -41,7 +42,9 @@ const CHUNK: u64 = 64 << 10;
 /// (2 MiB: about 16 s of CD-quality FLAC, 4 s of 24-bit/192 kHz).
 const AHEAD: u64 = 32;
 /// The largest range served.
-const MAX_RANGE: u32 = 1 << 20;
+const MAX_RANGE: u32 = CHUNK as u32;
+/// Ranges answered at once on a connection; more wait to be read.
+const SERVING: usize = 2 * IN_FLIGHT;
 /// Ranges asked for at once.
 const IN_FLIGHT: usize = 4;
 /// How long a range may take before the link counts as lost.
@@ -57,28 +60,52 @@ pub(crate) struct Pace {
     pub latency: Duration,
 }
 
-/// Answers range requests on `conn` from a linked engine until it closes.
-pub(crate) async fn serve(library: Library, conn: Connection, pace: Option<Pace>) {
+/// Answers range requests on `conn` from a linked engine (while `linked`
+/// says it is) until it closes.
+pub(crate) async fn serve(
+    library: Library,
+    conn: Connection,
+    linked: net::Linked,
+    pace: Option<Pace>,
+) {
+    let peer = net::key(&conn);
+    let slots = Arc::new(tokio::sync::Semaphore::new(SERVING));
     // When the paced link is next free.
     let free = Arc::new(tokio::sync::Mutex::new(tokio::time::Instant::now()));
-    while let Ok((send, recv)) = conn.accept_bi().await {
+    loop {
+        let Ok(slot) = slots.clone().acquire_owned().await else {
+            return;
+        };
+        let Ok((send, recv)) = conn.accept_bi().await else {
+            return;
+        };
         let (library, free) = (library.clone(), free.clone());
+        let allowed = linked(&peer);
         tokio::spawn(async move {
-            if let Err(err) = answer(&library, send, recv, pace, &free).await {
-                tracing::debug!(%err, "files: range not sent");
+            let answered = answer(&library, allowed, send, recv, pace, &free);
+            match tokio::time::timeout(STALL, answered).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => tracing::debug!(%err, "files: range not sent"),
+                Err(_) => tracing::debug!("files: range not taken in time"),
             }
+            drop(slot);
         });
     }
 }
 
 async fn answer(
     library: &Library,
+    allowed: bool,
     mut send: SendStream,
     mut recv: RecvStream,
     pace: Option<Pace>,
     free: &tokio::sync::Mutex<tokio::time::Instant>,
 ) -> Result<(), String> {
     let range: Range = read(&mut recv).await?;
+    if !allowed {
+        write(&mut send, &Err::<u64, _>("not linked")).await?;
+        return send.finish().map_err(|e| e.to_string());
+    }
     let library = library.clone();
     let found = tokio::task::spawn_blocking(move || -> io::Result<(u64, Vec<u8>)> {
         let path = library
@@ -208,10 +235,12 @@ async fn connect(
     let remote = Remote {
         conn,
         id,
+        len,
         runtime,
         state: Mutex::new(Fetched {
             chunks: HashMap::from([(0, Chunk::Here(first.into()))]),
             wanted: 0..0,
+            fetches: 0,
         }),
         arrived: Condvar::new(),
     };
@@ -223,6 +252,8 @@ async fn connect(
 struct Remote {
     conn: Connection,
     id: i64,
+    /// The file's size when it was opened.
+    len: u64,
     runtime: Handle,
     state: Mutex<Fetched>,
     arrived: Condvar,
@@ -233,11 +264,15 @@ struct Fetched {
     chunks: HashMap<u64, Chunk>,
     /// The chunks to fetch, in order.
     wanted: std::ops::Range<u64>,
+    /// Fetches started, numbering each [`Chunk::Coming`].
+    fetches: u64,
 }
 
 enum Chunk {
-    Coming,
+    /// Being fetched by fetch number `n`; a later one replaces it.
+    Coming(u64),
     Here(Arc<[u8]>),
+    /// Read as an error, and fetched again if read again.
     Failed(String),
 }
 
@@ -246,17 +281,21 @@ impl Remote {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Wants chunks `at ..= at + ahead` (of a file `len` long), keeping
-    /// those from `at - 1` on and dropping the rest but the first and last,
-    /// which every decoder probing the file reads.
-    fn want(self: &Arc<Self>, at: u64, ahead: u64, len: u64) {
-        let end = len.div_ceil(CHUNK);
+    /// Wants chunks `at ..= at + ahead`, keeping those from `at - 1` on and
+    /// dropping the rest but the first and last, which every decoder probing
+    /// the file reads, and those still coming (they hold the link). Failed
+    /// ones wanted again are fetched again.
+    fn want(self: &Arc<Self>, at: u64, ahead: u64) {
+        let end = self.len.div_ceil(CHUNK);
         let keep = at.saturating_sub(1)..=at + AHEAD;
         let mut state = self.state();
-        state
-            .chunks
-            .retain(|&i, _| keep.contains(&i) || i == 0 || i + 1 == end);
-        state.wanted = at..(at + ahead + 1).min(end);
+        let wanted = at..(at + ahead + 1).min(end);
+        state.chunks.retain(|&i, chunk| match chunk {
+            Chunk::Coming(_) => true,
+            Chunk::Failed(_) if wanted.contains(&i) => false,
+            _ => keep.contains(&i) || i == 0 || i + 1 == end,
+        });
+        state.wanted = wanted;
         self.fill(&mut state);
     }
 
@@ -266,7 +305,7 @@ impl Remote {
     fn fill(self: &Arc<Self>, state: &mut Fetched) {
         let coming = |state: &Fetched| {
             let chunks = state.chunks.values();
-            chunks.filter(|c| matches!(c, Chunk::Coming)).count()
+            chunks.filter(|c| matches!(c, Chunk::Coming(_))).count()
         };
         for i in state.wanted.clone() {
             if i > state.wanted.start && coming(state) >= IN_FLIGHT {
@@ -275,13 +314,21 @@ impl Remote {
             if state.chunks.contains_key(&i) {
                 continue;
             }
-            state.chunks.insert(i, Chunk::Coming);
+            state.fetches += 1;
+            let n = state.fetches;
+            state.chunks.insert(i, Chunk::Coming(n));
             let remote = self.clone();
             self.runtime.spawn(async move {
                 let fetched = fetch(&remote.conn, remote.id, i * CHUNK, CHUNK as u32).await;
                 let mut state = remote.state();
-                if let Some(chunk @ Chunk::Coming) = state.chunks.get_mut(&i) {
+                if let Some(chunk @ Chunk::Coming(_)) = state.chunks.get_mut(&i)
+                    && matches!(chunk, Chunk::Coming(m) if *m == n)
+                {
                     *chunk = match fetched {
+                        // Bytes of another file would be spliced into this one.
+                        Ok((size, _)) if size != remote.len => {
+                            Chunk::Failed("the file changed on the linked engine".into())
+                        }
                         Ok((_, bytes)) => Chunk::Here(bytes.into()),
                         Err(err) => Chunk::Failed(err),
                     };
@@ -308,7 +355,7 @@ impl Remote {
                         err.clone(),
                     ));
                 }
-                Some(Chunk::Coming) if !left.is_zero() => {
+                Some(Chunk::Coming(_)) if !left.is_zero() => {
                     state = self
                         .arrived
                         .wait_timeout(state, left)
@@ -355,7 +402,7 @@ impl Read for Reader {
             0
         };
         self.last = at;
-        self.remote.want(at, ahead, self.len);
+        self.remote.want(at, ahead);
         let chunk = self.remote.chunk(at)?;
         let from = (self.pos - at * CHUNK) as usize;
         let Some(bytes) = chunk.get(from..).filter(|b| !b.is_empty()) else {
@@ -365,6 +412,13 @@ impl Read for Reader {
         buf[..n].copy_from_slice(&bytes[..n]);
         self.pos += n as u64;
         Ok(n)
+    }
+}
+
+impl Drop for Reader {
+    /// Stops reading ahead for it (another reader of the track may want on).
+    fn drop(&mut self) {
+        self.remote.state().wanted = 0..0;
     }
 }
 
@@ -468,15 +522,80 @@ mod tests {
 
     /// The owner (serving `library` at `pace`) and the reader, connected.
     async fn pair(library: Library, pace: Option<Pace>) -> (Net, Net) {
+        pair_while(library, pace, Arc::default()).await
+    }
+
+    /// [`pair`], the reader linked unless `unlinked`.
+    async fn pair_while(
+        library: Library,
+        pace: Option<Pace>,
+        unlinked: Arc<std::sync::atomic::AtomicBool>,
+    ) -> (Net, Net) {
         let (owner, reader) = (endpoint(1).await, endpoint(2).await);
         let serving = owner.clone();
+        let linked: net::Linked =
+            Arc::new(move |_| !unlinked.load(std::sync::atomic::Ordering::Relaxed));
         tokio::spawn(async move {
             while let Some((alpn, conn)) = serving.accept().await {
                 assert_eq!(alpn, Alpn::Files);
-                tokio::spawn(serve(library.clone(), conn, pace));
+                tokio::spawn(serve(library.clone(), conn, linked.clone(), pace));
             }
         });
         (owner, reader)
+    }
+
+    /// Reads `len` bytes at `at`.
+    fn read_at(r: &mut Reader, at: u64, len: usize) -> io::Result<Vec<u8>> {
+        let mut bytes = vec![0; len];
+        r.seek(SeekFrom::Start(at))?;
+        r.read_exact(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_engine_unlinked_while_reading_gets_no_more() {
+        let (library, dir) = library("unlinked", &[("a.wav", wav(5))]).await;
+        let id = ids(&library)[0];
+        let unlinked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (owner, reader) = pair_while(library, None, unlinked.clone()).await;
+        let stream = open(&owner, &reader, id).await.unwrap();
+        unlinked.store(true, std::sync::atomic::Ordering::Relaxed);
+        let (_, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
+        let err = read.expect_err("read after unlinking");
+        assert!(err.to_string().contains("not linked"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_range_is_asked_for_again() {
+        let file = wav(5);
+        let (library, dir) = library("again", &[("a.wav", file.clone())]).await;
+        let id = ids(&library)[0];
+        let (owner, reader) = pair(library, None).await;
+        let stream = open(&owner, &reader, id).await.unwrap();
+        let path = dir.join("music/a.wav");
+        let moved = dir.join("a.wav");
+        std::fs::rename(&path, &moved).unwrap();
+        let (stream, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
+        read.expect_err("read while the file is away");
+        std::fs::rename(&moved, &path).unwrap();
+        let (_, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
+        let at = (10 * CHUNK) as usize;
+        assert_eq!(read.unwrap(), file[at..at + 10]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_changed_on_its_owner_fails_rather_than_mixing() {
+        let (library, dir) = library("changed", &[("a.wav", wav(5))]).await;
+        let id = ids(&library)[0];
+        let (owner, reader) = pair(library, None).await;
+        let stream = open(&owner, &reader, id).await.unwrap();
+        std::fs::write(dir.join("music/a.wav"), wav(6)).unwrap();
+        let (_, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
+        let err = read.expect_err("read of a changed file");
+        assert!(err.to_string().contains("changed"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     async fn open(owner: &Net, reader: &Net, id: i64) -> Result<Reader, String> {

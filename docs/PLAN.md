@@ -771,7 +771,9 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   length + JSON), the answer `{"Ok": file size}` or `{"Err": why}`, then up to
   `len` raw bytes (fewer only at the end) and the stream's end. The owner
   serves only its own present tracks, by id (`Library::own_file`), never a
-  path, ranges up to 1 MiB, and only to linked engines (the endpoint's gate).
+  path, and only to linked engines: the endpoint's gate at the handshake,
+  then every range, so an engine unlinked mid-track gets no more. Ranges are
+  at most 64 KiB, 8 answered at once a connection, each within 8 s.
   Originals only; transcoding is #244.
 - **Reader:** 64 KiB ranges; reading straight through fetches up to 2 MiB
   ahead (32 ranges, ~16 s of CD FLAC), 4 in flight at once, lowest first: 32
@@ -780,24 +782,31 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   fetches only what it reads; the range being waited for is always fetched.
   The first and last ranges stay (every decoder plugin probes them), and the
   plugins tried in turn share one connection. A range taking over 8 s is a
-  lost link. Preloads now open on an opener thread beside the decode
-  thread (`Feeder::open_aside`), so opening the next track, from a disk or a
-  linked engine, never starves the 0.5 s output buffer. One long-lived
-  thread, not one per preload: a thread each grew the `soak.mjs play` RSS
-  without end (100 → 164 MB in 7 min, glibc arenas); with one it stays flat
-  (118 MB after 7 min, the base commit 154 MB).
+  lost link; a failed range is asked for again when read again, a late
+  answer to a range asked for since is dropped, and a range whose answer
+  gives another file size fails (the file changed on its owner: no
+  splicing). Fetches still in flight count against the 4 after a seek, and
+  a reader dropped (a skip) stops reading ahead.
+- **Opening off the decode thread:** tracks asked for and preloads open (and
+  move to their start) on two long-lived threads beside the decode thread
+  (`audio::opener`), so a dial or a slow disk never starves the 0.5 s output
+  buffer nor holds up stop, skip or seek. A preload still opening at the end
+  of a track gets 100 ms; then the track ends and the engine loads the next
+  (a gap, not a freeze). Long-lived threads, not one per open: a thread each
+  grew the `soak.mjs play` RSS without end (100 → 164 MB in 7 min, glibc
+  arenas); with long-lived ones it stays flat.
 - **Slow link** (`files::tests::slow_link_buffering`, ignored; a paced link,
   each range answered `latency` late; 20 s tracks at CD bitrate, 1411 kb/s,
   more than CD FLAC ~900 kb/s; decoding modelled into the real 0.5 s ring
-  buffer; two runs on the desktop, debug build):
+  buffer; three runs on the desktop, debug build):
 
 | Link | Open | Start | Preload open | Seek | Underruns | Starved |
 |---|---|---|---|---|---|---|
 | 100 Mb/s, 1 ms (LAN) | 0.02–0.03 s | 0.04 s | 0.03 s | 0.06–0.07 s | 0 | 0 |
-| 8 Mb/s, 20 ms | 0.17 s | 0.30–0.37 s | 0.17–0.43 s | 0.56–0.62 s | 0 | 0 |
-| 2 Mb/s, 50 ms | 0.6–1.6 s | 1.6–2.5 s | 0.6–1.6 s | 2.4–3.4 s | 1 | 0.3–0.5 s |
-| 1.6 Mb/s, 50 ms | 1.0–2.0 s | 2.0–3.1 s | 1.4–2.0 s | 2.7–4.3 s | 2–3 | 0.2–1.2 s |
-| 1.2 Mb/s, 50 ms (below the bitrate) | 0.9–1.8 s | 1.4–2.2 s | 2.7 s | 3.1–3.6 s | 50 | 6–7 s of 25 |
+| 8 Mb/s, 20 ms | 0.17–0.30 s | 0.30–0.43 s | 0.17–0.43 s | 0.54–0.62 s | 0 | 0 |
+| 2 Mb/s, 50 ms | 0.6–1.6 s | 1.6–2.5 s | 0.6–1.6 s | 2.4–3.4 s | 0–1 | 0–0.5 s |
+| 1.6 Mb/s, 50 ms | 0.7–2.0 s | 1.4–3.1 s | 1.4–2.0 s | 2.7–4.3 s | 0–3 | 0–1.2 s |
+| 1.2 Mb/s, 50 ms (below the bitrate) | 0.9–1.8 s | 1.4–3.5 s | 2.2–2.7 s | 3.1–3.6 s | 20–50 | 2–7 s of 25 |
 
   On a LAN it is as quick as a local file. Below ~3× the bitrate a seek
   takes seconds and the start of a track may stutter once; below the bitrate
@@ -810,7 +819,10 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   next ("no linked engine with it is reachable"), and B stops.
 - Not done: FFmpeg-only formats (WMA, APE…) don't stream (FFmpeg reads files
   only); a reader blocked on a range doesn't jump ahead of reads in flight
-  (QUIC stream priorities could), which is most of a slow seek.
+  (QUIC stream priorities could), which is most of a slow seek. A seek in a
+  playing track, and a read waiting on a range, still run on the decode
+  thread: on a stalled link, stop and skip wait for them (up to 8 s; pause
+  doesn't, it goes to the output).
 
 ## Phase 1 plan: desktop player
 
