@@ -84,7 +84,7 @@ pub const ALBUM_KEY: &str = "coalesce(album_artist, artist, '') || char(31) || c
 /// An album's cover, in a query grouping `tracks` by [`ALBUM_KEY`]: the first track's that
 /// has one, in the order the album page lists its tracks (disc, track, path), so
 /// the card and the page agree even when the tracks carry different covers.
-pub const ALBUM_ART: &str = "(SELECT f.art FROM tracks f WHERE f.art IS NOT NULL
+pub const ALBUM_ART: &str = "(SELECT f.art FROM tracks f WHERE f.art IS NOT NULL AND f.shadowed = 0
          AND coalesce(f.album_artist, f.artist, '') || char(31) || coalesce(f.album, '')
              = coalesce(tracks.album_artist, tracks.artist, '') || char(31) || coalesce(tracks.album, '')
          ORDER BY coalesce(f.disc_no, 1), coalesce(f.track_no, 0), f.path LIMIT 1)";
@@ -558,9 +558,17 @@ mod tests {
             )
             .unwrap();
         }
+        // A hidden duplicate (another device's copy) never gives the cover, as the page doesn't list it.
+        conn.execute(
+            "INSERT INTO tracks (path, size, mtime, album, track_no, art, shadowed) VALUES ('/e', 0, 0, 'Gemini', 0, 'hidden', 1)",
+            [],
+        )
+        .unwrap();
         let art: Option<String> = conn
             .query_row(
-                &format!("SELECT {ALBUM_KEY} AS k, {ALBUM_ART} FROM tracks GROUP BY k"),
+                &format!(
+                    "SELECT {ALBUM_KEY} AS k, {ALBUM_ART} FROM tracks WHERE shadowed = 0 GROUP BY k"
+                ),
                 [],
                 |r| r.get(1),
             )
