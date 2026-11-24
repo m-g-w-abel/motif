@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { CHOICES, GESTURES, HOLD, Press, SLOP, SWIPE, dragValue, gesture, mapped, type Swipe } from './gestures';
+import { CHOICES, GESTURES, HOLD, Press, SLOP, SWIPE, dragValue, gesture, mapped, viewMap, type Swipe } from './gestures';
 
 describe('Press', () => {
   it('picks no axis for small movements', () => {
@@ -132,6 +132,13 @@ describe('mapped', () => {
     expect(mapped(bad, 'view')).toEqual(GESTURES.view);
     expect(mapped(null, 'bar')).toEqual(GESTURES.bar);
     expect(mapped('x', 'bar')).toEqual(GESTURES.bar);
+  });
+});
+
+describe('viewMap', () => {
+  it('keeps swipe left (forward) on the Library home only, so a back swipe never locks to it elsewhere', () => {
+    expect(viewMap(GESTURES.view, true)).toEqual({ 'swipe-right': 'back', 'swipe-left': 'forward' });
+    expect(viewMap(GESTURES.view, false)).toEqual({ 'swipe-right': 'back' });
   });
 });
 

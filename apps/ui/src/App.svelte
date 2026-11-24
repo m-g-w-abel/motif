@@ -14,7 +14,7 @@
   import { installLayoutFiles } from './lib/layout/install';
   import { LayoutStore } from './lib/layout/store.svelte';
   import { SettingsStore } from './lib/settings.svelte';
-  import { gesture, mapped } from './lib/gestures';
+  import { gesture, mapped, viewMap } from './lib/gestures';
   import { SYSTEM_THEMES, themeById } from './lib/themes';
   import { FONT_LIST } from './lib/themeFile';
   import { UserThemes } from './lib/userThemes.svelte';
@@ -426,7 +426,7 @@
     // The screen follows the finger, when there is somewhere to go back to.
     gesture(
       e,
-      mapped(settings.current.gestures, 'view'),
+      viewMap(mapped(settings.current.gestures, 'view'), !settingsView.group && views.top.kind === 'home'),
       { back, forward },
       swipeBackDrag,
     );

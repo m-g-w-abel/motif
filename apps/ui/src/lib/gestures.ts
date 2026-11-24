@@ -47,6 +47,13 @@ export const CHOICES: Record<Surface, Partial<Record<Gesture, Action[]>>> = {
   view: { 'swipe-right': ['back'], 'swipe-left': ['forward'] },
 };
 
+/** The music area's gestures where `home` (the Library home, not Settings) is showing: forward belongs there alone, as a swipe locks to the first way it goes. */
+export function viewMap(map: GestureMap, home: boolean): GestureMap {
+  const own = { ...map };
+  if (!home) delete own['swipe-left'];
+  return own;
+}
+
 /** The user's remappings (Settings), per surface: an action, or none to turn the gesture off. */
 export type Overrides = Partial<Record<Surface, Partial<Record<Gesture, Action | 'none'>>>>;
 
