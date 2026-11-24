@@ -105,6 +105,9 @@ control isn't an add-on: it's the normal code path.
 - Linked engines share their catalogs both ways as owner-versioned deltas
   in the same SQLite tables, so search and sort cover every device; the
   same audio on several devices is one track (dedupe by audio hash).
+- Songs held only by a linked engine play by streaming the original from
+  it: byte-range reads over iroh with ordered read-ahead, so decoders seek
+  in it as in a file and the next track still starts gaplessly.
 - An **MPD server**, so existing MPD clients can drive Motif.
 - Scrobbling to Last.fm, ListenBrainz and Libre.fm, with an offline queue.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now

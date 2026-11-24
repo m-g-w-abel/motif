@@ -8,6 +8,9 @@
 //! on several engines is one track: every other copy is `shadowed`, a local
 //! copy winning, then the smallest key.
 
+use std::path::PathBuf;
+
+use protocol::TrackRef;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
@@ -254,6 +257,55 @@ impl Library {
         }
         Ok(())
     }
+
+    /// The linked engines holding `track` (a catalog row's own reference,
+    /// or the same audio), each with its id for the track there.
+    pub fn copies(&self, track: &TrackRef) -> Vec<(String, i64)> {
+        let conn = self.db();
+        let hash = track.keys.audio_hash.as_deref().unwrap_or("");
+        let found = conn
+            .prepare(
+                "SELECT path FROM tracks WHERE device != '' AND missing = 0
+                 AND (path = ?1 OR audio_hash = nullif(?2, '')) ORDER BY device",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map(params![track.id, hash], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            });
+        let found = found.unwrap_or_else(|err| {
+            tracing::warn!(%err, "can't look for linked copies");
+            Vec::new()
+        });
+        // A reference from elsewhere, matched by its other keys or tags.
+        let located = crate::sync::locate(&conn, &track.into());
+        let mut copies: Vec<_> = found
+            .iter()
+            .chain(&located)
+            .filter_map(|path| {
+                let (device, id) = path.strip_prefix("remote:")?.split_once(':')?;
+                Some((device.to_string(), id.parse().ok()?))
+            })
+            .collect();
+        copies.sort();
+        copies.dedup();
+        copies
+    }
+
+    /// The file of this engine's own track `id`, if it is here: what a
+    /// linked engine may read ([`Self::copies`]).
+    pub fn own_file(&self, id: i64) -> Option<PathBuf> {
+        self.db()
+            .query_row(
+                "SELECT path FROM tracks WHERE id = ?1 AND device = '' AND missing = 0
+                 AND problem IS NULL",
+                [id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .map(PathBuf::from)
+    }
 }
 
 fn seen(conn: &Connection, device: &str) -> Result<Seen> {
@@ -326,9 +378,7 @@ fn track(r: &Row<'_>, at: usize) -> rusqlite::Result<CatalogTrack> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use protocol::{LibraryQuery, LibraryTrack, QueryResult, TrackFilter};
+    use protocol::{LibraryQuery, LibraryTrack, QueryResult, TrackFilter, TrackRef};
 
     use super::*;
 
@@ -446,6 +496,72 @@ mod tests {
 
     fn keys(keys: &[&str]) -> Vec<String> {
         keys.iter().map(|k| k.to_string()).collect()
+    }
+
+    fn id(engine: &Engine, title: &str) -> i64 {
+        engine
+            .library
+            .db()
+            .query_row(
+                "SELECT id FROM tracks WHERE path = ?1",
+                [engine.path(title)],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn reference(id: &str, hash: Option<&str>) -> TrackRef {
+        TrackRef {
+            source: "local".into(),
+            id: id.into(),
+            keys: protocol::TrackKeys {
+                audio_hash: hash.map(str::to_string),
+                ..Default::default()
+            },
+            title: None,
+            artist: None,
+            album: None,
+            duration_ms: None,
+        }
+    }
+
+    #[test]
+    fn linked_copies_are_found_by_reference_and_files_served_only_by_own_id() {
+        let a = engine("a", &[("A1", Some("h1")), ("A2", Some("h2"))]);
+        let c = engine("c", &[("C1", Some("h1"))]);
+        let b = engine("b", &[("B1", Some("h1"))]);
+        give(&a, &b);
+        give(&c, &b);
+        let (a1, a2, c1) = (id(&a, "A1"), id(&a, "A2"), id(&c, "C1"));
+        // By the remote row's own path, and by audio hash from a local one.
+        assert_eq!(
+            b.library
+                .copies(&reference(&format!("remote:a:{a2}"), None)),
+            [("a".to_string(), a2)]
+        );
+        assert_eq!(
+            b.library.copies(&reference(&b.path("B1"), Some("h1"))),
+            [("a".to_string(), a1), ("c".to_string(), c1)]
+        );
+        assert!(
+            b.library
+                .copies(&reference("/elsewhere.flac", None))
+                .is_empty()
+        );
+        // Only this engine's own, present files, by id.
+        assert_eq!(a.library.own_file(a1), Some(PathBuf::from(a.path("A1"))));
+        let remote_row: i64 = b
+            .library
+            .db()
+            .query_row(
+                "SELECT id FROM tracks WHERE device = 'a' LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(b.library.own_file(remote_row), None);
+        a.sql(&format!("UPDATE tracks SET missing = 1 WHERE id = {a1}"));
+        assert_eq!(a.library.own_file(a1), None);
     }
 
     #[test]

@@ -12,7 +12,6 @@ pub mod ogg;
 pub mod pipeline;
 
 use std::{
-    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -32,6 +31,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use bands::Analyser;
 use decoder::{Decoder, Plugin};
 use pipeline::{Playhead, Stream, Timeline};
+
+use crate::Source;
 
 /// Reported by the audio threads to the engine.
 #[derive(Debug)]
@@ -76,14 +77,14 @@ enum Command {
     Load {
         token: u64,
         item: u64,
-        path: PathBuf,
+        path: Source,
         start: Duration,
         gain: f32,
     },
     Preload {
         token: u64,
         item: u64,
-        path: PathBuf,
+        path: Source,
         gain: f32,
     },
     /// Changes the ReplayGain factor of the loaded or preloaded `token`.
@@ -168,8 +169,28 @@ impl Audio {
 
         let timeline = Arc::new(Mutex::new(Timeline::new(rate)));
         let (commands, commands_rx) = mpsc::channel();
+        // One thread opens every preload: a thread each would leave decoder
+        // buffers spread over a malloc arena each, and memory growing.
+        let (opener, requests) = mpsc::channel::<OpenRequest>();
+        let wanted = Arc::new(AtomicU64::new(0));
+        {
+            let wanted = wanted.clone();
+            thread::Builder::new()
+                .name("audio-open".into())
+                .spawn(move || {
+                    for (token, source, plugins, done) in requests {
+                        // Skipped once another preload or none is wanted.
+                        if wanted.load(Ordering::Relaxed) == token {
+                            let _ = done.send(decoder::open(&source, &plugins));
+                        }
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+        }
         let feeder = Feeder {
             commands: commands_rx,
+            opener,
+            wanted,
             producer,
             consumer,
             shared: shared.clone(),
@@ -199,7 +220,7 @@ impl Audio {
     /// Starts decoding queue item `item` from `start`, replacing whatever was
     /// playing, at ReplayGain factor `gain`. Returns the token that
     /// [`Playhead::token`] reports while it is audible.
-    pub fn load(&mut self, item: u64, path: PathBuf, start: Duration, gain: f32) -> u64 {
+    pub fn load(&mut self, item: u64, path: Source, start: Duration, gain: f32) -> u64 {
         let token = self.token();
         let _ = self.commands.send(Command::Load {
             token,
@@ -212,7 +233,7 @@ impl Audio {
     }
 
     /// Prepares `item` to follow the current track without a gap.
-    pub fn preload(&mut self, item: u64, path: PathBuf, gain: f32) -> u64 {
+    pub fn preload(&mut self, item: u64, path: Source, gain: f32) -> u64 {
         let token = self.token();
         let _ = self.commands.send(Command::Preload {
             token,
@@ -448,6 +469,9 @@ fn build<T: SizedSample + FromSample<f32>>(
 /// splices the preloaded one in at the exact sample when it ends.
 struct Feeder {
     commands: mpsc::Receiver<Command>,
+    opener: mpsc::Sender<OpenRequest>,
+    /// The preload the opener thread should open.
+    wanted: Arc<AtomicU64>,
     producer: Producer<f32>,
     consumer: Arc<Mutex<Consumer<f32>>>,
     shared: Arc<Shared>,
@@ -465,13 +489,38 @@ struct Loaded {
     decoder: Box<dyn Decoder>,
 }
 
+type Decoded = Result<Box<dyn Decoder>, String>;
+/// A preload for the opener thread: its token, source, plugins, and where
+/// the result goes.
+type OpenRequest = (u64, Source, Vec<&'static Plugin>, mpsc::Sender<Decoded>);
+
+/// A preload being opened by [`Feeder::open_aside`]; dropped, it is no
+/// longer wanted.
+struct Opening {
+    token: u64,
+    item: u64,
+    gain: f32,
+    opened: mpsc::Receiver<Decoded>,
+    wanted: Arc<AtomicU64>,
+}
+
+impl Drop for Opening {
+    fn drop(&mut self) {
+        let _ = self
+            .wanted
+            .compare_exchange(self.token, 0, Ordering::Relaxed, Ordering::Relaxed);
+    }
+}
+
 impl Feeder {
     fn run(mut self) {
         let mut current: Option<Loaded> = None;
         let mut next: Option<Loaded> = None;
-        // A preload waits to be opened until the buffer is full, so opening a
-        // file (slow on a busy disk) never starves the current track.
-        let mut next_request: Option<(u64, u64, PathBuf, f32)> = None;
+        // A preload waits to be opened until the buffer is full, then opens
+        // on a thread of its own, so opening a file (slow on a busy disk, or
+        // from a linked engine) never starves the current track.
+        let mut next_request: Option<(u64, u64, Source, f32)> = None;
+        let mut opening: Option<Opening> = None;
         let mut stream = Stream::new(self.rate, self.channels);
         stream.reset(self.shared.played.load(Ordering::Acquire));
         let mut decoded = Vec::new();
@@ -486,7 +535,17 @@ impl Feeder {
                 // Filled since the last flush: from now on running dry is an underrun.
                 self.shared.armed.store(true, Ordering::Relaxed);
                 if let Some((token, item, path, gain)) = next_request.take() {
-                    next = self.open(token, item, &path, gain);
+                    opening = Some(self.open_aside(token, item, path, gain));
+                }
+            }
+            if let Some(open) = &opening {
+                match open.opened.try_recv() {
+                    Ok(opened) => {
+                        next = self.loaded(open.token, open.item, open.gain, opened);
+                        opening = None;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                    Err(mpsc::TryRecvError::Disconnected) => opening = None,
                 }
             }
             let busy = current.is_some() || sent < pending.len();
@@ -522,6 +581,7 @@ impl Feeder {
                     self.flush(&mut stream, &mut pending, &mut sent);
                     next = None;
                     next_request = None;
+                    opening = None;
                     level.jump(gain);
                     current = self.open(token, item, &path, gain).and_then(|mut loaded| {
                         let reached = if start.is_zero() {
@@ -544,6 +604,7 @@ impl Feeder {
                     gain,
                 }) => {
                     next = None;
+                    opening = None;
                     next_request = Some((token, item, path, gain));
                 }
                 Some(Command::Gain { token, gain }) => {
@@ -560,10 +621,16 @@ impl Feeder {
                     {
                         request.3 = gain;
                     }
+                    if let Some(open) = &mut opening
+                        && open.token == token
+                    {
+                        open.gain = gain;
+                    }
                 }
                 Some(Command::ClearPreload) => {
                     next = None;
                     next_request = None;
+                    opening = None;
                 }
                 Some(Command::Seek(to)) => {
                     if let Some(loaded) = &mut current {
@@ -588,6 +655,7 @@ impl Feeder {
                     current = None;
                     next = None;
                     next_request = None;
+                    opening = None;
                 }
                 Some(Command::Wake) | None => {}
             }
@@ -613,6 +681,12 @@ impl Feeder {
                         // Track done: the preloaded one starts on the very next frame.
                         if let Some((token, item, path, gain)) = next_request.take() {
                             next = self.open(token, item, &path, gain);
+                        }
+                        // Still opening: the gap is however long that takes.
+                        if let Some(open) = opening.take()
+                            && let Ok(opened) = open.opened.recv()
+                        {
+                            next = self.loaded(open.token, open.item, open.gain, opened);
                         }
                         current = next.take();
                         level.next_track();
@@ -655,9 +729,28 @@ impl Feeder {
         }
     }
 
-    fn open(&self, token: u64, item: u64, path: &std::path::Path, gain: f32) -> Option<Loaded> {
+    fn open(&self, token: u64, item: u64, path: &Source, gain: f32) -> Option<Loaded> {
         let plugins = self.plugins.lock().map(|p| p.clone()).unwrap_or_default();
-        decoder::open(path, &plugins)
+        self.loaded(token, item, gain, decoder::open(path, &plugins))
+    }
+
+    /// Opens a preload on the opener thread.
+    fn open_aside(&self, token: u64, item: u64, path: Source, gain: f32) -> Opening {
+        let plugins = self.plugins.lock().map(|p| p.clone()).unwrap_or_default();
+        let (done, opened) = mpsc::channel();
+        self.wanted.store(token, Ordering::Relaxed);
+        let _ = self.opener.send((token, path, plugins, done));
+        Opening {
+            token,
+            item,
+            gain,
+            opened,
+            wanted: self.wanted.clone(),
+        }
+    }
+
+    fn loaded(&self, token: u64, item: u64, gain: f32, opened: Decoded) -> Option<Loaded> {
+        opened
             .map(|decoder| Loaded {
                 token,
                 item,
@@ -773,6 +866,8 @@ mod tests {
         let consumer = Arc::new(Mutex::new(consumer));
         let mut feeder = Feeder {
             commands: mpsc::channel().1,
+            opener: mpsc::channel().0,
+            wanted: Arc::default(),
             producer,
             consumer: consumer.clone(),
             shared: Arc::new(Shared::new()),

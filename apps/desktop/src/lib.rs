@@ -186,8 +186,13 @@ async fn start_engine(
         None => None,
     };
     let data_dir = data_dir.filter(|_| library.is_some());
+    let pairing = match &data_dir {
+        Some(dir) => server::Pairing::open(dir)?,
+        None => server::Pairing::in_memory(),
+    };
     let engine = Engine::spawn(server::LibraryResolver {
         library: library.as_ref().map(|(library, _)| library.clone()),
+        pairing: Some(pairing.clone()),
     });
     if let Some(dir) = &data_dir {
         tauri::async_runtime::spawn(server::settings::keep(
@@ -223,10 +228,6 @@ async fn start_engine(
         integrations.subscribe(),
     );
     let port_file = data_dir.as_ref().map(|dir| dir.join("desktop-port"));
-    let pairing = match &data_dir {
-        Some(dir) => server::Pairing::open(dir)?,
-        None => server::Pairing::in_memory(),
-    };
     let config = server::Config {
         // Loopback; pairing opens the LAN on the same port (server::bind).
         addr: SocketAddr::from(([127, 0, 0, 1], stable_port(port_file.as_deref()))),

@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use crate::Source;
 use symphonia::core::{
     codecs::{
         CodecParameters,
@@ -35,7 +36,7 @@ pub trait Decoder: Send {
 /// A decoder implementation the engine can pick for a file.
 pub struct Plugin {
     pub name: &'static str,
-    pub open: fn(&Path) -> Result<Box<dyn Decoder>, String>,
+    pub open: fn(&Source) -> Result<Box<dyn Decoder>, String>,
 }
 
 pub const SYMPHONIA: Plugin = Plugin {
@@ -50,7 +51,11 @@ pub const OPUS: Plugin = Plugin {
 
 pub const FFMPEG: Plugin = Plugin {
     name: "ffmpeg",
-    open: |path| Ok(Box::new(Ffmpeg::open(path)?)),
+    open: |source| match source {
+        Source::File(path) => Ok(Box::new(Ffmpeg::open(path)?)),
+        // shortcut: FFmpeg reads files only; feed it a stream on stdin if a format only it plays must stream.
+        Source::Stream { .. } => Err("plays files on this device only".into()),
+    },
 };
 
 /// Every plugin built for this platform, in the default order: specialised
@@ -64,12 +69,12 @@ pub fn all() -> Vec<&'static Plugin> {
     plugins
 }
 
-/// Opens `path` with the first plugin in `plugins` that can. The error lists
+/// Opens `source` with the first plugin in `plugins` that can. The error lists
 /// why each one couldn't.
-pub fn open(path: &Path, plugins: &[&Plugin]) -> Result<Box<dyn Decoder>, String> {
+pub fn open(source: &Source, plugins: &[&Plugin]) -> Result<Box<dyn Decoder>, String> {
     let mut reasons = Vec::new();
     for plugin in plugins {
-        match (plugin.open)(path) {
+        match (plugin.open)(source) {
             Ok(decoder) => return Ok(decoder),
             Err(reason) => reasons.push(format!("{}: {reason}", plugin.name)),
         }
@@ -87,12 +92,15 @@ pub struct Symphonia {
     scratch: Vec<f32>,
 }
 
-/// Opens `path` with Symphonia's container readers and returns the reader,
+/// Opens `source` with Symphonia's container readers and returns the reader,
 /// its default audio track and that track's parameters.
-fn demux(path: &Path) -> Result<(Box<dyn FormatReader>, u32, AudioCodecParameters), String> {
-    let file = super::ogg::source(path).map_err(|e| e.to_string())?;
+fn demux(source: &Source) -> Result<(Box<dyn FormatReader>, u32, AudioCodecParameters), String> {
+    let file = super::ogg::source(source).map_err(|e| e.to_string())?;
     let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    // A stream has no extension: the probe goes by its content.
+    if let Source::File(path) = source
+        && let Some(ext) = path.extension().and_then(|e| e.to_str())
+    {
         hint.with_extension(ext);
     }
     let stream = MediaSourceStream::new(file, Default::default());
@@ -151,8 +159,8 @@ fn seek_reader(
 }
 
 impl Symphonia {
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let (reader, track_id, params) = demux(path)?;
+    pub fn open(source: &Source) -> Result<Self, String> {
+        let (reader, track_id, params) = demux(source)?;
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(&params, &Default::default())
             .map_err(|e| e.to_string())?;
@@ -224,8 +232,8 @@ const OPUS_RATE: u32 = 48_000;
 const OPUS_MAX_FRAMES: usize = 5760;
 
 impl Opus {
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let (reader, track_id, params) = demux(path)?;
+    pub fn open(source: &Source) -> Result<Self, String> {
+        let (reader, track_id, params) = demux(source)?;
         if params.codec != CODEC_ID_OPUS {
             return Err("not Opus".into());
         }

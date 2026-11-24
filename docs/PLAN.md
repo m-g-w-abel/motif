@@ -753,6 +753,65 @@ passed on), when a link comes up and after each library change, and again
 - Not done: other engines' artwork (follow-up ticket; their tracks show the
   placeholder), playing them (#243) and the UI mark (#242).
 
+### Playing from linked engines (#243, 2026-11-24)
+
+`crates/server/src/files.rs`. The resolver (`LibraryResolver`) tries a file
+here, then a downloaded copy (none yet, the slot is kept), then a linked
+engine holding the track (`Library::copies`: the row's own `remote:` path or
+the same audio hash, directly linked engines only). Resolving never touches
+the network, so a queue restored before links are up keeps such tracks; the
+engine gets an `engine::Source::Stream` whose `open` dials on the decode
+thread, reachable engines first. Nothing reachable, or a link lost mid-track,
+fails that entry with the reason (`QueueItem.error`) and playback moves on or
+stops: never a hang, and never a silent end (a lost read is an error, not an
+end of file). The engine stays playback-only: it just reads a `ByteSource`
+(`Read + Seek` + length), as it would a file.
+- **Wire (`motif/files/1`):** a connection per playing track; each range is a
+  QUIC stream of its own: a `{id, offset, len}` frame (sync's framing: u32
+  length + JSON), the answer `{"Ok": file size}` or `{"Err": why}`, then up to
+  `len` raw bytes (fewer only at the end) and the stream's end. The owner
+  serves only its own present tracks, by id (`Library::own_file`), never a
+  path, ranges up to 1 MiB, and only to linked engines (the endpoint's gate).
+  Originals only; transcoding is #244.
+- **Reader:** 64 KiB ranges; reading straight through fetches up to 2 MiB
+  ahead (32 ranges, ~16 s of CD FLAC), 4 in flight at once, lowest first: 32
+  at once arrived in any order, so the one needed next came last (6 s to
+  start at 8 Mb/s, timeouts at 2 Mb/s). A jump (a seek probing the file)
+  fetches only what it reads; the range being waited for is always fetched.
+  The first and last ranges stay (every decoder plugin probes them), and the
+  plugins tried in turn share one connection. A range taking over 8 s is a
+  lost link. Preloads now open on an opener thread beside the decode
+  thread (`Feeder::open_aside`), so opening the next track, from a disk or a
+  linked engine, never starves the 0.5 s output buffer. One long-lived
+  thread, not one per preload: a thread each grew the `soak.mjs play` RSS
+  without end (100 → 164 MB in 7 min, glibc arenas); with one it stays flat
+  (118 MB after 7 min, the base commit 154 MB).
+- **Slow link** (`files::tests::slow_link_buffering`, ignored; a paced link,
+  each range answered `latency` late; 20 s tracks at CD bitrate, 1411 kb/s,
+  more than CD FLAC ~900 kb/s; decoding modelled into the real 0.5 s ring
+  buffer; two runs on the desktop, debug build):
+
+| Link | Open | Start | Preload open | Seek | Underruns | Starved |
+|---|---|---|---|---|---|---|
+| 100 Mb/s, 1 ms (LAN) | 0.02–0.03 s | 0.04 s | 0.03 s | 0.06–0.07 s | 0 | 0 |
+| 8 Mb/s, 20 ms | 0.17 s | 0.30–0.37 s | 0.17–0.43 s | 0.56–0.62 s | 0 | 0 |
+| 2 Mb/s, 50 ms | 0.6–1.6 s | 1.6–2.5 s | 0.6–1.6 s | 2.4–3.4 s | 1 | 0.3–0.5 s |
+| 1.6 Mb/s, 50 ms | 1.0–2.0 s | 2.0–3.1 s | 1.4–2.0 s | 2.7–4.3 s | 2–3 | 0.2–1.2 s |
+| 1.2 Mb/s, 50 ms (below the bitrate) | 0.9–1.8 s | 1.4–2.2 s | 2.7 s | 3.1–3.6 s | 50 | 6–7 s of 25 |
+
+  On a LAN it is as quick as a local file. Below ~3× the bitrate a seek
+  takes seconds and the start of a track may stutter once; below the bitrate
+  it can't keep up, which is what transcoding (#244) is for.
+- **Two engines** (`node scripts/linked.mjs`: two muted headless engines
+  linked through their pairing files, 25 s FLACs on A only): B starts A's
+  track in ~0.3 s, a seek holds, the next track follows gaplessly with no
+  underrun; killing A mid-track is reported on that track after its
+  buffered audio plus 8 s ("the linked engine stopped sending") and on the
+  next ("no linked engine with it is reachable"), and B stops.
+- Not done: FFmpeg-only formats (WMA, APE…) don't stream (FFmpeg reads files
+  only); a reader blocked on a range doesn't jump ahead of reads in flight
+  (QUIC stream priorities could), which is most of a slow seek.
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game

@@ -7,8 +7,10 @@
 //! It binds again when the relay settings change. Over each link's life it
 //! syncs playlists, plays and marks ([`net::Alpn::Sync`], sync.rs) and
 //! swaps catalogs ([`net::Alpn::Catalog`], catalog.rs) when they meet and
-//! after each change here; unlinking drops that engine's catalog. Connections for other purposes are
-//! refused until the features that use them exist.
+//! after each change here; unlinking drops that engine's catalog. It serves
+//! this engine's tracks to them ([`net::Alpn::Files`], files.rs).
+//! Connections for other purposes are refused until the features that use
+//! them exist.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -22,7 +24,7 @@ use net::{Alpn, Connection, Net};
 use protocol::{LibraryStatus, Reach};
 use tokio::task::JoinSet;
 
-use crate::{Pairing, catalog, pairing::relays, sync};
+use crate::{Pairing, catalog, files, pairing::relays, sync};
 
 // shortcut: a fixed retry; back off if unreachable engines cost battery.
 const RETRY: Duration = Duration::from_secs(60);
@@ -62,7 +64,7 @@ pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
             }
         };
         tracing::info!(relays = ?wanted, "iroh: started");
-        pairing.set_iroh_port(net.port());
+        pairing.set_net(Some(&net));
         let changed = states.wait_for(|s| s.net.links.is_empty() || relays(&s.net) != wanted);
         tokio::select! {
             // The endpoint closed under us: start again.
@@ -70,7 +72,7 @@ pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
             _ = changed => {}
         }
         net.close().await;
-        pairing.set_iroh_port(None);
+        pairing.set_net(None);
         for (key, _) in pairing.linked() {
             pairing.set_reach(&key, Reach::Unreachable);
         }
@@ -140,6 +142,9 @@ async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
                                 tracing::debug!(key = %net::key(&conn), %err, ?alpn, "can't keep in step");
                             }
                         });
+                    }
+                    (Alpn::Files, Some(library)) => {
+                        tasks.spawn(files::serve(library.clone(), conn, None));
                     }
                     _ => conn.close(2u32.into(), b"not yet"),
                 }

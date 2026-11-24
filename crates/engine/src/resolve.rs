@@ -1,15 +1,74 @@
-use std::path::PathBuf;
+use std::{
+    io::{self, Read, Seek},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use protocol::{ReplayGain, TrackRef};
 
 /// Something this device can play.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Playable {
-    /// A file and its ReplayGain values.
-    File(PathBuf, ReplayGain),
+    /// Audio and its ReplayGain values.
+    File(Source, ReplayGain),
     /// The UI's demo library, which has no audio; playback is simulated.
     // shortcut: goes with the demo library in phase 1 milestone 6.
     Simulated,
+}
+
+/// Where a track's bytes are.
+#[derive(Clone)]
+pub enum Source {
+    File(PathBuf),
+    /// Bytes from elsewhere (a linked engine), read as from a file. `name`
+    /// tells streams apart; `open` starts a reader at the beginning and is
+    /// called on the decode thread, so it may block on the network.
+    Stream {
+        name: String,
+        open: Opener,
+    },
+}
+
+/// Opens a [`Source::Stream`].
+pub type Opener = Arc<dyn Fn() -> io::Result<Box<dyn ByteSource>> + Send + Sync>;
+
+/// A seekable reader of a stream's bytes.
+pub trait ByteSource: Read + Seek + Send + Sync {
+    fn byte_len(&self) -> u64;
+}
+
+impl Source {
+    pub fn name(&self) -> String {
+        match self {
+            Source::File(path) => path.display().to_string(),
+            Source::Stream { name, .. } => name.clone(),
+        }
+    }
+}
+
+impl From<PathBuf> for Source {
+    fn from(path: PathBuf) -> Self {
+        Source::File(path)
+    }
+}
+
+impl std::fmt::Debug for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Source::File(path) => f.debug_tuple("File").field(path).finish(),
+            Source::Stream { name, .. } => f.debug_tuple("Stream").field(name).finish(),
+        }
+    }
+}
+
+impl PartialEq for Source {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Source::File(a), Source::File(b)) => a == b,
+            (Source::Stream { name: a, .. }, Source::Stream { name: b, .. }) => a == b,
+            _ => false,
+        }
+    }
 }
 
 /// Finds what on this device can play a [`TrackRef`]. The engine knows nothing
@@ -39,7 +98,7 @@ impl Resolver for LocalFiles {
             "local" => {
                 let path = PathBuf::from(&track.id);
                 if path.is_file() {
-                    Ok(Playable::File(path, ReplayGain::default()))
+                    Ok(Playable::File(path.into(), ReplayGain::default()))
                 } else {
                     Err(format!("file not found: {}", track.id))
                 }

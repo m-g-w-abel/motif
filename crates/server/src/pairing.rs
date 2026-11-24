@@ -123,6 +123,8 @@ struct Inner {
     /// How linked engines are reached now, by key; missing is unreachable.
     reach: HashMap<String, Reach>,
     iroh_port: Option<u16>,
+    /// The iroh endpoint while it runs, for streams from linked engines.
+    net: Option<net::Net>,
 }
 
 impl Pairing {
@@ -185,6 +187,7 @@ impl Pairing {
                 mpd_listening: false,
                 reach: HashMap::new(),
                 iroh_port: None,
+                net: None,
             }),
             state: watch::Sender::new(PairingState::default()),
         }));
@@ -264,12 +267,25 @@ impl Pairing {
         self.lock().iroh_port
     }
 
-    pub(crate) fn set_iroh_port(&self, port: Option<u16>) {
+    /// The iroh endpoint now running, if any.
+    pub(crate) fn net(&self) -> Option<net::Net> {
+        self.lock().net.clone()
+    }
+
+    pub(crate) fn set_net(&self, net: Option<&net::Net>) {
+        let port = net.and_then(net::Net::port);
         let mut inner = self.lock();
+        inner.net = net.cloned();
         if inner.iroh_port != port {
             inner.iroh_port = port;
             self.publish(&inner);
         }
+    }
+
+    /// How the linked engine with `key` is reached now.
+    pub(crate) fn reach(&self, key: &str) -> Reach {
+        let reach = self.lock().reach.get(key).copied();
+        reach.unwrap_or(Reach::Unreachable)
     }
 
     /// Says how the linked engine with `key` is reached now.

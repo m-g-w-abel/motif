@@ -59,8 +59,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let library = library::Library::open(&data_dir)?;
+    let pairing = server::Pairing::open(&data_dir)?;
     let engine = Engine::spawn(server::LibraryResolver {
         library: Some(library.clone()),
+        pairing: Some(pairing.clone()),
     });
     tokio::spawn(server::settings::keep(
         engine.clone(),
@@ -84,7 +86,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(library.clone()),
         integrations.subscribe(),
     );
-    let pairing = server::Pairing::open(&data_dir)?;
     match std::env::var("MOTIF_LAN").as_deref() {
         Ok("on") => pairing.allow_lan(true),
         Ok("off") => pairing.allow_lan(false),
