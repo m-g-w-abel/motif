@@ -11,7 +11,8 @@
 
   // A view's sort button and its tiered rules, edited tier by tier: a
   // popover below the button on desktop; on phones the button grows into a
-  // modal in the middle of the screen (as the ⋮ sheet).
+  // modal in the middle of the screen (as the ⋮ sheet). With linked devices,
+  // it also holds the "only this device" filter, which applies to every list.
   let {
     rules,
     defaults,
@@ -31,7 +32,7 @@
   } = $props();
 
   // Open state lives in `views`, so Android back closes the menu before leaving the view.
-  const { views, settings } = getApp();
+  const { engine, views, settings } = getApp();
   onDestroy(() => (views.sorting = false));
   let menu = $state<HTMLElement>();
   let button = $state<HTMLElement>();
@@ -58,7 +59,7 @@
   <button
     bind:this={button}
     class="icon-button"
-    class:active={!same(rules, defaults) || oneOff}
+    class:active={!same(rules, defaults) || oneOff || settings.current.thisDevice}
     aria-haspopup="dialog"
     aria-expanded={views.sorting}
     aria-label="Sort order"
@@ -103,6 +104,12 @@
       {#if rules.length < sortKeys.length}<button onclick={add}>Add a tier</button>{/if}
       {#if !same(rules, defaults)}<button onclick={() => onchange([...defaults])}>Reset to default</button>{/if}
       {#if tip}<p class="tip">{tip}</p>{/if}
+      {#if engine.pairing?.net.links.length || settings.current.thisDevice}
+        <label class="only">
+          <span>Only songs on this device</span>
+          <input type="checkbox" role="switch" checked={settings.current.thisDevice} onchange={(e) => settings.set('thisDevice', e.currentTarget.checked)} />
+        </label>
+      {/if}
     </div>
   {/if}
 </div>
@@ -207,6 +214,24 @@
     color: var(--text-muted);
   }
 
+  .only {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-top: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+  }
+
+  .only input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+
   .scrim {
     display: none;
   }
@@ -236,7 +261,8 @@
       box-shadow: none;
     }
 
-    .popover > button {
+    .popover > button,
+    .only {
       min-height: 48px;
     }
 

@@ -9,7 +9,9 @@ use std::{
 };
 
 use library::Library;
-use protocol::{Command, ContextKind, LibraryQuery, QueryResult, SortKey, SortRule, TrackRef};
+use protocol::{
+    Command, ContextKind, LibraryQuery, QueryResult, SortKey, SortRule, TrackFilter, TrackRef,
+};
 
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -105,6 +107,7 @@ fn scans_queries_matches_and_rescans() {
         .query(LibraryQuery::Groups {
             search: None,
             sort: vec![],
+            filter: TrackFilter::default(),
         })
         .unwrap()
     else {
@@ -124,6 +127,7 @@ fn scans_queries_matches_and_rescans() {
         sort: vec![],
         offset: 0,
         limit: 10,
+        filter: TrackFilter::default(),
     };
     let QueryResult::Albums { total, albums, .. } = library.query(query).unwrap() else {
         panic!()
@@ -253,6 +257,7 @@ fn scans_queries_matches_and_rescans() {
         .query(LibraryQuery::Groups {
             search: None,
             sort: by_title.clone(),
+            filter: TrackFilter::default(),
         })
         .unwrap()
     else {
@@ -335,6 +340,7 @@ fn scans_queries_matches_and_rescans() {
                 key: SortKey::Album,
                 descending: true,
             }],
+            filter: TrackFilter::default(),
             offset: 0,
             limit: 10,
         })
@@ -1244,6 +1250,7 @@ fn artists_and_folders_are_searched_and_folders_play() {
             album_artists,
             offset: 0,
             limit: 10,
+            filter: TrackFilter::default(),
         };
         let QueryResult::Artists { total, artists, .. } = library.query(query).unwrap() else {
             panic!()
@@ -1270,6 +1277,7 @@ fn artists_and_folders_are_searched_and_folders_play() {
             sort: vec![],
             offset: 0,
             limit: 10,
+            filter: TrackFilter::default(),
         })
         .unwrap()
     else {

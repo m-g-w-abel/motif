@@ -11,7 +11,7 @@ import type { TrackImage } from './protocol/TrackImage';
 import type { TrackRef } from './protocol/TrackRef';
 
 /** Lists hold every track unless filtered. */
-export const NO_FILTER: TrackFilter = { favourite: false };
+export const NO_FILTER: TrackFilter = { favourite: false, this_device: false };
 
 /** Rows fetched per request. */
 const PAGE = 200;
@@ -195,7 +195,7 @@ export class LibraryTracks extends PagedList<LibraryTrack> {
   }
 
   protected refresh() {
-    this.engine.query({ type: 'groups', search: this.search, sort: this.sort }).then((result: QueryResult) => {
+    this.engine.query({ type: 'groups', search: this.search, sort: this.sort, filter: this.filter }).then((result: QueryResult) => {
       if (result.type === 'groups') this.groups = result.groups;
     });
   }
@@ -207,7 +207,7 @@ export class LibraryAlbums extends PagedList<LibraryAlbum> {
   }
 
   protected async fetch(offset: number, limit: number) {
-    const result = await this.engine.query({ type: 'albums', search: this.search, sort: this.sort, offset, limit });
+    const result = await this.engine.query({ type: 'albums', search: this.search, sort: this.sort, filter: this.filter, offset, limit });
     if (result.type !== 'albums') throw new Error(`unexpected ${result.type}`);
     return { total: result.total, rows: result.albums };
   }
@@ -278,8 +278,12 @@ export class LibraryClient {
   readonly recentPlays: RecentPlays;
   readonly recentAlbums: RecentAlbums;
 
-  constructor(engine: EngineClient) {
+  /** Whether lists hold only this device's songs (the setting). */
+  #thisDevice: () => boolean;
+
+  constructor(engine: EngineClient, thisDevice: () => boolean = () => false) {
     this.engine = engine;
+    this.#thisDevice = thisDevice;
     this.recentPlays = new RecentPlays(engine, null);
     this.recentAlbums = new RecentAlbums(engine, null);
   }
@@ -288,13 +292,19 @@ export class LibraryClient {
     return this.engine.library;
   }
 
+  /** `filter`, limited to this device's songs while the setting says so; every list query takes it. */
+  scope(filter: TrackFilter = NO_FILTER): TrackFilter {
+    return { ...filter, this_device: this.#thisDevice() };
+  }
+
   tracks(search: string | null, sort: SortRule[] = [], filter: TrackFilter = NO_FILTER): LibraryTracks {
-    return cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort, filter), filter);
+    const scoped = this.scope(filter);
+    return cached(this.#tracks, search, sort, () => new LibraryTracks(this.engine, search, sort, scoped), scoped);
   }
 
   albums(search: string | null, sort: SortRule[] = []): LibraryAlbums {
-    const list = cached(this.#albums, search, sort, () => new LibraryAlbums(this.engine, search, sort));
-    return list;
+    const scoped = this.scope();
+    return cached(this.#albums, search, sort, () => new LibraryAlbums(this.engine, search, sort, scoped), scoped);
   }
 
   /** Library details for a queued or playing track; `undefined` while being looked up. */

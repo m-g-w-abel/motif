@@ -104,7 +104,9 @@ control isn't an add-on: it's the normal code path.
   property-tested across three engines meeting in random orders.
 - Linked engines share their catalogs both ways as owner-versioned deltas
   in the same SQLite tables, so search and sort cover every device; the
-  same audio on several devices is one track (dedupe by audio hash).
+  same audio on several devices is one track (dedupe by audio hash). Songs
+  not on this device carry a mark, dim while no device holding them is
+  reachable, and one filter limits every list to this device.
 - An **MPD server**, so existing MPD clients can drive Motif.
 - Scrobbling to Last.fm, ListenBrainz and Libre.fm, with an offline queue.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now

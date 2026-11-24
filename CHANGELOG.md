@@ -5,6 +5,10 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
+- **Songs on your other devices show up in your library**: a linked device's
+  songs mix in with yours (the same song on both shows once), marked with a
+  cloud and dimmed while that device can't be reached. The sort menu's "Only
+  songs on this device" narrows songs, albums, artists and search to what's here.
 - **Playlists, history and ratings sync**: linked devices share playlists
   (names, songs, order), what you played (so Recently Played and play counts
   cover every device) and favourites and ratings. Changes made apart merge

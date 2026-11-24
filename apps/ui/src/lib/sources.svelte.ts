@@ -1,5 +1,6 @@
 import { groupConsecutive } from './albums';
 import { demoLibrary, isDemo } from './demo';
+import { cantReach } from './devices';
 import type { EngineClient } from './engine.svelte';
 import { hold, NO_FILTER, type LibraryClient, type LibraryTracks, type RecentPlays, type Shown } from './library.svelte';
 import type { LibraryTrack } from './protocol/LibraryTrack';
@@ -59,6 +60,16 @@ export type SongListData = Pick<
   'title' | 'count' | 'loaded' | 'track' | 'details' | 'key' | 'order' | 'currentKey' | 'play' | 'error' | 'empty' | 'sync' | 'load'
 >;
 
+/** Plays from `start`, unless that song is only on devices that can't be reached now, which it reports instead. */
+function reachable(engine: EngineClient, details: (i: number) => LibraryTrack | undefined, play: (start: number) => void | Promise<unknown>) {
+  return (start: number) => {
+    const t = details(start);
+    const away = cantReach(t, engine.pairing);
+    if (!away) return play(start);
+    engine.error = `“${t?.track.title ?? 'This song'}” is on ${away}, which can’t be reached now.`;
+  };
+}
+
 const localKey = (engine: EngineClient) => {
   const track = engine.current?.track;
   return track?.source === 'local' ? track.id : null;
@@ -84,7 +95,7 @@ export function fixedData(
     get currentKey() {
       return engine.current?.track.id ?? null;
     },
-    play,
+    play: reachable(engine, (i) => rows[i]?.details, play),
     error: (i) => (rows[i]?.details?.missing ? 'File missing' : (rows[i]?.details?.problem ?? null)),
     empty: { message: empty },
   };
@@ -211,7 +222,7 @@ function libraryData(
     get currentKey() {
       return localKey(engine);
     },
-    play: (start) => void run({ type: 'play', search, sort, filter, start }),
+    play: reachable(engine, (i) => list().get(i), (start) => void run({ type: 'play', search, sort, filter: next.filter, start })),
     playGroup: (g) => void run({ type: 'play_album', album: g.key, sort }),
     // The library keeps tracks whose files are gone or damaged, so they can
     // be found or replaced later; they show why they won't play.

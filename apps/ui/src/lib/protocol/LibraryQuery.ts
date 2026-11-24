@@ -8,11 +8,15 @@ import type { TrackFilter } from "./TrackFilter";
  * `sort`, tiered rules applied in turn (empty for the default: album artist,
  * album, disc, track); queries that should agree must send the same rules.
  */
-export type LibraryQuery = { "type": "status" } | { "type": "tracks", search: string | null, sort: Array<SortRule>, filter: TrackFilter, offset: number, limit: number, } | { "type": "groups", search: string | null, sort: Array<SortRule>, } | { "type": "albums", search: string | null, 
+export type LibraryQuery = { "type": "status" } | { "type": "tracks", search: string | null, sort: Array<SortRule>, filter: TrackFilter, offset: number, limit: number, } | { "type": "groups", search: string | null, sort: Array<SortRule>, filter: TrackFilter, } | { "type": "albums", search: string | null, 
 /**
  * Only this album artist's albums (a track without one counts under its artist).
  */
-artist?: string, sort: Array<SortRule>, offset: number, limit: number, } | { "type": "artists", search: string | null, album_artists: boolean, offset: number, limit: number, } | { "type": "folders", search: string | null, offset: number, limit: number, } | { "type": "recently_played", offset: number, limit: number, } | { "type": "recently_played_albums", offset: number, limit: number, } | { "type": "album_position", search: string | null, sort: Array<SortRule>, album: string, } | { "type": "lookup", paths: Array<string>, } | { "type": "play", search: string | null, sort: Array<SortRule>, filter: TrackFilter, start: number, } | { "type": "play_album", album: string, sort: Array<SortRule>, 
+artist?: string, sort: Array<SortRule>, 
+/**
+ * Albums with a track it lets through, counted by those.
+ */
+filter: TrackFilter, offset: number, limit: number, } | { "type": "artists", search: string | null, album_artists: boolean, filter: TrackFilter, offset: number, limit: number, } | { "type": "folders", search: string | null, offset: number, limit: number, } | { "type": "recently_played", offset: number, limit: number, } | { "type": "recently_played_albums", offset: number, limit: number, } | { "type": "album_position", search: string | null, sort: Array<SortRule>, album: string, } | { "type": "lookup", paths: Array<string>, } | { "type": "play", search: string | null, sort: Array<SortRule>, filter: TrackFilter, start: number, } | { "type": "play_album", album: string, sort: Array<SortRule>, 
 /**
  * Index of the track to start at; the first if left out.
  */

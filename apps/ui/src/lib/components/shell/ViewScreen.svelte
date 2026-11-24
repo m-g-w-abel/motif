@@ -163,7 +163,7 @@
 
   // Recently Added's songs, newest first, as its albums.
   const ADDED = viewOptions({}, 'added').sort ?? [];
-  const FAVOURITES: TrackFilter = { favourite: true };
+  const FAVOURITES: TrackFilter = { ...NO_FILTER, favourite: true };
   const shownList: Shown<LibraryTracks> = {};
   const songs = $derived.by(() => {
     if (page) return fixedData(engine, title, shown, playRows, area.browse.search ? 'No songs match.' : 'No songs here yet.');

@@ -328,7 +328,7 @@ fn track(r: &Row<'_>, at: usize) -> rusqlite::Result<CatalogTrack> {
 mod tests {
     use std::path::PathBuf;
 
-    use protocol::{LibraryQuery, LibraryTrack, QueryResult, TrackFilter};
+    use protocol::{Command, LibraryQuery, LibraryTrack, QueryResult, TrackFilter};
 
     use super::*;
 
@@ -490,6 +490,7 @@ mod tests {
                 sort: vec![],
                 offset: 0,
                 limit: 10,
+                filter: TrackFilter::default(),
             })
             .unwrap()
         else {
@@ -643,6 +644,83 @@ mod tests {
     }
 
     #[test]
+    fn the_this_device_filter_leaves_out_other_engines_tracks() {
+        let a = engine("a", &[("A1", Some("h1"))]);
+        let b = engine("b", &[("B1", Some("h1")), ("B2", None)]);
+        b.sql("UPDATE tracks SET album = 'Beta', artist = 'Other' WHERE title = 'B2'");
+        meet(&a, &b);
+        let here = TrackFilter {
+            this_device: true,
+            ..TrackFilter::default()
+        };
+        let query = |q| a.library.query(q).unwrap();
+        let QueryResult::Tracks { total, tracks, .. } = query(LibraryQuery::Tracks {
+            search: None,
+            sort: vec![],
+            filter: here,
+            offset: 0,
+            limit: 10,
+        }) else {
+            panic!()
+        };
+        assert_eq!((total, tracks[0].track.title.as_deref()), (1, Some("A1")));
+        let QueryResult::Groups { groups } = query(LibraryQuery::Groups {
+            search: None,
+            sort: vec![],
+            filter: here,
+        }) else {
+            panic!()
+        };
+        assert_eq!(groups.len(), 1, "{groups:?}");
+        let QueryResult::Albums { total, .. } = query(LibraryQuery::Albums {
+            search: None,
+            artist: None,
+            sort: vec![],
+            filter: here,
+            offset: 0,
+            limit: 10,
+        }) else {
+            panic!()
+        };
+        assert_eq!(total, 1);
+        let QueryResult::Artists { artists, .. } = query(LibraryQuery::Artists {
+            search: None,
+            album_artists: false,
+            filter: here,
+            offset: 0,
+            limit: 10,
+        }) else {
+            panic!()
+        };
+        assert_eq!(artists.len(), 1, "{artists:?}");
+        let Command::SetContext { tracks, .. } = a
+            .library
+            .selection(&LibraryQuery::Play {
+                search: None,
+                sort: vec![],
+                filter: here,
+                start: 0,
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(tracks.len(), 1);
+        // Without it, both engines' music shows.
+        let QueryResult::Albums { total, .. } = query(LibraryQuery::Albums {
+            search: None,
+            artist: None,
+            sort: vec![],
+            filter: TrackFilter::default(),
+            offset: 0,
+            limit: 10,
+        }) else {
+            panic!()
+        };
+        assert_eq!(total, 2);
+    }
+
+    #[test]
     fn tracks_from_before_version_16_are_in_the_catalog() {
         let dir = dir("old");
         {
@@ -759,17 +837,20 @@ mod tests {
                     artist: None,
                     sort: vec![],
                     offset: 2000,
-                    limit: 200
+                    limit: 200,
+                    filter: TrackFilter::default(),
                 }),
                 time(LibraryQuery::Artists {
                     search: None,
                     album_artists: true,
                     offset: 200,
-                    limit: 200
+                    limit: 200,
+                    filter: TrackFilter::default(),
                 }),
                 time(LibraryQuery::Groups {
                     search: None,
-                    sort: vec![]
+                    sort: vec![],
+                    filter: TrackFilter::default(),
                 }),
             );
         };
