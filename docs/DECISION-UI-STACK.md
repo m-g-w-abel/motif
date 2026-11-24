@@ -62,43 +62,50 @@ again straight after ("second"). Three repeats, medians:
    `content-visibility` were not tried: image decode is zero in every window,
    and the grids are already windowed (#259).
 
-4. **Fix kept: the sheet's corners snap** (the user's choice). The backdrop's
-   `border-radius` no longer animates, on a track of its own so the grow still
-   does: opening keeps the bar's corners until the end, closing takes the bar's
-   at once (`ExpandedPlayer.svelte`; checked at 0.25, 0.5, 0.75 of a collapse:
-   corners fixed at the bar's, the backdrop partway scaled). Collapse on the
-   test page, median of three runs:
+4. **Tried and reverted: snapping the sheet's corners.** The backdrop's
+   `border-radius` was put on a track of its own that snaps (step-end) while
+   the grow still animates. Collapse on the test page, median of three runs:
 
    | | First: late frames / over | Second: late / over |
    |---|---|---|
    | before | 6 / 167 ms | 7 / 217 ms |
-   | corners snap to the bar's at once (kept) | 6 / 167 ms | 7 / 184 ms |
-   | corners square until the end, then snap (tried) | 5 / 134 ms | 5 / 134 ms |
+   | corners snap to the bar's at once | 6 / 167 ms | 7 / 184 ms |
+   | corners square until the end, then snap | 5 / 134 ms | 5 / 134 ms |
 
-   **Snapping the corners does not help measurably.** An earlier version of
-   this change put the easing on the whole keyframe, which also froze the
-   grow, and looked better for that reason only. What helped in the CSS
-   experiment was having no rounded clip on the backdrop at all (3 / 134 ms),
-   so the cost is the rounded clip of a large scaling layer, not the
-   animation of its radius; square corners until the end is the only snap
-   with a small gain, and it is within the runs' noise (about 2 frames).
-   The cost that remains is native: raster about 160-190 ms and paint about
-   100-130 ms in a 1 s collapse.
-   `scripts/landing.mjs` against a muted test engine: all shared elements of
-   screens and the sheet's open, close and held frames still land (47 checks;
-   it stops at the queue checks, which need a longer album than the generated
-   test library has, as before the change).
+   No measurable gain (an earlier version put the easing on the whole
+   keyframe, which froze the grow too, and looked better for that reason
+   only). What helped in the CSS experiment was no rounded clip on the
+   backdrop at all, so the cost is the rounded clip of a large scaling layer,
+   not the animation of its radius. Since snapping changes the look for
+   nothing, it was reverted; the sheet animates its corners as before.
+
+### Cold start on the real app (2026-11-24)
+
+Recorded by the user with Android's own tracer (Perfetto, `sched freq gfx
+view webview am wm input`, 30 s): Motif swiped away, then opened, an album
+opened and closed, the sheet expanded and collapsed. Nothing attached to the
+app's page. Read from the app process's atrace slices:
+
+- **Start:** `bindApplication` 291 ms, `activityStart` 208 ms, WebView
+  provider load 106 ms; first frame about 0.6 s after launch.
+- **The only big stalls are the first frames after launch:** `DrawFrames`
+  85 ms (t = 1.2 s) and 129 ms (t = 2.3 s), both in `WebViewFunctor::drawGl`
+  (the WebView's GL compositing on the app's RenderThread: first-use GPU
+  work). They happen before the first interaction.
+- **Each transition** (bursts at about 2.4, 3.8, 12.1 and 26.0 s): 6-11
+  RenderThread frames of 17-26 ms, a few ms over the 16.7 ms budget, the same
+  for the first and later transitions. Main-thread `doFrame` is over budget
+  only 11 times in 979 frames (90 ms once, at launch).
+- The renderer process's JavaScript has no atrace slices, so this shows the
+  drawing side only.
+
+**The user saw no stutter in this run.** First-run jank no longer
+reproduces beyond the launch frames; the earlier reports most likely came
+from off-screen elements flying into place, removed in #262.
 
 ### What was *not* measured (and why it matters)
 
-- **A cold app start.** The WebView process here was warm. A cold renderer
-  (empty JIT, no raster caches, first GPU shader compiles) is the likeliest
-  source of the *first-time* jank the user feels. The user approved a run that
-  force-stops and relaunches the real app (nothing was playing), but the
-  session's permission check refused to drive the installed app, so it was
-  **not run**. The script is written (`scripts/cold.mjs`, read-only: element
-  positions, a performance mark, a trace) and not yet tried; it needs the user
-  to allow it or to run `node scripts/cold.mjs 3` with the phone connected.
+- **Cold start**: measured since, see above.
 - **The user's real library** (thousands of albums, real covers, their engine
   over a network). The test library is 24 albums of generated covers.
 - WebKitGTK on the desktop (not the point of this ticket).
@@ -145,5 +152,6 @@ full migration.
 3. D is not recommended for a phone UI today; C only if desktop is also
    going to move.
 
-The user picks: **A now** (recommended), **A and the cold-start measurement**
-first, or **B** (say whether the whole phone UI or the player screens first).
+**Decided (2026-11-24): A.** The cold start showed no first-run jank beyond
+the launch frames and the user saw no stutter, so the stack stays as it is.
+`scripts/jank.mjs` stays as the regression check for transitions.
