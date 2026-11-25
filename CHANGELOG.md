@@ -12,6 +12,11 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 - **Play songs from your other devices**: a song that is only on a linked
   device plays here, streamed from it in its original quality, with seeking
   and gapless albums. If that device can't be reached, the song says so.
+- **Smaller streams away from home**: off your home network, lossless and
+  high-bitrate songs from a linked device come as Opus 256 kbps (128 on a
+  metered phone network) instead of the original; lossy songs at or below
+  that come as they are. Settings → Devices sets both, and the quality for
+  downloads, Original included.
 - **Playlists, history and ratings sync**: linked devices share playlists
   (names, songs, order), what you played (so Recently Played and play counts
   cover every device) and favourites and ratings. Changes made apart merge

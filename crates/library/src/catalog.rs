@@ -293,19 +293,36 @@ impl Library {
 
     /// The file of this engine's own track `id`, if it is here: what a
     /// linked engine may read ([`Self::copies`]).
-    pub fn own_file(&self, id: i64) -> Option<PathBuf> {
+    pub fn own_file(&self, id: i64) -> Option<OwnFile> {
         self.db()
             .query_row(
-                "SELECT path FROM tracks WHERE id = ?1 AND device = '' AND missing = 0
-                 AND problem IS NULL",
+                "SELECT path, codec, bitrate, audio_hash FROM tracks
+                 WHERE id = ?1 AND device = '' AND missing = 0 AND problem IS NULL",
                 [id],
-                |r| r.get::<_, String>(0),
+                |r| {
+                    Ok(OwnFile {
+                        path: PathBuf::from(r.get::<_, String>(0)?),
+                        codec: r.get(1)?,
+                        bitrate: r.get(2)?,
+                        audio_hash: r.get(3)?,
+                    })
+                },
             )
             .optional()
             .ok()
             .flatten()
-            .map(PathBuf::from)
     }
+}
+
+/// One of this engine's own files, as a linked engine is sent it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OwnFile {
+    pub path: PathBuf,
+    pub codec: Option<String>,
+    /// kb/s.
+    pub bitrate: Option<u32>,
+    /// What a copy encoded from it carries, so it dedupes with it.
+    pub audio_hash: Option<String>,
 }
 
 fn seen(conn: &Connection, device: &str) -> Result<Seen> {
@@ -551,7 +568,10 @@ mod tests {
                 .is_empty()
         );
         // Only this engine's own, present files, by id.
-        assert_eq!(a.library.own_file(a1), Some(PathBuf::from(a.path("A1"))));
+        assert_eq!(
+            a.library.own_file(a1).map(|f| f.path),
+            Some(PathBuf::from(a.path("A1")))
+        );
         let remote_row: i64 = b
             .library
             .db()

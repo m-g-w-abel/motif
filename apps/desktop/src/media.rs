@@ -37,8 +37,23 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 }
 
 /// Mirrors `engine` in the media session and sends its buttons to `engine`.
-pub fn start<R: Runtime>(kotlin: &Kotlin<R>, engine: Engine, library: Option<Library>) {
+/// Tells `pairing` whether the network is metered.
+pub fn start<R: Runtime>(
+    kotlin: &Kotlin<R>,
+    engine: Engine,
+    library: Option<Library>,
+    pairing: server::Pairing,
+) {
     let kotlin = kotlin.0.clone();
+    let metered = Channel::<serde_json::Value>::new(move |body| {
+        if let InvokeResponseBody::Json(json) = body {
+            match serde_json::from_str::<serde_json::Value>(&json).map(|v| v["metered"].as_bool()) {
+                Ok(Some(metered)) => pairing.set_metered(metered),
+                _ => tracing::warn!(json, "unknown network change"),
+            }
+        }
+        Ok(())
+    });
     start_volume(kotlin.clone(), engine.clone());
     let background = library.clone().map(|library| {
         Channel::<serde_json::Value>::new(move |body| {
@@ -84,6 +99,11 @@ pub fn start<R: Runtime>(kotlin: &Kotlin<R>, engine: Engine, library: Option<Lib
             let listen = serde_json::json!({ "channel": focus });
             if let Err(err) = kotlin.run_mobile_plugin::<serde_json::Value>("listenFocus", listen) {
                 tracing::warn!(%err, "no audio focus");
+            }
+            let listen = serde_json::json!({ "channel": metered });
+            if let Err(err) = kotlin.run_mobile_plugin::<serde_json::Value>("listenNetwork", listen)
+            {
+                tracing::warn!(%err, "streams won't know a metered network");
             }
             if let Some(channel) = background {
                 let listen = serde_json::json!({ "channel": channel });

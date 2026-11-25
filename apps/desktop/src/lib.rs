@@ -81,7 +81,7 @@ pub fn run() {
             #[cfg(target_os = "android")]
             let media_controls = {
                 let kotlin = app.state::<media::Kotlin<tauri::Wry>>();
-                move |engine, library| media::start(&kotlin, engine, library)
+                move |engine, library, pairing| media::start(&kotlin, engine, library, pairing)
             };
             #[cfg(not(target_os = "android"))]
             let media_controls = {
@@ -93,7 +93,7 @@ pub fn run() {
                     .map(|hwnd| hwnd.0);
                 #[cfg(not(windows))]
                 let hwnd = None;
-                move |engine, library| integrations::media_controls::start(engine, library, hwnd)
+                move |engine, library, _| integrations::media_controls::start(engine, library, hwnd)
             };
             // Android has no user data directory; the library lives with the app.
             let data_dir = if cfg!(target_os = "android") {
@@ -171,9 +171,9 @@ fn built_in_ui(app: &tauri::App) -> Option<server::Ui> {
 /// Starts the embedded engine and returns its address and pairing. If
 /// another engine (e.g. the headless one) already owns this machine's
 /// library, the window connects to that one instead, and there is no pairing. `media_controls` mirrors the engine in the
-/// OS media controls.
+/// OS media controls (and on Android tells the pairing whether the network is metered).
 async fn start_engine(
-    media_controls: impl FnOnce(Engine, Option<library::Library>),
+    media_controls: impl FnOnce(Engine, Option<library::Library>, server::Pairing),
     ui: Option<server::Ui>,
     data_dir: Option<std::path::PathBuf>,
 ) -> Result<(String, Option<server::Pairing>), Box<dyn std::error::Error>> {
@@ -209,6 +209,7 @@ async fn start_engine(
     media_controls(
         engine.clone(),
         library.as_ref().map(|(library, _)| library.clone()),
+        pairing.clone(),
     );
     let integrations = match &data_dir {
         Some(dir) => {

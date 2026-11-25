@@ -8,7 +8,7 @@ use std::{
 
 use symphonia::core::{checksum::Crc32, io::MediaSource, io::Monitor as _};
 
-use crate::Source;
+use crate::{Opened, Source};
 
 /// The bytes of `source` to demux. In Ogg Opus whose comment header spans pages
 /// (a large embedded cover), that header reads as an empty one. Its first
@@ -23,11 +23,13 @@ pub fn source(source: &Source) -> io::Result<Box<dyn MediaSource>> {
             let len = file.metadata()?.len();
             patched(file, len)
         }
-        Source::Stream { open, .. } => {
-            let stream = open()?;
-            let len = stream.byte_len();
-            patched(stream, len)
-        }
+        Source::Stream { open, .. } => match open()? {
+            Opened::Bytes(stream) => {
+                let len = stream.byte_len();
+                patched(stream, len)
+            }
+            Opened::Decoded(_) => Err(io::Error::other("decoded where it comes from")),
+        },
     }
 }
 

@@ -37,6 +37,7 @@ const SETTINGS: { group: SettingsGroup; label: string }[] = [
   { group: 'devices', label: 'Remote playback controls' },
   { group: 'devices', label: 'Other devices' },
   { group: 'devices', label: 'Paired devices' },
+  { group: 'devices', label: 'Quality from linked devices' },
   { group: 'devices', label: 'Approve new devices automatically' },
   { group: 'devices', label: 'MPD clients' },
   { group: 'devices', label: 'Pairing log' },

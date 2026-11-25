@@ -1109,6 +1109,11 @@ pub enum PairingCommand {
     SetRelay {
         url: Option<String>,
     },
+    /// One of [`NetState::quality`].
+    SetQuality {
+        of: QualityFor,
+        quality: Quality,
+    },
     /// The sending device's own engine key (ed25519, hex; the desktop app's
     /// or the phone's), linking the two engines: pairings from before links
     /// send it on connecting. Needs [`Scope::Sync`]; safe to repeat.
@@ -1147,6 +1152,12 @@ pub struct NetState {
     pub own_relay: Option<String>,
     /// Each linked device ([`PairedDevice::id`]) and how it is reached now.
     pub links: Vec<LinkState>,
+    /// What linked engines send this one, kept across restarts. Streams on
+    /// the LAN always get the original.
+    pub quality: Qualities,
+    /// Whether this device's network costs by the byte (Android says so;
+    /// elsewhere never): streams then use [`Qualities::metered`].
+    pub metered: bool,
 }
 
 impl Default for NetState {
@@ -1155,8 +1166,68 @@ impl Default for NetState {
             internet: true,
             own_relay: None,
             links: Vec::new(),
+            quality: Qualities::default(),
+            metered: false,
         }
     }
+}
+
+/// What a linked engine sends of a track: the file, or Opus at a bitrate.
+/// Opus goes only for lossless files and those above its bitrate: a lossy
+/// file at or below it comes as it is, as encoding it again would lose more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Quality {
+    Original,
+    Opus256,
+    Opus192,
+    Opus128,
+    Opus96,
+}
+
+impl Quality {
+    /// The Opus bitrate, or `None` for the original.
+    pub fn kbps(self) -> Option<u32> {
+        match self {
+            Quality::Original => None,
+            Quality::Opus256 => Some(256),
+            Quality::Opus192 => Some(192),
+            Quality::Opus128 => Some(128),
+            Quality::Opus96 => Some(96),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Qualities {
+    /// Streams off the LAN.
+    pub stream: Quality,
+    /// Streams off the LAN on a metered network.
+    pub metered: Quality,
+    /// Downloaded copies.
+    pub download: Quality,
+}
+
+impl Default for Qualities {
+    fn default() -> Self {
+        Self {
+            stream: Quality::Opus256,
+            metered: Quality::Opus128,
+            download: Quality::Opus256,
+        }
+    }
+}
+
+/// Which of [`Qualities`] a [`PairingCommand::SetQuality`] sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum QualityFor {
+    Stream,
+    Metered,
+    Download,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

@@ -2,6 +2,8 @@
   import { PRESETS, presetOf } from '../../access';
   import { getApp } from '../../context';
   import type { Preset } from '../../protocol/Preset';
+  import type { Quality } from '../../protocol/Quality';
+  import type { QualityFor } from '../../protocol/QualityFor';
   import type { Scope } from '../../protocol/Scope';
   import type { Reach } from '../../protocol/Reach';
   import AddEngineDialog from '../pairing/AddEngineDialog.svelte';
@@ -41,6 +43,13 @@
   let panel = $state<HTMLElement>();
 
   const groups = SETTINGS_GROUPS.map((id) => ({ id, label: GROUP_INFO[id].label }));
+  const QUALITIES: [Quality, string][] = [
+    ['original', 'Original'],
+    ['opus256', 'Opus 256 kbps'],
+    ['opus192', 'Opus 192 kbps'],
+    ['opus128', 'Opus 128 kbps'],
+    ['opus96', 'Opus 96 kbps'],
+  ];
 
   // The phone's search icon swaps the title for a box that filters settings by name.
   let searching = $state(false);
@@ -848,6 +857,21 @@
             <p class="status">
               {#if p.net.own_relay}Using your relay at <span class="selectable">{p.net.own_relay}</span>.
               {:else}Uses the public iroh relays, which are slow (about 4 Mbit/s). Your own relay makes syncing away from home faster.{/if}
+            </p>
+          </div>
+          <div class="row">
+            <span class="label">Quality from linked devices</span>
+            {#each [['stream', 'Streams away from home'], ['metered', 'Streams on metered networks'], ['download', 'Downloads']] as const as [of, text] (of)}
+              <div class="actions">
+                <span>{text}</span>
+                <select class="select narrow" aria-label={text} value={p.net.quality[of]} onchange={(e) => engine.pair({ type: 'set_quality', of: of as QualityFor, quality: e.currentTarget.value as Quality })}>
+                  {#each QUALITIES as [value, label] (value)}<option {value}>{label}</option>{/each}
+                </select>
+              </div>
+            {/each}
+            <p class="status">
+              Lossless files and those above the bitrate come as Opus; other lossy files come as they are. On the same network, streams are always the original.
+              {#if p.net.metered}This device's network is metered now.{/if}
             </p>
           </div>
           <div class="row">

@@ -10,7 +10,7 @@ use std::{
 };
 
 use iroh::endpoint::{ConnectError, ConnectionError};
-pub use iroh::endpoint::{Connection, RecvStream, SendStream};
+pub use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey, TransportAddr,
     endpoint::{AfterHandshakeOutcome, BindOpts, EndpointHooks, presets},
@@ -229,6 +229,15 @@ pub fn reach(conn: &Connection) -> Reach {
     }
 }
 
+/// Whether `conn` reaches its peer on the LAN: it has a direct path to a
+/// private address. Not only the selected one: just after the handshake
+/// (which ran over it) none may be selected yet.
+pub fn lan(conn: &Connection) -> bool {
+    conn.paths()
+        .iter()
+        .any(|p| matches!(p.remote_addr(), TransportAddr::Ip(a) if on_lan(a.ip())))
+}
+
 /// Calls `f` with `conn`'s reach whenever it changes, until it closes.
 pub async fn follow_reach(conn: &Connection, mut f: impl FnMut(Reach)) {
     let mut events = conn.path_events();
@@ -413,6 +422,7 @@ mod tests {
         assert_eq!(heard_by_a.unwrap(), at_b);
         assert_eq!(heard_by_b.unwrap(), at_a);
         assert_eq!(reach(&dialled), Reach::Direct);
+        assert!(lan(&dialled));
     }
 
     /// A select loop races accepting with other events: an event firing

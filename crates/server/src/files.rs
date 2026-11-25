@@ -6,8 +6,14 @@
 //! file}` or `{"Err": why}`, then up to `len` bytes (fewer only at the end of
 //! the file) and the end of the stream. The owner serves only its own tracks,
 //! by id, never a path, and only to linked engines: the endpoint lets in no
-//! others, and each range is refused once the asker is unlinked. Originals
-//! only; transcoding is #244.
+//! others, and each range is refused once the asker is unlinked.
+//!
+//! Off the LAN the reader asks for the track as Opus instead ([`Opus`],
+//! #244), from a point: the answer frame says what comes, [`Sent`], then the
+//! owner encodes as the reader takes it, packet by packet (2 bytes of
+//! length, 2 of the frames of audio in it, the packet), and ends the stream
+//! after the last. A seek asks again from there. Files that would lose more
+//! than they save come as they are ([`library::transcode::plan`]), as ranges.
 
 use std::{
     collections::HashMap,
@@ -16,10 +22,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use engine::{ByteSource, Source};
-use library::Library;
+use engine::{ByteSource, Opened, Source, audio::decoder::Decoder};
+use library::{
+    Library,
+    transcode::{self, Encode},
+};
 use net::{Alpn, Connection, Net, RecvStream, SendStream};
-use protocol::Reach;
+use protocol::{Quality, Reach};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
 
@@ -28,12 +37,45 @@ use crate::{
     sync::{read, write},
 };
 
+/// What a stream asks for.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Ask {
+    Range(Range),
+    Opus(Opus),
+}
+
 /// A request for bytes `offset..offset + len` of the owner's track `id`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct Range {
     id: i64,
     offset: u64,
     len: u32,
+}
+
+/// A request for the owner's track `id` from `from_ms` on, as Opus at
+/// `quality` where that is worth it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct Opus {
+    id: i64,
+    from_ms: u64,
+    quality: Quality,
+}
+
+/// What the owner sends for an [`Opus`] request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+enum Sent {
+    /// Packets from `from_ms` (the point asked for, as near as the file
+    /// seeks); the first `pre_skip` frames decoded are not audio.
+    Opus {
+        channels: u8,
+        pre_skip: u16,
+        from_ms: u64,
+        /// The source's, which the copy shares (#241).
+        audio_hash: Option<String>,
+    },
+    /// Nothing: read the file's ranges instead.
+    Original,
 }
 
 /// Bytes per range: a third of a second of CD-quality FLAC.
@@ -82,13 +124,26 @@ pub(crate) async fn serve(
         let (library, free) = (library.clone(), free.clone());
         let allowed = linked(&peer);
         tokio::spawn(async move {
-            let answered = answer(&library, allowed, send, recv, pace, &free);
-            match tokio::time::timeout(STALL, answered).await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => tracing::debug!(%err, "files: range not sent"),
-                Err(_) => tracing::debug!("files: range not taken in time"),
+            let mut recv = recv;
+            let asked = tokio::time::timeout(STALL, read::<Ask>(&mut recv)).await;
+            let done = match asked {
+                Ok(Ok(Ask::Range(range))) => {
+                    let answered = answer(&library, allowed, range, send, pace, &free);
+                    tokio::time::timeout(STALL, answered)
+                        .await
+                        .unwrap_or_else(|_| Err("range not taken in time".into()))
+                }
+                // Lasts as long as the track plays: it holds no slot.
+                Ok(Ok(Ask::Opus(opus))) => {
+                    drop(slot);
+                    encode(library, allowed, opus, send).await
+                }
+                Ok(Err(err)) => Err(err),
+                Err(_) => Err("nothing asked in time".into()),
+            };
+            if let Err(err) = done {
+                tracing::debug!(%err, "files: not sent");
             }
-            drop(slot);
         });
     }
 }
@@ -96,22 +151,21 @@ pub(crate) async fn serve(
 async fn answer(
     library: &Library,
     allowed: bool,
+    range: Range,
     mut send: SendStream,
-    mut recv: RecvStream,
     pace: Option<Pace>,
     free: &tokio::sync::Mutex<tokio::time::Instant>,
 ) -> Result<(), String> {
-    let range: Range = read(&mut recv).await?;
     if !allowed {
         write(&mut send, &Err::<u64, _>("not linked")).await?;
         return send.finish().map_err(|e| e.to_string());
     }
     let library = library.clone();
     let found = tokio::task::spawn_blocking(move || -> io::Result<(u64, Vec<u8>)> {
-        let path = library
+        let own = library
             .own_file(range.id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "not on this engine"))?;
-        let mut file = std::fs::File::open(path)?;
+        let mut file = std::fs::File::open(own.path)?;
         let size = file.metadata()?.len();
         file.seek(SeekFrom::Start(range.offset))?;
         let mut bytes = Vec::new();
@@ -138,6 +192,77 @@ async fn answer(
     write(&mut send, &Ok::<_, String>(size)).await?;
     send.write_all(&bytes).await.map_err(|e| e.to_string())?;
     send.finish().map_err(|e| e.to_string())
+}
+
+/// Bytes of packets written at once: half a second of Opus 256.
+const BATCH: usize = 16 << 10;
+
+/// Answers an [`Opus`] request: encodes the track as the reader takes it,
+/// on a thread of its own, until its end or the reader stops it.
+async fn encode(
+    library: Library,
+    allowed: bool,
+    opus: Opus,
+    mut send: SendStream,
+) -> Result<(), String> {
+    let runtime = Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let refuse = |send: &mut SendStream, why: &str| {
+            runtime.block_on(write(send, &Err::<Sent, _>(why)))?;
+            send.finish().map_err(|e| e.to_string())
+        };
+        if !allowed {
+            return refuse(&mut send, "not linked");
+        }
+        let Some(own) = library.own_file(opus.id) else {
+            return refuse(&mut send, "not on this engine");
+        };
+        let codec = own.codec.as_deref();
+        let Some(kbps) = transcode::plan(codec, own.bitrate, opus.quality) else {
+            runtime.block_on(write(&mut send, &Ok::<_, String>(Sent::Original)))?;
+            return send.finish().map_err(|e| e.to_string());
+        };
+        let from = Duration::from_millis(opus.from_ms);
+        let mut encode = match Encode::open(&own.path, from, kbps) {
+            Ok(encode) => encode,
+            Err(err) => return refuse(&mut send, &err),
+        };
+        let sent = Sent::Opus {
+            channels: encode.channels() as u8,
+            pre_skip: encode.pre_skip(),
+            from_ms: encode.reached().as_millis() as u64,
+            audio_hash: own.audio_hash,
+        };
+        runtime.block_on(write(&mut send, &Ok::<_, String>(sent)))?;
+        let mut batch = Vec::with_capacity(BATCH);
+        loop {
+            batch.clear();
+            let mut ended = false;
+            while batch.len() < BATCH && !ended {
+                match encode.packet() {
+                    Ok(Some(packet)) => {
+                        batch.extend_from_slice(&(packet.data.len() as u16).to_be_bytes());
+                        batch.extend_from_slice(&packet.frames.to_be_bytes());
+                        batch.extend_from_slice(&packet.data);
+                    }
+                    Ok(None) => ended = true,
+                    // Reset, so the reader can't take it for the end.
+                    Err(err) => {
+                        let _ = send.reset(0u32.into());
+                        return Err(err);
+                    }
+                }
+            }
+            runtime
+                .block_on(send.write_all(&batch))
+                .map_err(|e| e.to_string())?;
+            if ended {
+                return send.finish().map_err(|e| e.to_string());
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Bytes `offset..offset + len` of track `id` over `conn`, and the file's size.
@@ -171,14 +296,14 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
     let name = format!("remote:{key}:{id}");
     // Opened again for each decoder tried: they share the connection and
     // what it fetched while it lives, or a failure to dial for a while.
-    let open = Mutex::new(None::<(Result<(Arc<Remote>, u64), String>, Instant)>);
+    let open = Mutex::new(None::<(Result<Dialled, String>, Instant)>);
     Source::Stream {
         name,
         open: Arc::new(move || {
             let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
-            let (remote, len) = match &*open {
-                Some((Ok((remote, len)), _)) if remote.conn().close_reason().is_none() => {
-                    (remote.clone(), *len)
+            let dialled = match &*open {
+                Some((Ok(dialled), _)) if dialled.link().conn().close_reason().is_none() => {
+                    dialled.clone()
                 }
                 Some((Err(err), at)) if at.elapsed() < DIAL => {
                     return Err(io::Error::other(err.clone()));
@@ -189,8 +314,41 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
                     dialled.clone().map_err(io::Error::other)?
                 }
             };
-            Ok(Box::new(Reader::new(remote, len)) as Box<dyn ByteSource>)
+            dialled.open()
         }),
+    }
+}
+
+/// A linked engine's track, connected to: as ranges of its file, or as Opus
+/// encoded live (with the first answer, for the first decoder to take).
+#[derive(Clone)]
+enum Dialled {
+    Original(Arc<Remote>),
+    Opus(Arc<Link>, Quality, Arc<Mutex<Option<Started>>>),
+}
+
+impl Dialled {
+    fn link(&self) -> &Link {
+        match self {
+            Dialled::Original(remote) => &remote.link,
+            Dialled::Opus(link, ..) => link,
+        }
+    }
+
+    fn open(&self) -> io::Result<Opened> {
+        Ok(match self {
+            Dialled::Original(remote) => {
+                Opened::Bytes(Box::new(Reader::new(remote.clone(), remote.len)))
+            }
+            Dialled::Opus(link, quality, first) => {
+                let first = first.lock().unwrap_or_else(|e| e.into_inner()).take();
+                let live = match first {
+                    Some(started) => Live::new(link.clone(), *quality, started),
+                    None => Live::open(link.clone(), *quality, Duration::ZERO),
+                };
+                Opened::Decoded(Box::new(live?))
+            }
+        })
     }
 }
 
@@ -200,18 +358,22 @@ async fn dial(
     pairing: &Pairing,
     copies: &[(String, i64)],
     runtime: Handle,
-) -> Result<(Arc<Remote>, u64), String> {
+) -> Result<Dialled, String> {
     let net = pairing
         .net()
         .ok_or("on a linked engine, but not connected to any now")?;
     let mut copies = copies.to_vec();
     copies.sort_by_key(|(key, _)| pairing.reach(key) == Reach::Unreachable);
+    let quality = |conn: &Connection| match net::lan(conn) {
+        true => Quality::Original,
+        false => pairing.stream_quality(),
+    };
     let mut reasons = Vec::new();
     for (key, id) in copies {
         let addr = pairing.linked().into_iter().find(|(k, _)| *k == key);
         let Some((_, addr)) = addr else { continue };
         let locate = locate(pairing.clone(), key.clone());
-        let connected = connect(&net, &key, &addr, id, runtime.clone(), locate);
+        let connected = connect(&net, &key, &addr, id, runtime.clone(), locate, &quality);
         match tokio::time::timeout(DIAL, connected).await {
             Ok(Ok(opened)) => return Ok(opened),
             Ok(Err(err)) => reasons.push(err),
@@ -239,7 +401,9 @@ fn locate(pairing: Pairing, key: String) -> Locate {
     })
 }
 
-/// Opens track `id` on the linked engine `key`: its first range and size.
+/// Opens track `id` on the linked engine `key` at the `quality` wanted over
+/// the connection: Opus if the owner encodes it, else its first range and
+/// size.
 async fn connect(
     net: &Net,
     key: &str,
@@ -247,17 +411,28 @@ async fn connect(
     id: i64,
     runtime: Handle,
     locate: Locate,
-) -> Result<(Arc<Remote>, u64), String> {
+    quality: &(dyn Fn(&Connection) -> Quality + Sync),
+) -> Result<Dialled, String> {
     let conn = net.connect(key, addr, Alpn::Files).await?;
-    let (len, first) = fetch(&conn, id, 0, CHUNK as u32).await?;
-    let remote = Remote {
-        conn: Mutex::new(conn),
+    let quality = quality(&conn);
+    let link = Link {
+        conn: Mutex::new(conn.clone()),
         redial: tokio::sync::Mutex::new(None),
         key: key.into(),
         locate,
         id,
-        len,
         runtime,
+    };
+    if quality != Quality::Original
+        && let Some(started) = ask(&conn, id, Duration::ZERO, quality).await?
+    {
+        let first = Arc::new(Mutex::new(Some(started)));
+        return Ok(Dialled::Opus(Arc::new(link), quality, first));
+    }
+    let (len, first) = fetch(&conn, id, 0, CHUNK as u32).await?;
+    let remote = Remote {
+        link,
+        len,
         state: Mutex::new(Fetched {
             chunks: HashMap::from([(0, Chunk::Here(first.into()))]),
             wanted: 0..0,
@@ -265,22 +440,27 @@ async fn connect(
         }),
         arrived: Condvar::new(),
     };
-    Ok((Arc::new(remote), len))
+    Ok(Dialled::Original(Arc::new(remote)))
 }
 
-/// A connection to the owner of track `id` and the ranges fetched or
-/// being fetched.
-struct Remote {
+/// A connection to the owner of track `id`, dialled again when it closes.
+struct Link {
     conn: Mutex<Connection>,
-    /// Held while one fetch dials again for all of them; the last failure
+    /// Held while one request dials again for all of them; the last failure
     /// to, which the others share for [`DIAL`].
     redial: tokio::sync::Mutex<Option<(String, Instant)>>,
     key: String,
     locate: Locate,
     id: i64,
+    runtime: Handle,
+}
+
+/// A connection to the owner of track `id` and the ranges fetched or
+/// being fetched.
+struct Remote {
+    link: Link,
     /// The file's size when it was opened.
     len: u64,
-    runtime: Handle,
     state: Mutex<Fetched>,
     arrived: Condvar,
 }
@@ -302,27 +482,27 @@ enum Chunk {
     Failed(String),
 }
 
-impl Remote {
+impl Link {
     fn conn(&self) -> Connection {
         self.conn.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Chunk `i`, asked for again on a new connection if this one closed
+    /// `ask` on the connection, asked again on a new one if this one closed
     /// (the owner restarted or closed it) so a track that started plays on.
-    /// A range that stalls on a live connection fails: a silent network
-    /// change shows so, as the connection stays open until it times out.
-    async fn fetch(&self, i: u64) -> Result<(u64, Vec<u8>), String> {
+    /// One that stalls on a live connection fails: a silent network change
+    /// shows so, as the connection stays open until it times out.
+    async fn retry<T, F: Future<Output = Result<T, String>>>(
+        &self,
+        ask: impl Fn(Connection) -> F,
+    ) -> Result<T, String> {
         let conn = self.conn();
-        match fetch(&conn, self.id, i * CHUNK, CHUNK as u32).await {
-            Err(_) if conn.close_reason().is_some() => {
-                let conn = self.reconnect(&conn).await?;
-                fetch(&conn, self.id, i * CHUNK, CHUNK as u32).await
-            }
-            fetched => fetched,
+        match ask(conn.clone()).await {
+            Err(_) if conn.close_reason().is_some() => ask(self.reconnect(&conn).await?).await,
+            asked => asked,
         }
     }
 
-    /// A connection in place of `lost`: dialled once for every fetch that
+    /// A connection in place of `lost`: dialled once for every request that
     /// lost it.
     async fn reconnect(&self, lost: &Connection) -> Result<Connection, String> {
         let mut failed = self.redial.lock().await;
@@ -354,6 +534,16 @@ impl Remote {
                 Err(err)
             }
         }
+    }
+}
+
+impl Remote {
+    /// Chunk `i` ([`Link::retry`]).
+    async fn fetch(&self, i: u64) -> Result<(u64, Vec<u8>), String> {
+        let id = self.link.id;
+        let fetched =
+            |conn: Connection| async move { fetch(&conn, id, i * CHUNK, CHUNK as u32).await };
+        self.link.retry(fetched).await
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, Fetched> {
@@ -397,7 +587,7 @@ impl Remote {
             let n = state.fetches;
             state.chunks.insert(i, Chunk::Coming(n));
             let remote = self.clone();
-            self.runtime.spawn(async move {
+            self.link.runtime.spawn(async move {
                 let fetched = remote.fetch(i).await;
                 let mut state = remote.state();
                 if let Some(chunk @ Chunk::Coming(_)) = state.chunks.get_mut(&i)
@@ -516,6 +706,174 @@ impl Seek for Reader {
 impl ByteSource for Reader {
     fn byte_len(&self) -> u64 {
         self.len
+    }
+}
+
+/// The start of a track encoded live: what comes, then its packets.
+struct Started {
+    channels: u8,
+    pre_skip: u16,
+    from: Duration,
+    recv: RecvStream,
+    /// What the stream was asked on.
+    conn: Connection,
+}
+
+/// Asks for track `id` over `conn` as Opus from `from`: `None` if the owner
+/// sends this one as it is.
+async fn ask(
+    conn: &Connection,
+    id: i64,
+    from: Duration,
+    quality: Quality,
+) -> Result<Option<Started>, String> {
+    let asked = async {
+        let (mut send, mut recv) = conn.open_bi().await.map_err(|e| e.to_string())?;
+        let from_ms = from.as_millis() as u64;
+        write(
+            &mut send,
+            &Opus {
+                id,
+                from_ms,
+                quality,
+            },
+        )
+        .await?;
+        send.finish().map_err(|e| e.to_string())?;
+        let sent: Result<Sent, String> = read(&mut recv).await?;
+        Ok(match sent? {
+            Sent::Original => None,
+            Sent::Opus {
+                channels,
+                pre_skip,
+                from_ms,
+                ..
+            } => Some(Started {
+                channels,
+                pre_skip,
+                from: Duration::from_millis(from_ms),
+                recv,
+                conn: conn.clone(),
+            }),
+        })
+    };
+    tokio::time::timeout(STALL, asked)
+        .await
+        .unwrap_or_else(|_| Err("the linked engine stopped sending".into()))
+}
+
+/// The next packet on `recv` and its frames of audio, or `None` at the end.
+async fn packet(recv: &mut RecvStream) -> Result<Option<(u16, Vec<u8>)>, String> {
+    let read = async {
+        let mut head = [0; 4];
+        match recv.read_exact(&mut head).await {
+            Ok(()) => {}
+            Err(net::ReadExactError::FinishedEarly(0)) => return Ok(None),
+            Err(err) => return Err(err.to_string()),
+        }
+        let mut data = vec![0; u16::from_be_bytes([head[0], head[1]]).into()];
+        recv.read_exact(&mut data)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(Some((u16::from_be_bytes([head[2], head[3]]), data)))
+    };
+    tokio::time::timeout(STALL, read)
+        .await
+        .unwrap_or_else(|_| Err("the linked engine stopped sending".into()))
+}
+
+/// A linked engine's track, encoded to Opus there as it is decoded here. A
+/// seek asks for it again from there.
+struct Live {
+    link: Arc<Link>,
+    quality: Quality,
+    started: Started,
+    decoder: opus::Decoder,
+    /// Frames still to drop from the start.
+    skip: usize,
+    /// Frames of audio given out since [`Started::from`].
+    frames: u64,
+    buffer: Vec<f32>,
+}
+
+impl Live {
+    /// The track from `from`.
+    fn open(link: Arc<Link>, quality: Quality, from: Duration) -> io::Result<Self> {
+        let id = link.id;
+        let asked = |conn: Connection| async move { ask(&conn, id, from, quality).await };
+        let started = link.runtime.block_on(link.retry(asked));
+        match started.map_err(io::Error::other)? {
+            Some(started) => Self::new(link, quality, started),
+            // Bytes of another file would follow on from this one's.
+            None => Err(io::Error::other("the file changed on the linked engine")),
+        }
+    }
+
+    fn new(link: Arc<Link>, quality: Quality, started: Started) -> io::Result<Self> {
+        let layout = match started.channels {
+            1 => opus::Channels::Mono,
+            2 => opus::Channels::Stereo,
+            n => return Err(io::Error::other(format!("{n}-channel Opus"))),
+        };
+        let decoder = opus::Decoder::new(transcode::RATE, layout).map_err(io::Error::other)?;
+        Ok(Self {
+            link,
+            quality,
+            skip: started.pre_skip.into(),
+            buffer: vec![0.0; transcode::FRAME * usize::from(started.channels)],
+            started,
+            decoder,
+            frames: 0,
+        })
+    }
+
+    fn position(&self) -> Duration {
+        let rate = f64::from(transcode::RATE);
+        self.started.from + Duration::from_secs_f64(self.frames as f64 / rate)
+    }
+}
+
+impl Decoder for Live {
+    fn sample_rate(&self) -> u32 {
+        transcode::RATE
+    }
+
+    fn channels(&self) -> usize {
+        self.started.channels.into()
+    }
+
+    fn decode(&mut self, out: &mut Vec<f32>) -> Result<bool, String> {
+        let runtime = self.link.runtime.clone();
+        let packet = match runtime.block_on(packet(&mut self.started.recv)) {
+            // Its connection closed (the owner restarted or dropped it): on
+            // from here over a new one.
+            Err(_) if self.started.conn.close_reason().is_some() => {
+                let at = self.position();
+                *self =
+                    Self::open(self.link.clone(), self.quality, at).map_err(|e| e.to_string())?;
+                runtime.block_on(packet(&mut self.started.recv))?
+            }
+            packet => packet?,
+        };
+        let Some((frames, data)) = packet else {
+            return Ok(false);
+        };
+        let decoded = self
+            .decoder
+            .decode_float(&data, &mut self.buffer, false)
+            .map_err(|e| e.to_string())?;
+        let end = decoded.min(frames.into());
+        let start = self.skip.min(end);
+        self.skip -= start;
+        let channels = self.channels();
+        out.extend_from_slice(&self.buffer[start * channels..end * channels]);
+        self.frames += (end - start) as u64;
+        Ok(true)
+    }
+
+    fn seek(&mut self, to: Duration) -> Result<Duration, String> {
+        *self = Self::open(self.link.clone(), self.quality, to).map_err(|e| e.to_string())?;
+        Ok(self.started.from)
     }
 }
 
@@ -689,10 +1047,22 @@ mod tests {
 
     /// [`open`], redialling where `locate` says.
     async fn open_with(owner: &Net, locate: Locate, id: i64) -> Result<Reader, String> {
+        match dialled(owner, locate, id, Quality::Original).await? {
+            Dialled::Original(remote) => Ok(Reader::new(remote.clone(), remote.len)),
+            Dialled::Opus(..) => panic!("encoded on the LAN"),
+        }
+    }
+
+    /// Track `id` at `quality`, as off the LAN.
+    async fn dialled(
+        owner: &Net,
+        locate: Locate,
+        id: i64,
+        quality: Quality,
+    ) -> Result<Dialled, String> {
         let runtime = Handle::current();
         let (net, at) = locate()?;
-        let (remote, len) = connect(&net, &owner.key(), &at, id, runtime, locate).await?;
-        Ok(Reader::new(remote, len))
+        connect(&net, &owner.key(), &at, id, runtime, locate, &|_| quality).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -713,7 +1083,7 @@ mod tests {
             );
         let stream = open_with(&owner, locate, id).await.unwrap();
         linked.store(false, std::sync::atomic::Ordering::Relaxed);
-        stream.remote.conn().close(0u32.into(), b"gone");
+        stream.remote.link.conn().close(0u32.into(), b"gone");
         let (_, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
         let err = read.expect_err("redialled an engine no longer linked");
         assert!(err.to_string().contains("no longer linked"), "{err}");
@@ -721,7 +1091,7 @@ mod tests {
         // Gone for good: the redial fails once, not once per read.
         let stream = open(&owner, &reader, id).await.unwrap();
         owner.close().await;
-        stream.remote.conn().close(0u32.into(), b"gone");
+        stream.remote.link.conn().close(0u32.into(), b"gone");
         let (stream, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
         read.expect_err("read from a closed engine");
         let started = Instant::now();
@@ -851,7 +1221,7 @@ mod tests {
         let (stream, first) = blocking(stream, |r| read_at(r, 0, 10)).await;
         assert_eq!(first.unwrap(), file[..10]);
         // As when the owner restarts or drops it.
-        stream.remote.conn().close(0u32.into(), b"gone");
+        stream.remote.link.conn().close(0u32.into(), b"gone");
         let (_, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
         let at = (10 * CHUNK) as usize;
         assert_eq!(read.unwrap(), file[at..at + 10]);
@@ -929,6 +1299,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
+        // On the LAN (loopback here), the original: a WAV at its own rate.
         assert_eq!(frames, 3 * 44_100);
         assert!(reached.abs_diff(Duration::from_millis(1500)) < Duration::from_millis(100));
 
@@ -942,13 +1313,125 @@ mod tests {
         }
     }
 
+    /// Three seconds of a stereo tone in the format ffmpeg's `args` make,
+    /// as `ext`.
+    fn tone(ext: &str, args: &[&str]) -> Vec<u8> {
+        static MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("motif-tone-{n}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("tone.{ext}"));
+        let ffmpeg = std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+            .args(["sine=frequency=440:duration=3", "-ac", "2"])
+            .args(args)
+            .arg(&path)
+            .status()
+            .expect("ffmpeg is needed for this test");
+        assert!(ffmpeg.success());
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        bytes
+    }
+
+    /// The owner's id for its file `name`.
+    fn id_of(library: &Library, name: &str) -> i64 {
+        let ids = ids(library);
+        let named = |&&id: &&i64| library.own_file(id).is_some_and(|f| f.path.ends_with(name));
+        *ids.iter().find(named).unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn off_the_lan_a_flac_comes_as_opus_and_an_mp3_192_as_it_is() {
+        let files = [
+            ("a.flac", tone("flac", &[])),
+            ("b.mp3", tone("mp3", &["-b:a", "192k"])),
+        ];
+        let (library, dir) = library("opus", &files).await;
+        let (flac, mp3) = (id_of(&library, "a.flac"), id_of(&library, "b.mp3"));
+        let (owner, reader) = pair(library, None).await;
+        let (net, at) = (reader.clone(), loopback(&owner));
+        let locate: Locate = Arc::new(move || Ok((net.clone(), at.clone())));
+        let opened = dialled(&owner, locate.clone(), mp3, Quality::Opus256).await;
+        assert!(
+            matches!(opened, Ok(Dialled::Original(_))),
+            "the MP3 encoded again"
+        );
+        let opened = dialled(&owner, locate, flac, Quality::Opus256).await;
+        let Ok(dialled @ Dialled::Opus(..)) = opened else {
+            panic!("the FLAC not encoded");
+        };
+        let decoded = tokio::task::spawn_blocking(move || {
+            let Ok(Opened::Decoded(mut decoder)) = dialled.open() else {
+                panic!("not decoded");
+            };
+            let mut samples = Vec::new();
+            while decoder.decode(&mut samples)? {}
+            let frames = samples.len() / decoder.channels();
+            // Mid-stream: the owner encodes again from there.
+            let reached = decoder.seek(Duration::from_millis(1500))?;
+            samples.clear();
+            while decoder.decode(&mut samples)? {}
+            let after = samples.len() / decoder.channels();
+            Ok::<_, String>((decoder.sample_rate(), frames, reached, after))
+        })
+        .await
+        .unwrap();
+        let (rate, frames, reached, after) = decoded.unwrap();
+        assert_eq!(rate, 48_000);
+        assert!(frames.abs_diff(3 * 48_000) <= 2, "{frames} frames");
+        // FLAC seeks to the start of a block.
+        let near = reached.abs_diff(Duration::from_millis(1500)) < Duration::from_millis(100);
+        assert!(near, "reached {reached:?}");
+        let left = (Duration::from_secs(3) - reached).as_secs_f64() * 48_000.0;
+        // Where it reached comes in whole milliseconds.
+        assert!(
+            (after as f64 - left).abs() < 50.0,
+            "{after} frames after the seek"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_encoded_copy_carries_its_sources_audio_hash() {
+        let (library, dir) = library("hash", &[("a.flac", tone("flac", &[]))]).await;
+        let id = ids(&library)[0];
+        // Hashed after the scan.
+        until("hashed", || {
+            library.own_file(id).unwrap().audio_hash.is_some()
+        })
+        .await;
+        let hash = library.own_file(id).unwrap().audio_hash;
+        let (owner, reader) = pair(library, None).await;
+        let conn = reader
+            .connect(&owner.key(), &loopback(&owner), Alpn::Files)
+            .await
+            .unwrap();
+        let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        let quality = Quality::Opus128;
+        write(
+            &mut send,
+            &Opus {
+                id,
+                from_ms: 0,
+                quality,
+            },
+        )
+        .await
+        .unwrap();
+        let sent: Result<Sent, String> = read(&mut recv).await.unwrap();
+        let Ok(Sent::Opus { audio_hash, .. }) = sent else {
+            panic!("{sent:?}");
+        };
+        assert_eq!(audio_hash, hash);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// A stream of the track `remote` opened.
     fn opened(remote: Arc<Remote>, len: u64) -> Source {
         Source::Stream {
             name: "measured".into(),
-            open: Arc::new(move || {
-                Ok(Box::new(Reader::new(remote.clone(), len)) as Box<dyn ByteSource>)
-            }),
+            open: Arc::new(move || Ok(Opened::Bytes(Box::new(Reader::new(remote.clone(), len))))),
         }
     }
 
@@ -1066,8 +1549,12 @@ mod tests {
                         id,
                         runtime.clone(),
                         locate,
+                        &|_| Quality::Original,
                     ));
-                    let (remote, len) = connected.unwrap();
+                    let Ok(Dialled::Original(remote)) = connected else {
+                        panic!("not opened");
+                    };
+                    let len = remote.len;
                     engine::audio::decoder::open(
                         &opened(remote, len),
                         &engine::audio::decoder::all(),

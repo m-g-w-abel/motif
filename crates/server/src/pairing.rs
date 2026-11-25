@@ -18,7 +18,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use protocol::{
     Connection, LanState, LinkState, MpdState, NetState, PairRequest, Paired, PairedDevice,
     PairingAction, PairingCode, PairingCommand, PairingLogEntry, PairingState, PendingDevice,
-    Preset, Reach, Scope,
+    Preset, Qualities, Quality, QualityFor, Reach, Scope,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, oneshot, watch};
@@ -70,6 +70,8 @@ struct Saved {
     internet: bool,
     #[serde(default)]
     own_relay: Option<String>,
+    #[serde(default)]
+    quality: Qualities,
     /// Keys of engines forgotten here that may not know yet, and when: the
     /// endpoint stays up to refuse them once, which tells them to forget
     /// this one, for [`TELL_FOR`] at most.
@@ -87,6 +89,7 @@ impl Default for Saved {
             mpd: SavedMpd::default(),
             internet: true,
             own_relay: None,
+            quality: Qualities::default(),
             to_tell: HashMap::new(),
         }
     }
@@ -131,6 +134,8 @@ struct Inner {
     iroh_port: Option<u16>,
     /// The iroh endpoint while it runs, for streams from linked engines.
     net: Option<net::Net>,
+    /// [`NetState::metered`].
+    metered: bool,
 }
 
 impl Pairing {
@@ -194,6 +199,7 @@ impl Pairing {
                 reach: HashMap::new(),
                 iroh_port: None,
                 net: None,
+                metered: false,
             }),
             state: watch::Sender::new(PairingState::default()),
         }));
@@ -359,6 +365,24 @@ impl Pairing {
         if inner.reach.get(key).copied().unwrap_or(Reach::Unreachable) != reach {
             inner.reach.insert(key.to_owned(), reach);
             self.publish(&inner);
+        }
+    }
+
+    /// Says whether this device's network is metered ([`NetState::metered`]).
+    pub fn set_metered(&self, metered: bool) {
+        let mut inner = self.lock();
+        if inner.metered != metered {
+            inner.metered = metered;
+            self.publish(&inner);
+        }
+    }
+
+    /// What to ask linked engines off the LAN for, on this network now.
+    pub(crate) fn stream_quality(&self) -> Quality {
+        let inner = self.lock();
+        match inner.metered {
+            true => inner.saved.quality.metered,
+            false => inner.saved.quality.stream,
         }
     }
 
@@ -729,6 +753,14 @@ impl Pairing {
                 inner.saved.mpd.password = Some(password).filter(|p| !p.is_empty());
             }
             PairingCommand::SetInternet { allowed } => inner.saved.internet = allowed,
+            PairingCommand::SetQuality { of, quality } => {
+                let qualities = &mut inner.saved.quality;
+                *match of {
+                    QualityFor::Stream => &mut qualities.stream,
+                    QualityFor::Metered => &mut qualities.metered,
+                    QualityFor::Download => &mut qualities.download,
+                } = quality;
+            }
             PairingCommand::SetRelay { url } => {
                 let url = url.map(|u| u.trim().to_owned()).filter(|u| !u.is_empty());
                 if let Some(url) = &url {
@@ -845,6 +877,8 @@ impl Pairing {
             net: NetState {
                 internet: inner.saved.internet,
                 own_relay: inner.saved.own_relay.clone(),
+                quality: inner.saved.quality,
+                metered: inner.metered,
                 links: inner
                     .saved
                     .devices
@@ -1492,6 +1526,31 @@ mod tests {
         assert_eq!(
             relays_of(&Pairing::open(&dir).unwrap()),
             net::Relays::Public
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stream_quality_is_kept_and_follows_a_metered_network() {
+        let dir = std::env::temp_dir().join(format!("motif-quality-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pairing = Pairing::open(&dir).unwrap();
+        assert_eq!(pairing.stream_quality(), Quality::Opus256);
+        pairing
+            .command(PairingCommand::SetQuality {
+                of: QualityFor::Metered,
+                quality: Quality::Opus96,
+            })
+            .unwrap();
+        pairing.set_metered(true);
+        assert_eq!(pairing.stream_quality(), Quality::Opus96);
+        assert!(pairing.subscribe().borrow().net.metered);
+        pairing.set_metered(false);
+        assert_eq!(pairing.stream_quality(), Quality::Opus256);
+        let again = Pairing::open(&dir).unwrap();
+        assert_eq!(
+            again.subscribe().borrow().net.quality.metered,
+            Quality::Opus96
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
