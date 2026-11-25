@@ -16,6 +16,7 @@
   import { starsLabel, starsOf } from '../../ratings';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { ordered, span, toggle, type ItemAt } from '../../selection';
+  import { deviceMark } from '../../devices';
   import { songInfo, songNumber } from '../../songs';
   import { scrollMemory } from '../../scrollMemory';
   import type { SongListData } from '../../sources.svelte';
@@ -256,6 +257,7 @@
         {@const details = data.details?.(i)}
         {@const key = data.key(i)}
         {@const error = data.error?.(i)}
+        {@const mark = deviceMark(details, engine.pairing)}
         <li>
           {#if track}
             <button
@@ -263,6 +265,7 @@
               class:playing={track.id === data.currentKey}
               class:picked={picked.has(key)}
               class:unplayable={!!error}
+              class:away={mark?.away}
               data-index={i}
               tabindex={i === tabStop ? 0 : -1}
               aria-pressed={selecting ? picked.has(key) : undefined}
@@ -294,6 +297,7 @@
                   <span class="title">{trackTitle(track)}</span>
                   {#if !inAlbum}<span class="artist">{track.artist || 'Unknown artist'}</span>{/if}
                 </span>
+                {#if mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={13} /></span>{/if}
                 {#if settings.current.ratings === 'hearts' ? details?.favourite : details?.rating}
                   <span class="marks" aria-label={settings.current.ratings === 'hearts' ? 'Loved' : starsLabel(starsOf(details?.rating))}>
                     {#if settings.current.ratings === 'hearts'}<Icon name="heart" size={12} solid />{:else}<span class="stars">{'★'.repeat(starsOf(details?.rating))}</span>{/if}
@@ -440,6 +444,17 @@
   }
 
   .song.unplayable .title {
+    color: var(--text-muted);
+  }
+
+  /* On linked devices, none reachable now. */
+  .song.away > :not(.lead) {
+    opacity: 0.45;
+  }
+
+  .device {
+    flex: none;
+    display: flex;
     color: var(--text-muted);
   }
 

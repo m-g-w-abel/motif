@@ -4,7 +4,7 @@
   import { getApp, getViewState } from '../../context';
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
   import { formatTime } from '../../format';
-  import { NO_FILTER, type LibraryTracks, type Shown } from '../../library.svelte';
+  import { type LibraryTracks, type Shown } from '../../library.svelte';
   import { queueTracks } from '../../menus';
   import type { LibraryAlbum } from '../../protocol/LibraryAlbum';
   import type { LibraryArtist } from '../../protocol/LibraryArtist';
@@ -56,7 +56,7 @@
     if (!text) return;
     if (kind === 'Artists' || kind === 'Album Artists') {
       engine
-        .query({ type: 'artists', search: text, album_artists: kind === 'Album Artists', offset: 0, limit: NAMES })
+        .query({ type: 'artists', search: text, album_artists: kind === 'Album Artists', filter: library.scope(), offset: 0, limit: NAMES })
         .then((r) => ask === asked && r.type === 'artists' && (artists = r.artists))
         .catch(fail);
     } else if (kind === 'Folders') {
@@ -72,8 +72,8 @@
   /** All's best match (the album artist named most like the search, with their albums) and the other albums. */
   async function allResults(text: string, ask: number) {
     const [found, matching] = await Promise.all([
-      engine.query({ type: 'artists', search: text, album_artists: true, offset: 0, limit: NAMES }),
-      engine.query({ type: 'albums', search: text, sort: ALBUM_SORT, offset: 0, limit: 7 }),
+      engine.query({ type: 'artists', search: text, album_artists: true, filter: library.scope(), offset: 0, limit: NAMES }),
+      engine.query({ type: 'albums', search: text, sort: ALBUM_SORT, filter: library.scope(), offset: 0, limit: 7 }),
     ]);
     if (found.type !== 'artists' || matching.type !== 'albums') return;
     // The artist named just so, else the one with the most songs.
@@ -82,7 +82,7 @@
       found.artists.find((a) => a.name.toLowerCase() === lower) ??
       found.artists.reduce<LibraryArtist | undefined>((top, a) => (!top || a.tracks > top.tracks ? a : top), undefined);
     const theirs = artist
-      ? await engine.query({ type: 'albums', search: null, artist: artist.name, sort: ALBUM_SORT, offset: 0, limit: NAMES })
+      ? await engine.query({ type: 'albums', search: null, artist: artist.name, sort: ALBUM_SORT, filter: library.scope(), offset: 0, limit: NAMES })
       : null;
     if (ask !== asked) return;
     const albums = theirs?.type === 'albums' ? theirs.albums : [];
@@ -115,10 +115,10 @@
     if (grids) return grid?.playEverything(shuffle);
     if (songList) return songList.playEverything(shuffle);
     try {
-      const found = await engine.query({ type: 'tracks', search: searched, sort: [], filter: NO_FILTER, offset: 0, limit: 0 });
+      const found = await engine.query({ type: 'tracks', search: searched, sort: [], filter: library.scope(), offset: 0, limit: 0 });
       if (found.type !== 'tracks' || !found.total) return;
       await engine.send({ type: 'set_shuffle', on: shuffle });
-      await engine.query({ type: 'play', search: searched, sort: [], filter: NO_FILTER, start: shuffle ? Math.floor(Math.random() * found.total) : 0 });
+      await engine.query({ type: 'play', search: searched, sort: [], filter: library.scope(), start: shuffle ? Math.floor(Math.random() * found.total) : 0 });
     } catch (e) {
       engine.error = (e as Error).message;
     }
@@ -127,7 +127,7 @@
   /** The ⋮ menu: queue the matching songs. */
   function openMore(e: MouseEvent) {
     const matching = async () => {
-      const found = await engine.query({ type: 'tracks', search: searched, sort: [], filter: NO_FILTER, offset: 0, limit: songs.count });
+      const found = await engine.query({ type: 'tracks', search: searched, sort: [], filter: library.scope(), offset: 0, limit: songs.count });
       return found.type === 'tracks' ? found.tracks.map((t) => t.track) : [];
     };
     const items: MenuItem[] = engine.can('queue')

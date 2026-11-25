@@ -11,6 +11,7 @@
   import { nextOneOff, sortLabel, viewSort } from '../../sort.svelte';
   import type { LibraryTracks, Shown } from '../../library.svelte';
   import { trackListData, type ListSource } from '../../sources.svelte';
+  import { deviceMark } from '../../devices';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { scrollMemory } from '../../scrollMemory';
   import { menu, type MenuItem } from '../../contextMenu.svelte';
@@ -660,11 +661,13 @@
               {@const key = data.key(i)}
               {@const error = data.error?.(i)}
               {@const details = data.details?.(i)}
+              {@const mark = deviceMark(details, engine.pairing)}
               <tr
                 class="track"
                 class:alt={i % 2 === 1}
                 class:current={key === currentKey}
                 class:unplayable={!!error}
+                class:away={mark?.away}
                 class:selected={picked.has(key)}
                 tabindex={i === tabStop ? 0 : -1}
                 data-index={i}
@@ -694,6 +697,7 @@
                       {/if}
                     {:else}
                       {cell(column, i)}
+                      {#if column === 'title' && mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={12} /></span>{/if}
                       {#if column === 'title' && error}<span class="reason">{error}</span>{/if}
                     {/if}
                   </td>
@@ -888,6 +892,18 @@
   .loved {
     display: inline-flex;
     color: var(--accent);
+  }
+
+  /* On linked devices, none reachable now. */
+  tr.away td {
+    opacity: 0.45;
+  }
+
+  .device {
+    display: inline-flex;
+    margin-left: var(--space-1);
+    vertical-align: -1px;
+    color: var(--text-muted);
   }
 
   .format {

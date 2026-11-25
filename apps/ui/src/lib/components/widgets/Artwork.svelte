@@ -10,6 +10,7 @@
   import { albumKey } from '../../albums';
   import { menu } from '../../contextMenu.svelte';
   import { demoLibrary, isDemo } from '../../demo';
+  import { NO_FILTER } from '../../library.svelte';
   import { dragValue, gesture, mapped, slide } from '../../gestures';
   import { albumMenu, playTracks, queueTracks } from '../../menus';
   import type { TrackRef } from '../../protocol/TrackRef';
@@ -41,7 +42,7 @@
   /** The shown track's album, in album order; the widget's menu is the album grid's. */
   async function albumTracks(t: TrackRef): Promise<TrackRef[]> {
     if (isDemo) return demoLibrary.filter((d) => albumKey(d) === albumKey(t));
-    const result = await engine.query({ type: 'album_tracks', albums: [albumKey(t)], sort: viewSort(view) });
+    const result = await engine.query({ type: 'album_tracks', albums: [albumKey(t)], sort: viewSort(view), filter: library.scope() });
     return result.type === 'tracks' ? result.tracks.map((x) => x.track) : [];
   }
   const items = () => {
@@ -73,7 +74,7 @@
     if (!a || !t) return;
     let current = true;
     const tracks: Promise<LibraryTrack[]> = t.album
-      ? engine.query({ type: 'album_tracks', albums: [a], sort: [] }).then((r) => (r.type === 'tracks' ? r.tracks : []))
+      ? engine.query({ type: 'album_tracks', albums: [a], sort: [], filter: NO_FILTER }).then((r) => (r.type === 'tracks' ? r.tracks : []))
       : Promise.resolve([untrack(() => library.details(t))].filter((d) => !!d));
     // shortcut: extra embedded pictures come from the track the sheet opened on; others' extras show after reopening.
     Promise.all([tracks, library.images(t.id)]).then(

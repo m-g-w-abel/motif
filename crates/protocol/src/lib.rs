@@ -524,6 +524,9 @@ pub struct TrackFilter {
     #[serde(default)]
     #[ts(optional)]
     pub min_rating: Option<u8>,
+    /// Only tracks whose audio is on this engine, not linked engines'.
+    #[serde(default)]
+    pub this_device: bool,
 }
 
 /// One tier of a list's order.
@@ -557,6 +560,8 @@ pub enum LibraryQuery {
         search: Option<String>,
         #[serde(default)]
         sort: Vec<SortRule>,
+        #[serde(default)]
+        filter: TrackFilter,
     },
     Albums {
         search: Option<String>,
@@ -566,6 +571,9 @@ pub enum LibraryQuery {
         artist: Option<String>,
         #[serde(default)]
         sort: Vec<SortRule>,
+        /// Albums with a track it lets through, counted by those.
+        #[serde(default)]
+        filter: TrackFilter,
         offset: u32,
         limit: u32,
     },
@@ -576,6 +584,8 @@ pub enum LibraryQuery {
         search: Option<String>,
         #[serde(default)]
         album_artists: bool,
+        #[serde(default)]
+        filter: TrackFilter,
         offset: u32,
         limit: u32,
     },
@@ -604,6 +614,8 @@ pub enum LibraryQuery {
         #[serde(default)]
         sort: Vec<SortRule>,
         album: String,
+        #[serde(default)]
+        filter: TrackFilter,
     },
     /// Library details (artwork, format…) for tracks by path, e.g. the queue
     /// or the playing track. Paths not in the library are left out.
@@ -627,6 +639,9 @@ pub enum LibraryQuery {
         #[serde(default)]
         #[ts(optional)]
         start: Option<u32>,
+        /// The album's tracks it lets through, as its card counts them.
+        #[serde(default)]
+        filter: TrackFilter,
     },
     /// Makes the tracks in a folder and the folders below it the context,
     /// by path, and plays from `start`.
@@ -640,6 +655,8 @@ pub enum LibraryQuery {
         albums: Vec<String>,
         #[serde(default)]
         sort: Vec<SortRule>,
+        #[serde(default)]
+        filter: TrackFilter,
     },
     AddRoot {
         path: String,

@@ -56,6 +56,9 @@ pub(crate) fn filter(filter: &TrackFilter) -> String {
     if let Some(min) = filter.min_rating {
         terms.push(format!("coalesce({RATING}, 0) >= {}", min.min(10)));
     }
+    if filter.this_device {
+        terms.push("device = ''".into());
+    }
     terms.join(" AND ")
 }
 
@@ -273,6 +276,7 @@ mod tests {
                 TrackFilter {
                     favourite,
                     min_rating,
+                    this_device: false,
                 },
                 vec![],
             ))
@@ -288,6 +292,7 @@ mod tests {
                 filter: TrackFilter {
                     favourite: true,
                     min_rating: None,
+                    this_device: false,
                 },
                 offset: 0,
                 limit: 10,

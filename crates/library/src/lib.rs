@@ -36,7 +36,7 @@ use std::{
 use protocol::{
     Command, ContextKind, ImageKind, LibraryAlbum, LibraryArtist, LibraryFolder, LibraryQuery,
     LibraryStatus, LibraryTrack, Lyrics, LyricsLine, LyricsSource, QueryResult, SortRule,
-    TrackGroup, TrackImage, TrackKeys, TrackRef,
+    TrackFilter, TrackGroup, TrackImage, TrackKeys, TrackRef,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use tokio::sync::watch;
@@ -207,20 +207,26 @@ impl Library {
                     tracks,
                 }
             }
-            LibraryQuery::Groups { search, sort } => QueryResult::Groups {
-                groups: groups(&conn, search.as_deref(), &sort)?,
+            LibraryQuery::Groups {
+                search,
+                sort,
+                filter,
+            } => QueryResult::Groups {
+                groups: groups(&conn, search.as_deref(), &sort, &filter)?,
             },
             LibraryQuery::Albums {
                 search,
                 artist,
                 sort,
+                filter,
                 offset,
                 limit,
             } => {
                 let fts = db::fts_query(search.as_deref());
                 let filter = format!(
-                    "{} AND (?4 IS NULL OR coalesce(album_artist, artist, '') = ?4)",
-                    db::SEARCH
+                    "{} AND (?4 IS NULL OR coalesce(album_artist, artist, '') = ?4) AND {}",
+                    db::SEARCH,
+                    ratings::filter(&filter)
                 );
                 let total = conn.query_row(
                     &format!(
@@ -250,6 +256,7 @@ impl Library {
             LibraryQuery::Artists {
                 search,
                 album_artists,
+                filter: only,
                 offset,
                 limit,
             } => {
@@ -267,8 +274,10 @@ impl Library {
                     )
                 };
                 let fts = db::fts_query(search.as_deref()).map(|q| format!("({q})"));
-                let filter =
-                    format!("{name} IS NOT NULL AND shadowed = 0 AND (?1 IS NULL OR {filter})");
+                let filter = format!(
+                    "{name} IS NOT NULL AND shadowed = 0 AND {} AND (?1 IS NULL OR {filter})",
+                    ratings::filter(&only)
+                );
                 let total = conn.query_row(
                     &format!("SELECT count(DISTINCT {name}) FROM tracks WHERE {filter}"),
                     [&fts],
@@ -336,8 +345,9 @@ impl Library {
                 search,
                 sort,
                 album,
+                filter,
             } => QueryResult::Position {
-                index: groups(&conn, search.as_deref(), &sort)?
+                index: groups(&conn, search.as_deref(), &sort, &filter)?
                     .into_iter()
                     .find(|g| g.key == album)
                     .map(|g| g.start),
@@ -358,10 +368,15 @@ impl Library {
                     tracks,
                 }
             }
-            LibraryQuery::AlbumTracks { albums, sort } => {
+            LibraryQuery::AlbumTracks {
+                albums,
+                sort,
+                filter,
+            } => {
                 let mut stmt = conn.prepare(&format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 {}",
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 AND {} {}",
                     db::ALBUM_KEY,
+                    ratings::filter(&filter),
                     db::order(&sort)
                 ))?;
                 let mut tracks = Vec::new();
@@ -530,10 +545,16 @@ impl Library {
                 *start,
                 ContextKind::List,
             ),
-            LibraryQuery::PlayAlbum { album, sort, start } => (
+            LibraryQuery::PlayAlbum {
+                album,
+                sort,
+                start,
+                filter,
+            } => (
                 format!(
-                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 {}",
+                    "SELECT {TRACK_COLUMNS} FROM tracks WHERE {} = ?1 AND shadowed = 0 AND {} {}",
                     db::ALBUM_KEY,
+                    ratings::filter(filter),
                     db::order(sort)
                 ),
                 Some(album.clone()),
@@ -1175,12 +1196,18 @@ fn library_track(r: &Row<'_>) -> rusqlite::Result<LibraryTrack> {
 }
 
 /// Runs of consecutive tracks from the same album, in list order.
-fn groups(conn: &Connection, search: Option<&str>, sort: &[SortRule]) -> Result<Vec<TrackGroup>> {
+fn groups(
+    conn: &Connection,
+    search: Option<&str>,
+    sort: &[SortRule],
+    filter: &TrackFilter,
+) -> Result<Vec<TrackGroup>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {}, coalesce(album, ''), coalesce(album_artist, artist, ''), coalesce(duration_ms, 0)
-         FROM tracks WHERE {} {}",
+         FROM tracks WHERE {} AND {} {}",
         db::ALBUM_KEY,
         db::SEARCH,
+        ratings::filter(filter),
         db::order(sort)
     ))?;
     let mut rows = stmt.query([db::fts_query(search)])?;

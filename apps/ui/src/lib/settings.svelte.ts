@@ -36,6 +36,8 @@ export interface Settings {
   remoteControls: boolean;
   /** Each view's display options (`viewOptions.ts`), only those changed. */
   viewOptions: SavedOptions;
+  /** Lists, albums, artists and search show only songs on the engine's own device, not its linked ones'. */
+  thisDevice: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -54,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gestures: {},
   remoteControls: false,
   viewOptions: {},
+  thisDevice: false,
 };
 
 const KEY = 'settings';
