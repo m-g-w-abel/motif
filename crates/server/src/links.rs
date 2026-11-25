@@ -31,6 +31,10 @@ const RETRY: Duration = Duration::from_secs(60);
 /// How long changes may gather before they are synced: a burst of edits
 /// (a playlist being reordered) goes in one session.
 const SETTLE: Duration = Duration::from_secs(1);
+/// How long the endpoint stays up for an engine whose link was closed as
+/// forgotten: one that missed the close notices within a keep-alive
+/// timeout and calls again before this ends ([`RETRY`]).
+const TOLD_GRACE: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 150 });
 /// How soon a failed sync or catalog session is tried again.
 const AGAIN: Duration = Duration::from_secs(5);
 
@@ -121,6 +125,9 @@ struct Live {
 struct Links {
     live: HashMap<String, Live>,
     dialling: HashSet<String>,
+    /// Sync, catalog and file connections other engines opened, to close
+    /// when one is forgotten.
+    accepted: Vec<Connection>,
 }
 
 async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
@@ -135,6 +142,11 @@ async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
         tokio::select! {
             accepted = net.accept() => {
                 let Some((alpn, conn)) = accepted else { return };
+                if alpn != Alpn::Link {
+                    let mut shared = lock(&links);
+                    shared.accepted.retain(|c| c.close_reason().is_none());
+                    shared.accepted.push(conn.clone());
+                }
                 match (alpn, library) {
                     (Alpn::Link, _) => {
                         let dialler = net::key(&conn);
@@ -163,7 +175,7 @@ async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
             }
             _ = retry.tick() => dial(net, pairing, library, &links, &mut tasks),
             Ok(()) = states.changed() => {
-                forget_unlinked(pairing, &links);
+                forget_unlinked(pairing, &links, &mut tasks);
                 dial(net, pairing, library, &links, &mut tasks);
             }
             Some(_) = tasks.join_next() => {}
@@ -261,14 +273,30 @@ fn dial(
 }
 
 /// Closes links to engines no longer linked.
-fn forget_unlinked(pairing: &Pairing, links: &Arc<Mutex<Links>>) {
-    lock(links).live.retain(|key, live| {
+/// Closes every connection with engines no longer linked: their link (they
+/// can tell, and forget this one too) and whatever they opened.
+fn forget_unlinked(pairing: &Pairing, links: &Arc<Mutex<Links>>, tasks: &mut JoinSet<()>) {
+    let mut shared = lock(links);
+    shared.live.retain(|key, live| {
         let linked = pairing.is_linked(key);
         if !linked {
             net::unlinked(&live.conn);
-            pairing.told(key);
+            // Told, unless the close got lost: then it calls again within
+            // the grace and is refused.
+            let (pairing, key) = (pairing.clone(), key.clone());
+            tasks.spawn(async move {
+                tokio::time::sleep(TOLD_GRACE).await;
+                pairing.told(&key);
+            });
         }
         linked
+    });
+    shared.accepted.retain(|conn| {
+        let linked = pairing.is_linked(&net::key(conn));
+        if !linked {
+            net::unlinked(conn);
+        }
+        linked && conn.close_reason().is_none()
     });
 }
 
@@ -606,6 +634,39 @@ mod tests {
         b.command(protocol::PairingCommand::Revoke { device })
             .unwrap();
         wait_for(&a, |s| s.devices.is_empty() && s.net.links.is_empty()).await;
+        // B stays reachable a while, for an A that missed the close.
+        assert!(b.iroh_port().is_some(), "stopped before A could hear");
+        until_port_gone(&b).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn forgetting_an_engine_ends_its_sessions_too() {
+        let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
+        b.command(protocol::PairingCommand::SetInternet { allowed: false })
+            .unwrap();
+        let (library_b, dir_b) = library("sessions");
+        b.link("A", a.engine_key(), &[]).unwrap();
+        tokio::spawn(run(b.clone(), 0, Some(library_b)));
+        let b_port = bound(&b).await;
+        // A's side by hand: a sync session B accepts and waits on.
+        let net_a = Net::bind(a.secret(), 0, &net::Relays::Off, Arc::new(|_| true))
+            .await
+            .unwrap();
+        let at_b = net::PeerAddr {
+            direct: vec![([127, 0, 0, 1], b_port).into()],
+            relay: None,
+        };
+        let conn = net_a
+            .connect(b.engine_key(), &at_b, Alpn::Sync)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        b.unlink(a.engine_key());
+        tokio::time::timeout(Duration::from_secs(5), conn.closed())
+            .await
+            .expect("the session outlived forgetting A");
+        assert!(net::refused(&conn));
+        let _ = std::fs::remove_dir_all(dir_b);
     }
 
     #[tokio::test]

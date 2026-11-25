@@ -116,6 +116,7 @@ pub fn run() {
             show_in_folder,
             remote::discover_engines,
             remote::pair_engine,
+            remote::own_engine_key,
             remote::link_engine,
             remote::unlink_engine
         ])

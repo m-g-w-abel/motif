@@ -787,9 +787,12 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   gives another file size fails (the file changed on its owner: no
   splicing). Fetches still in flight count against the 4 after a seek, and
   a reader dropped (a skip) stops reading ahead. A range lost because its
-  connection closed (the owner restarted, the network changed) is asked for
-  once more on a new connection to the same engine, so a track that started
-  plays on; a range that stalls on a live connection still fails after 8 s.
+  connection closed (the owner restarted or closed it) is asked for once
+  more on a new connection to the same engine, found where it is now and
+  only while it is still linked, so a track that started plays on; a failed
+  redial is shared by the reads waiting (for 5 s), not tried by each. A
+  range that stalls on a live connection still fails after 8 s: a silent
+  network change shows so, as the connection stays open until it times out.
 - **Accepting (2026-11-25 phone test):** the first track of an album often
   skipped after a moment, the phone logging "aborted by peer … closed
   during the handshake" and "connection lost". The owner's link loop raced
@@ -797,7 +800,8 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   the handshake inside it: a sync session ending or a pairing change
   (playing a track changes both) dropped the half-done handshake. Each
   incoming handshake now runs on its own task and `accept` takes finished
-  ones from a channel (safe to race; one slow handshake holds up no other).
+  ones from a channel (safe to race; one slow handshake holds up no other;
+  16 at once, more are refused, since anyone can call through a relay).
   On the LAN a new connection goes direct from the start (selected within
   ~1 ms in a test with public relays on); the relay is only its backup path,
   so the relay's "rate-limiting" warning seen then is about that backup
@@ -810,9 +814,15 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   (`unlink_engine`), and the other end forgets as well: a live link is
   closed "not linked" (code 1, only the peer's key can send it, encrypted),
   and one away is refused at its next dial. Either way it drops the link,
-  its catalog rows and its connections, without telling back. A forgetting
-  engine keeps the key (`forgotten` in pairing.json) and its endpoint up
-  until that engine has been told, even with no links left.
+  its catalog rows and its connections, without telling back. The
+  forgetting end closes every connection with it, sync, catalog and file
+  sessions it accepted too. It keeps the key (`to_tell` in pairing.json)
+  and its endpoint up until that engine has been told: refused at a dial,
+  or 150 s after its link was closed (one that missed the close calls again
+  by then), and for 30 days at most (a wiped phone never calls); pairing or
+  linking with that key again clears it. Linking from the app sends this
+  engine's key to the other first (`SetEngineKey`), then links: dialled
+  before it knew the key, the other would refuse and unlink it here.
 - **Opening off the decode thread:** tracks asked for and preloads open (and
   move to their start) on two long-lived threads beside the decode thread
   (`audio::opener`), so a dial or a slow disk never starves the 0.5 s output

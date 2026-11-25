@@ -70,10 +70,11 @@ struct Saved {
     internet: bool,
     #[serde(default)]
     own_relay: Option<String>,
-    /// Keys of engines forgotten here that may not know yet: the endpoint
-    /// stays up to refuse them once, which tells them to forget this one.
+    /// Keys of engines forgotten here that may not know yet, and when: the
+    /// endpoint stays up to refuse them once, which tells them to forget
+    /// this one, for [`TELL_FOR`] at most.
     #[serde(default)]
-    forgotten: Vec<String>,
+    to_tell: HashMap<String, u64>,
 }
 
 impl Default for Saved {
@@ -86,7 +87,7 @@ impl Default for Saved {
             mpd: SavedMpd::default(),
             internet: true,
             own_relay: None,
-            forgotten: Vec::new(),
+            to_tell: HashMap::new(),
         }
     }
 }
@@ -249,15 +250,16 @@ impl Pairing {
     fn forget(&self, key: &str, tell: bool) {
         let mut inner = self.lock();
         let inner = &mut *inner;
+        let now = engine::wall_clock_ms();
         let gone = remove(inner, |d| d.public_key.as_deref() == Some(key));
         if gone.is_empty() {
             return;
         }
         if tell {
-            to_tell(inner, key.to_owned());
+            to_tell(inner, key.to_owned(), now);
         }
-        for name in gone {
-            log(inner, engine::wall_clock_ms(), PairingAction::Revoked, name);
+        for stored in gone {
+            log(inner, now, PairingAction::Revoked, stored.device.name);
         }
         self.save(inner);
         self.publish(inner);
@@ -266,8 +268,7 @@ impl Pairing {
     /// The engine with `key`, forgotten here, was told so.
     pub(crate) fn told(&self, key: &str) {
         let mut inner = self.lock();
-        if inner.saved.forgotten.iter().any(|k| k == key) {
-            inner.saved.forgotten.retain(|k| k != key);
+        if inner.saved.to_tell.remove(key).is_some() {
             self.save(&inner);
             self.publish(&inner);
         }
@@ -278,8 +279,12 @@ impl Pairing {
     pub(crate) fn wanted_relays(&self) -> Option<net::Relays> {
         let inner = self.lock();
         let saved = &inner.saved;
-        let needed =
-            saved.devices.iter().any(|d| linked_key(d).is_some()) || !saved.forgotten.is_empty();
+        let now = engine::wall_clock_ms();
+        let needed = saved.devices.iter().any(|d| linked_key(d).is_some())
+            || saved
+                .to_tell
+                .values()
+                .any(|&at| now.saturating_sub(at) < TELL_FOR_MS);
         needed.then(|| match (saved.internet, &saved.own_relay) {
             (false, _) => net::Relays::Off,
             (true, Some(url)) => net::Relays::Own(url.clone()),
@@ -593,7 +598,7 @@ impl Pairing {
         let key = parse_key(key).ok_or("bad engine key")?;
         let mut inner = self.lock();
         let inner = &mut *inner;
-        inner.saved.forgotten.retain(|k| *k != key);
+        inner.saved.to_tell.remove(&key);
         let now = engine::wall_clock_ms();
         let known = inner
             .saved
@@ -661,8 +666,9 @@ impl Pairing {
         if stored.device.public_key.as_ref() == Some(&key) {
             return Ok(());
         }
-        stored.device.public_key = Some(key);
+        stored.device.public_key = Some(key.clone());
         let name = stored.device.name.clone();
+        inner.saved.to_tell.remove(&key);
         log(inner, engine::wall_clock_ms(), PairingAction::Linked, name);
         self.save(inner);
         self.publish(inner);
@@ -706,13 +712,14 @@ impl Pairing {
             PairingCommand::Revoke { device } => {
                 let stored = find(inner, &device)?;
                 let (name, key) = (stored.device.name.clone(), stored.device.public_key.clone());
-                let linked = linked_key(stored).is_some();
                 // Its engine goes too, under whichever entry (it may have paired twice).
-                remove(inner, |d| {
+                let gone = remove(inner, |d| {
                     d.id == device || key.is_some() && d.public_key == key
                 });
-                if let Some(key) = key.filter(|_| linked) {
-                    to_tell(inner, key);
+                if gone.iter().any(|d| linked_key(d).is_some())
+                    && let Some(key) = key
+                {
+                    to_tell(inner, key, now);
                 }
                 log(inner, now, PairingAction::Revoked, name);
             }
@@ -765,6 +772,9 @@ impl Pairing {
             last_seen_ms: None,
         };
         let id = device.id.clone();
+        if let Some(key) = &device.public_key {
+            inner.saved.to_tell.remove(key);
+        }
         inner.saved.devices.push(Stored {
             device,
             token_hash: Some(hash(&token)),
@@ -866,15 +876,16 @@ fn lan_first(address: &mut net::PeerAddr, lan: Vec<SocketAddr>) -> bool {
     changed
 }
 
-fn to_tell(inner: &mut Inner, key: String) {
-    if !inner.saved.forgotten.contains(&key) {
-        inner.saved.forgotten.push(key);
-    }
+fn to_tell(inner: &mut Inner, key: String, now: u64) {
+    inner.saved.to_tell.insert(key, now);
 }
 
-/// Removes the devices `which` picks and closes their connections; their
-/// names.
-fn remove(inner: &mut Inner, which: impl Fn(&PairedDevice) -> bool) -> Vec<String> {
+/// How long an engine forgotten here is waited for, to tell it: one wiped
+/// or gone for good never calls, and the endpoint costs battery.
+const TELL_FOR_MS: u64 = 30 * 24 * 3600 * 1000;
+
+/// Removes the devices `which` picks and closes their connections.
+fn remove(inner: &mut Inner, which: impl Fn(&PairedDevice) -> bool) -> Vec<Stored> {
     let (gone, kept) = std::mem::take(&mut inner.saved.devices)
         .into_iter()
         .partition::<Vec<_>, _>(|d| which(&d.device));
@@ -887,7 +898,7 @@ fn remove(inner: &mut Inner, which: impl Fn(&PairedDevice) -> bool) -> Vec<Strin
             close.notify_one();
         }
     }
-    gone.into_iter().map(|d| d.device.name).collect()
+    gone
 }
 
 /// The key of a linked engine: one with [`Scope::Sync`].
@@ -1229,6 +1240,54 @@ mod tests {
         pairing.unlink(&key(2));
         assert!(!pairing.is_linked(&key(2)));
         assert!(pairing.subscribe().borrow().devices.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_engine_forgotten_here_is_told_for_a_while_unless_it_pairs_again() {
+        let pairing = Pairing::in_memory();
+        pairing
+            .command(PairingCommand::SetAutoApprove {
+                preset: Some(Preset::ViewOnly),
+            })
+            .unwrap();
+        // Paired twice: first without sync, then linked.
+        let first = PairRequest {
+            public_key: Some(key(1)),
+            ..request(&pairing.start().code)
+        };
+        let first = pairing.redeem(first, peer()).await.unwrap();
+        pairing.link("Phone", &key(1), &[]).unwrap();
+        assert_eq!(pairing.subscribe().borrow().devices.len(), 1, "merged");
+        pairing.link("Desk", &key(2), &[]).unwrap();
+        // Removing the entry forgets the linked engine, which is to be told.
+        pairing
+            .command(PairingCommand::Revoke {
+                device: first.device,
+            })
+            .unwrap();
+        pairing.unlink(&key(2));
+        assert!(pairing.wanted_relays().is_some(), "to tell");
+        // Pairing again with its key: nothing to tell.
+        pairing
+            .command(PairingCommand::SetAutoApprove {
+                preset: Some(Preset::Full),
+            })
+            .unwrap();
+        let again = PairRequest {
+            public_key: Some(key(1)),
+            ..request(&pairing.start().code)
+        };
+        pairing.redeem(again, peer()).await.unwrap();
+        pairing.lock().saved.devices.clear();
+        assert_eq!(pairing.lock().saved.to_tell.len(), 1);
+        // Not for ever: a wiped phone never calls.
+        pairing
+            .lock()
+            .saved
+            .to_tell
+            .values_mut()
+            .for_each(|at| *at = 0);
+        assert!(pairing.wanted_relays().is_none(), "told for ever");
     }
 
     #[test]

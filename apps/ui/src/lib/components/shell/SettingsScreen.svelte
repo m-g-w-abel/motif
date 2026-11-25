@@ -293,7 +293,7 @@
                 <button class="button" onclick={() => engines.update((list) => switchTo(list, saved.id))}>Switch</button>
               {/if}
               {#if saved.id !== LOCAL_ID}
-                <button class="button" onclick={() => engines.forget(saved.id)}>Forget</button>
+                <button class="button" title="Also stops syncing with it: its songs leave this library" onclick={() => engines.forget(saved.id)}>Forget</button>
               {/if}
             </div>
           {/each}
@@ -796,7 +796,7 @@
                 <button class="button" onclick={() => (removing = device.id)}>Remove</button>
                 {#if removing === device.id}
                   <p class="status confirm">
-                    Remove {device.name}? {linkOnly ? 'It stops syncing with this device.' : 'It will need a new code to connect again.'}
+                    Remove {device.name}? {linkOnly ? 'It stops syncing with this device, and its songs leave this library.' : syncs ? 'It will need a new code to connect again, stops syncing with this device, and its songs leave this library.' : 'It will need a new code to connect again.'}
                     <button class="button" onclick={() => engine.pair({ type: 'revoke', device: device.id })}>Remove</button>
                     <button class="button" onclick={() => (removing = null)}>Cancel</button>
                   </p>

@@ -90,8 +90,10 @@ pub struct Net {
     accepted: Arc<tokio::sync::Mutex<mpsc::Receiver<(Alpn, Connection)>>>,
 }
 
-/// How long an incoming handshake may take before the next is accepted.
+/// How long an incoming handshake may take.
 const HANDSHAKE: Duration = Duration::from_secs(10);
+/// Incoming handshakes at once.
+const HANDSHAKES: usize = 16;
 
 impl Net {
     /// Binds UDP `port` (another if it is taken; 0 picks one) on every
@@ -270,9 +272,16 @@ pub async fn hello(conn: &Connection, mine: &PeerAddr) -> Result<PeerAddr, Strin
 /// once its handshake is done, each handshake on its own task (a slow one
 /// holds up no other), until the endpoint closes.
 async fn handshakes(endpoint: Endpoint, tx: mpsc::Sender<(Alpn, Connection)>) {
+    // Anyone can call through a public relay: more at once are refused.
+    let slots = Arc::new(tokio::sync::Semaphore::new(HANDSHAKES));
     while let Some(incoming) = endpoint.accept().await {
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            incoming.refuse();
+            continue;
+        };
         let tx = tx.clone();
         tokio::spawn(async move {
+            let _slot = slot;
             match tokio::time::timeout(HANDSHAKE, incoming).await {
                 Ok(Ok(conn)) => match Alpn::of(conn.alpn()) {
                     Some(alpn) => {

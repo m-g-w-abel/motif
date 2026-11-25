@@ -93,20 +93,27 @@ pub async fn pair_engine(
     pair(address, code, name, key).await
 }
 
-/// Records the engine with `key`, which this app controls with Sync, as
-/// linked to its own engine, and returns its own engine's key to send there
-/// (`PairingCommand::SetEngineKey`). `addresses` are where this app reached
-/// it, which its own engine remembers. Safe to repeat.
+/// This app's own engine's key, to send to the engine it controls
+/// (`PairingCommand::SetEngineKey`) before [`link_engine`].
+#[tauri::command]
+pub fn own_engine_key(own: tauri::State<'_, OwnEngine>) -> Result<String, String> {
+    let pairing = own.0.as_ref().ok_or("this app's engine runs elsewhere")?;
+    Ok(pairing.engine_key().to_owned())
+}
+
+/// Records the engine with `key`, which this app controls with Sync and
+/// which has this app's engine key, as linked to its own engine.
+/// `addresses` are where this app reached it, which its own engine
+/// remembers. Safe to repeat.
 #[tauri::command]
 pub fn link_engine(
     own: tauri::State<'_, OwnEngine>,
     key: String,
     name: String,
     addresses: Vec<String>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let pairing = own.0.as_ref().ok_or("this app's engine runs elsewhere")?;
-    pairing.link(&name, &key, &addresses)?;
-    Ok(pairing.engine_key().to_owned())
+    pairing.link(&name, &key, &addresses)
 }
 
 /// Unlinks this app's engine from the engine with `key`, which this app

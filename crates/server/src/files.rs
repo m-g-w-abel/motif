@@ -210,7 +210,9 @@ async fn dial(
     for (key, id) in copies {
         let addr = pairing.linked().into_iter().find(|(k, _)| *k == key);
         let Some((_, addr)) = addr else { continue };
-        match tokio::time::timeout(DIAL, connect(&net, &key, &addr, id, runtime.clone())).await {
+        let locate = locate(pairing.clone(), key.clone());
+        let connected = connect(&net, &key, &addr, id, runtime.clone(), locate);
+        match tokio::time::timeout(DIAL, connected).await {
             Ok(Ok(opened)) => return Ok(opened),
             Ok(Err(err)) => reasons.push(err),
             Err(_) => reasons.push("no answer".into()),
@@ -222,6 +224,21 @@ async fn dial(
     ))
 }
 
+/// Where a linked engine can be dialled now: this engine's endpoint (it
+/// changes when it restarts) and its address, or why not (it was unlinked).
+type Locate = Arc<dyn Fn() -> Result<(Net, net::PeerAddr), String> + Send + Sync>;
+
+fn locate(pairing: Pairing, key: String) -> Locate {
+    Arc::new(move || {
+        let addr = pairing.linked().into_iter().find(|(k, _)| *k == key);
+        let (_, addr) = addr.ok_or("the engine with it is no longer linked")?;
+        let net = pairing
+            .net()
+            .ok_or("on a linked engine, but not connected to any now")?;
+        Ok((net, addr))
+    })
+}
+
 /// Opens track `id` on the linked engine `key`: its first range and size.
 async fn connect(
     net: &Net,
@@ -229,15 +246,15 @@ async fn connect(
     addr: &net::PeerAddr,
     id: i64,
     runtime: Handle,
+    locate: Locate,
 ) -> Result<(Arc<Remote>, u64), String> {
     let conn = net.connect(key, addr, Alpn::Files).await?;
     let (len, first) = fetch(&conn, id, 0, CHUNK as u32).await?;
     let remote = Remote {
         conn: Mutex::new(conn),
-        redial: tokio::sync::Mutex::new(()),
-        net: net.clone(),
+        redial: tokio::sync::Mutex::new(None),
         key: key.into(),
-        addr: addr.clone(),
+        locate,
         id,
         len,
         runtime,
@@ -255,11 +272,11 @@ async fn connect(
 /// being fetched.
 struct Remote {
     conn: Mutex<Connection>,
-    /// Held while one fetch dials again for all of them.
-    redial: tokio::sync::Mutex<()>,
-    net: Net,
+    /// Held while one fetch dials again for all of them; the last failure
+    /// to, which the others share for [`DIAL`].
+    redial: tokio::sync::Mutex<Option<(String, Instant)>>,
     key: String,
-    addr: net::PeerAddr,
+    locate: Locate,
     id: i64,
     /// The file's size when it was opened.
     len: u64,
@@ -291,8 +308,9 @@ impl Remote {
     }
 
     /// Chunk `i`, asked for again on a new connection if this one closed
-    /// (the owner restarted, the network changed) so a track that started
-    /// plays on. A range that stalls on a live connection fails.
+    /// (the owner restarted or closed it) so a track that started plays on.
+    /// A range that stalls on a live connection fails: a silent network
+    /// change shows so, as the connection stays open until it times out.
     async fn fetch(&self, i: u64) -> Result<(u64, Vec<u8>), String> {
         let conn = self.conn();
         match fetch(&conn, self.id, i * CHUNK, CHUNK as u32).await {
@@ -307,17 +325,35 @@ impl Remote {
     /// A connection in place of `lost`: dialled once for every fetch that
     /// lost it.
     async fn reconnect(&self, lost: &Connection) -> Result<Connection, String> {
-        let _one = self.redial.lock().await;
+        let mut failed = self.redial.lock().await;
         let now = self.conn();
         if now.stable_id() != lost.stable_id() {
             return Ok(now);
         }
-        let dialled = self.net.connect(&self.key, &self.addr, Alpn::Files);
-        let conn = tokio::time::timeout(DIAL, dialled)
-            .await
-            .map_err(|_| "the linked engine stopped answering".to_string())??;
-        *self.conn.lock().unwrap_or_else(|e| e.into_inner()) = conn.clone();
-        Ok(conn)
+        if let Some((err, at)) = &*failed
+            && at.elapsed() < DIAL
+        {
+            return Err(err.clone());
+        }
+        let dialled = async {
+            let (net, addr) = (self.locate)()?;
+            let dialled = net.connect(&self.key, &addr, Alpn::Files);
+            let conn = tokio::time::timeout(DIAL, dialled)
+                .await
+                .map_err(|_| "the linked engine stopped answering".to_string())??;
+            Ok::<_, String>(conn)
+        };
+        match dialled.await {
+            Ok(conn) => {
+                *self.conn.lock().unwrap_or_else(|e| e.into_inner()) = conn.clone();
+                *failed = None;
+                Ok(conn)
+            }
+            Err(err) => {
+                *failed = Some((err.clone(), Instant::now()));
+                Err(err)
+            }
+        }
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, Fetched> {
@@ -642,9 +678,57 @@ mod tests {
     }
 
     async fn open(owner: &Net, reader: &Net, id: i64) -> Result<Reader, String> {
+        let (reader, at) = (reader.clone(), loopback(owner));
+        open_with(
+            owner,
+            Arc::new(move || Ok((reader.clone(), at.clone()))),
+            id,
+        )
+        .await
+    }
+
+    /// [`open`], redialling where `locate` says.
+    async fn open_with(owner: &Net, locate: Locate, id: i64) -> Result<Reader, String> {
         let runtime = Handle::current();
-        let (remote, len) = connect(reader, &owner.key(), &loopback(owner), id, runtime).await?;
+        let (net, at) = locate()?;
+        let (remote, len) = connect(&net, &owner.key(), &at, id, runtime, locate).await?;
         Ok(Reader::new(remote, len))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_redials_only_a_still_linked_engine_and_only_once() {
+        let file = wav(5);
+        let (library, dir) = library("redial", &[("a.wav", file)]).await;
+        let id = ids(&library)[0];
+        let (owner, reader) = pair(library, None).await;
+        // Unlinked since it opened.
+        let linked = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (net, at, still) = (reader.clone(), loopback(&owner), linked.clone());
+        let locate: Locate =
+            Arc::new(
+                move || match still.load(std::sync::atomic::Ordering::Relaxed) {
+                    true => Ok((net.clone(), at.clone())),
+                    false => Err("no longer linked".into()),
+                },
+            );
+        let stream = open_with(&owner, locate, id).await.unwrap();
+        linked.store(false, std::sync::atomic::Ordering::Relaxed);
+        stream.remote.conn().close(0u32.into(), b"gone");
+        let (_, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
+        let err = read.expect_err("redialled an engine no longer linked");
+        assert!(err.to_string().contains("no longer linked"), "{err}");
+
+        // Gone for good: the redial fails once, not once per read.
+        let stream = open(&owner, &reader, id).await.unwrap();
+        owner.close().await;
+        stream.remote.conn().close(0u32.into(), b"gone");
+        let (stream, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
+        read.expect_err("read from a closed engine");
+        let started = Instant::now();
+        let (_, read) = blocking(stream, |r| read_at(r, 20 * CHUNK, 10)).await;
+        read.expect_err("read from a closed engine");
+        assert!(started.elapsed() < Duration::from_secs(1), "dialled again");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Runs `f` with `reader` off the runtime, as the decode thread does.
@@ -973,8 +1057,16 @@ mod tests {
             let ids = ids.clone();
             let played = tokio::task::spawn_blocking(move || {
                 let open: Open = Arc::new(move |id| {
-                    let connected =
-                        runtime.block_on(connect(&reader, &key, &addr, id, runtime.clone()));
+                    let (net, at) = (reader.clone(), addr.clone());
+                    let locate: Locate = Arc::new(move || Ok((net.clone(), at.clone())));
+                    let connected = runtime.block_on(connect(
+                        &reader,
+                        &key,
+                        &addr,
+                        id,
+                        runtime.clone(),
+                        locate,
+                    ));
                     let (remote, len) = connected.unwrap();
                     engine::audio::decoder::open(
                         &opened(remote, len),
