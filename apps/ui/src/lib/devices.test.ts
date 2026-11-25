@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cantReach, deviceMark, elsewhere } from './devices';
+import { cantReach, deviceMark, elsewhere, pageMark } from './devices';
 import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { PairingState } from './protocol/PairingState';
 import type { Reach } from './protocol/Reach';
@@ -53,5 +53,13 @@ describe('tracks on other devices', () => {
     expect(deviceMark(away, pairing({ d1: 'direct' }))).toEqual({ title: 'On Laptop', away: false });
     expect(deviceMark(away, pairing({}))).toEqual({ title: 'On Laptop, which can’t be reached now', away: true });
     expect(deviceMark(away, null)).toEqual({ title: 'On another device', away: false });
+  });
+
+  it('mark a page when any of its songs is elsewhere, dimmed while none of those can be reached', () => {
+    const desk = track('remote:k-desk:2', ['k-desk']);
+    expect(pageMark([here, undefined], pairing({}))).toBeNull();
+    expect(pageMark([here, away, both], pairing({ d1: 'direct' }))).toEqual({ title: 'Some songs are on Laptop or Desk', away: false });
+    expect(pageMark([away, desk], pairing({ d2: 'relayed' }))).toEqual({ title: 'Some songs are on Laptop or Desk', away: false });
+    expect(pageMark([here, away], pairing({}))).toEqual({ title: 'Some songs are on Laptop, which can’t be reached now', away: true });
   });
 });

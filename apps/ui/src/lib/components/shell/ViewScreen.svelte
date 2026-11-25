@@ -9,6 +9,7 @@
   import { getApp, setViewState, type ViewState } from '../../context';
   import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
   import { demoLibrary, isDemo } from '../../demo';
+  import { pageMark } from '../../devices';
   import { launcherItems } from '../../launcher';
   import { NO_FILTER, type LibraryTracks, type Shown } from '../../library.svelte';
   import { libraryMenu } from '../../menus';
@@ -182,6 +183,7 @@
       : undefined,
   );
   const first = $derived(rows[0]);
+  const pageCloud = $derived(page ? pageMark(rows.map((r) => r.details), engine.pairing) : null);
   /** The page's cover and title fly from and to its card (`AlbumGrid`). */
   const card = view.kind === 'album' ? `album:${view.key}` : view.kind === 'playlist' ? `playlist:${view.id}` : '';
 </script>
@@ -211,6 +213,10 @@
       <SortMenu rules={sort} defaults={sortDefaults} onchange={(rules) => settings.setView(optionsKey, { sort: rules })} />
     {:else if view.kind === 'songs'}
       <SortMenu rules={sortRules.rules[area.source]} defaults={DEFAULT_RULES} onchange={(rules) => sortRules.set(area.source, rules)} />
+    {/if}
+    {#if pageCloud}
+      <!-- Informational for now; #247 makes this spot the download toggle. -->
+      <span class="cloud" class:away={pageCloud.away} title={pageCloud.title} aria-label={pageCloud.title}><Icon name="cloud" size={18} /></span>
     {/if}
     {#if optionsKey}
       <button
@@ -531,6 +537,19 @@
     .actions {
       gap: var(--space-1);
     }
+  }
+
+  /* Sized like a tool, so #247's download button can take its place. */
+  .cloud {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    color: var(--text-muted);
+  }
+
+  .cloud.away {
+    opacity: 0.45;
   }
 
   .tool.text {
