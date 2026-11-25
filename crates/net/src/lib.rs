@@ -16,6 +16,7 @@ use iroh::{
 };
 use protocol::Reach;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 /// What a connection is for; each has its own ALPN, so later features plug
 /// in without a protocol of their own to tell them apart.
@@ -84,6 +85,8 @@ pub type Linked = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 pub struct Net {
     endpoint: Endpoint,
     internet: bool,
+    /// Connections whose handshake is done, from [`handshakes`].
+    accepted: Arc<tokio::sync::Mutex<mpsc::Receiver<(Alpn, Connection)>>>,
 }
 
 /// How long an incoming handshake may take before the next is accepted.
@@ -105,9 +108,12 @@ impl Net {
             }
             bound => bound,
         }?;
+        let (tx, rx) = mpsc::channel(8);
+        tokio::spawn(handshakes(endpoint.clone(), tx));
         Ok(Self {
             endpoint,
             internet: *relays != Relays::Off,
+            accepted: Arc::new(tokio::sync::Mutex::new(rx)),
         })
     }
 
@@ -146,22 +152,10 @@ impl Net {
             .map_err(|e| e.to_string())
     }
 
-    /// The next connection from a linked engine; `None` once closed.
-    // shortcut: one handshake at a time (each ≤ HANDSHAKE); spawn them if
-    // many engines ever connect at once.
+    /// The next connection from a linked engine; `None` once closed. Safe
+    /// to race in a `select!`: handshakes run on their own.
     pub async fn accept(&self) -> Option<(Alpn, Connection)> {
-        loop {
-            let incoming = self.endpoint.accept().await?;
-            match tokio::time::timeout(HANDSHAKE, incoming).await {
-                Ok(Ok(conn)) => match Alpn::of(conn.alpn()) {
-                    Some(alpn) => return Some((alpn, conn)),
-                    None => conn.close(0u32.into(), b"unknown ALPN"),
-                },
-                // Refused keys end here too, closed by the gate.
-                Ok(Err(err)) => tracing::debug!(%err, "iroh: incoming failed"),
-                Err(_) => tracing::debug!("iroh: handshake timed out"),
-            }
-        }
+        self.accepted.lock().await.recv().await
     }
 
     pub async fn close(&self) {
@@ -220,6 +214,28 @@ pub async fn hello(conn: &Connection, mine: &PeerAddr) -> Result<PeerAddr, Strin
     let (told, heard) = tokio::join!(tell, hear);
     told?;
     heard
+}
+
+/// Accepts every incoming connection on `endpoint` and hands it to `tx`
+/// once its handshake is done, each handshake on its own task (a slow one
+/// holds up no other), until the endpoint closes.
+async fn handshakes(endpoint: Endpoint, tx: mpsc::Sender<(Alpn, Connection)>) {
+    while let Some(incoming) = endpoint.accept().await {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            match tokio::time::timeout(HANDSHAKE, incoming).await {
+                Ok(Ok(conn)) => match Alpn::of(conn.alpn()) {
+                    Some(alpn) => {
+                        let _ = tx.send((alpn, conn)).await;
+                    }
+                    None => conn.close(0u32.into(), b"unknown ALPN"),
+                },
+                // Refused keys end here too, closed by the gate.
+                Ok(Err(err)) => tracing::debug!(%err, "iroh: incoming failed"),
+                Err(_) => tracing::debug!("iroh: handshake timed out"),
+            }
+        });
+    }
 }
 
 /// A hello is a few addresses and a URL.
@@ -338,6 +354,31 @@ mod tests {
         assert_eq!(heard_by_a.unwrap(), at_b);
         assert_eq!(heard_by_b.unwrap(), at_a);
         assert_eq!(reach(&dialled), Reach::Direct);
+    }
+
+    /// A select loop races accepting with other events: an event firing
+    /// mid-handshake must not drop the connection being accepted.
+    #[tokio::test]
+    async fn a_handshake_survives_accepting_being_raced() {
+        let (a, b) = (net(1, Some(2)).await, net(2, Some(1)).await);
+        let (at_b, b_key) = (loopback(&b), b.key());
+        let dialled = a.connect(&b_key, &at_b, Alpn::Files);
+        let accepting = async {
+            loop {
+                tokio::select! {
+                    accepted = b.accept() => return accepted,
+                    () = tokio::time::sleep(Duration::from_micros(200)) => {}
+                }
+            }
+        };
+        let (dialled, accepted) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(dialled, accepting)
+        })
+        .await
+        .expect("timed out");
+        let conn = dialled.expect("the handshake was dropped");
+        assert_eq!(accepted.unwrap().0, Alpn::Files);
+        assert!(conn.close_reason().is_none());
     }
 
     #[tokio::test]

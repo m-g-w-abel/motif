@@ -177,7 +177,7 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
         open: Arc::new(move || {
             let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
             let (remote, len) = match &*open {
-                Some((Ok((remote, len)), _)) if remote.conn.close_reason().is_none() => {
+                Some((Ok((remote, len)), _)) if remote.conn().close_reason().is_none() => {
                     (remote.clone(), *len)
                 }
                 Some((Err(err), at)) if at.elapsed() < DIAL => {
@@ -233,7 +233,11 @@ async fn connect(
     let conn = net.connect(key, addr, Alpn::Files).await?;
     let (len, first) = fetch(&conn, id, 0, CHUNK as u32).await?;
     let remote = Remote {
-        conn,
+        conn: Mutex::new(conn),
+        redial: tokio::sync::Mutex::new(()),
+        net: net.clone(),
+        key: key.into(),
+        addr: addr.clone(),
         id,
         len,
         runtime,
@@ -250,7 +254,12 @@ async fn connect(
 /// A connection to the owner of track `id` and the ranges fetched or
 /// being fetched.
 struct Remote {
-    conn: Connection,
+    conn: Mutex<Connection>,
+    /// Held while one fetch dials again for all of them.
+    redial: tokio::sync::Mutex<()>,
+    net: Net,
+    key: String,
+    addr: net::PeerAddr,
     id: i64,
     /// The file's size when it was opened.
     len: u64,
@@ -277,6 +286,40 @@ enum Chunk {
 }
 
 impl Remote {
+    fn conn(&self) -> Connection {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Chunk `i`, asked for again on a new connection if this one closed
+    /// (the owner restarted, the network changed) so a track that started
+    /// plays on. A range that stalls on a live connection fails.
+    async fn fetch(&self, i: u64) -> Result<(u64, Vec<u8>), String> {
+        let conn = self.conn();
+        match fetch(&conn, self.id, i * CHUNK, CHUNK as u32).await {
+            Err(_) if conn.close_reason().is_some() => {
+                let conn = self.reconnect(&conn).await?;
+                fetch(&conn, self.id, i * CHUNK, CHUNK as u32).await
+            }
+            fetched => fetched,
+        }
+    }
+
+    /// A connection in place of `lost`: dialled once for every fetch that
+    /// lost it.
+    async fn reconnect(&self, lost: &Connection) -> Result<Connection, String> {
+        let _one = self.redial.lock().await;
+        let now = self.conn();
+        if now.stable_id() != lost.stable_id() {
+            return Ok(now);
+        }
+        let dialled = self.net.connect(&self.key, &self.addr, Alpn::Files);
+        let conn = tokio::time::timeout(DIAL, dialled)
+            .await
+            .map_err(|_| "the linked engine stopped answering".to_string())??;
+        *self.conn.lock().unwrap_or_else(|e| e.into_inner()) = conn.clone();
+        Ok(conn)
+    }
+
     fn state(&self) -> std::sync::MutexGuard<'_, Fetched> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -319,7 +362,7 @@ impl Remote {
             state.chunks.insert(i, Chunk::Coming(n));
             let remote = self.clone();
             self.runtime.spawn(async move {
-                let fetched = fetch(&remote.conn, remote.id, i * CHUNK, CHUNK as u32).await;
+                let fetched = remote.fetch(i).await;
                 let mut state = remote.state();
                 if let Some(chunk @ Chunk::Coming(_)) = state.chunks.get_mut(&i)
                     && matches!(chunk, Chunk::Coming(m) if *m == n)
@@ -340,10 +383,10 @@ impl Remote {
     }
 
     /// Chunk `i` once it is here. A lost link is an error, never a wait
-    /// longer than [`STALL`] (and never an end of file, which would end
-    /// the track as if it were complete).
+    /// longer than a dial and a [`STALL`] (and never an end of file, which
+    /// would end the track as if it were complete).
     fn chunk(&self, i: u64) -> io::Result<Arc<[u8]>> {
-        let deadline = Instant::now() + STALL + Duration::from_secs(1);
+        let deadline = Instant::now() + DIAL + STALL + Duration::from_secs(1);
         let mut state = self.state();
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -710,7 +753,24 @@ mod tests {
             io::ErrorKind::UnexpectedEof,
             "would end the track"
         );
-        assert!(started.elapsed() < STALL + Duration::from_secs(2));
+        assert!(started.elapsed() < DIAL + STALL + Duration::from_secs(2));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_reads_on_when_its_connection_closes() {
+        let file = wav(5);
+        let (library, dir) = library("reconnect", &[("a.wav", file.clone())]).await;
+        let id = ids(&library)[0];
+        let (owner, reader) = pair(library, None).await;
+        let stream = open(&owner, &reader, id).await.unwrap();
+        let (stream, first) = blocking(stream, |r| read_at(r, 0, 10)).await;
+        assert_eq!(first.unwrap(), file[..10]);
+        // As when the owner restarts or drops it.
+        stream.remote.conn().close(0u32.into(), b"gone");
+        let (_, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
+        let at = (10 * CHUNK) as usize;
+        assert_eq!(read.unwrap(), file[at..at + 10]);
         let _ = std::fs::remove_dir_all(dir);
     }
 

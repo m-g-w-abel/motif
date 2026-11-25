@@ -786,7 +786,22 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   answer to a range asked for since is dropped, and a range whose answer
   gives another file size fails (the file changed on its owner: no
   splicing). Fetches still in flight count against the 4 after a seek, and
-  a reader dropped (a skip) stops reading ahead.
+  a reader dropped (a skip) stops reading ahead. A range lost because its
+  connection closed (the owner restarted, the network changed) is asked for
+  once more on a new connection to the same engine, so a track that started
+  plays on; a range that stalls on a live connection still fails after 8 s.
+- **Accepting (2026-11-25 phone test):** the first track of an album often
+  skipped after a moment, the phone logging "aborted by peer … closed
+  during the handshake" and "connection lost". The owner's link loop raced
+  `Net::accept` against its other events in a `select!`, and accept awaited
+  the handshake inside it: a sync session ending or a pairing change
+  (playing a track changes both) dropped the half-done handshake. Each
+  incoming handshake now runs on its own task and `accept` takes finished
+  ones from a channel (safe to race; one slow handshake holds up no other).
+  On the LAN a new connection goes direct from the start (selected within
+  ~1 ms in a test with public relays on); the relay is only its backup path,
+  so the relay's "rate-limiting" warning seen then is about that backup
+  traffic, not where the stream went.
 - **Opening off the decode thread:** tracks asked for and preloads open (and
   move to their start) on two long-lived threads beside the decode thread
   (`audio::opener`), so a dial or a slow disk never starves the 0.5 s output
