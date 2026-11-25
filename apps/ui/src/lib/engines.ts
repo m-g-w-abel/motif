@@ -64,8 +64,13 @@ export function removeEngine(list: EngineList, id: string): EngineList {
   return { engines: list.engines.filter((e) => e.id !== id), current: list.current === id ? LOCAL_ID : list.current };
 }
 
-/** Where to connect on the `attempt`th try; `own` is this device's engine. */
-export function socketUrl(engine: SavedEngine, attempt: number, own: string): string {
+/** Where a connection goes: this device's own engine, an address on the LAN, or the tunnel over iroh (through this app's engine). */
+export type Route = { kind: 'own' } | { kind: 'lan'; address: string } | { kind: 'tunnel' };
+
+/** Where to connect on the `attempt`th try: each LAN address in turn, then the tunnel where this app has an engine to `tunnel` through. */
+export function routeAt(engine: SavedEngine, attempt: number, tunnel: boolean): Route {
   const { addresses } = engine;
-  return addresses.length ? `ws://${addresses[attempt % addresses.length]}/ws` : own;
+  if (!addresses.length) return { kind: 'own' };
+  const at = attempt % (addresses.length + (tunnel ? 1 : 0));
+  return at < addresses.length ? { kind: 'lan', address: addresses[at] } : { kind: 'tunnel' };
 }

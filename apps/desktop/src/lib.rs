@@ -109,6 +109,7 @@ pub fn run() {
             tracing::info!(%url, "engine");
             app.manage(EngineUrl(url));
             app.manage(remote::OwnEngine(pairing));
+            app.manage(remote::Tunnels::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -118,7 +119,9 @@ pub fn run() {
             remote::pair_engine,
             remote::own_engine_key,
             remote::link_engine,
-            remote::unlink_engine
+            remote::unlink_engine,
+            remote::tunnel,
+            remote::tunnel_reach
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

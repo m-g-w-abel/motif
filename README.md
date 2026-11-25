@@ -110,6 +110,11 @@ control isn't an add-on: it's the normal code path.
 - Songs held only by a linked engine play by streaming the original from
   it: byte-range reads over iroh with ordered read-ahead, so decoders seek
   in it as in a file and the next track still starts gaplessly.
+- Away from home, the app controls a linked engine over the same link: it
+  tries the LAN first, then tunnels the same WebSocket protocol over an
+  iroh stream through a loopback proxy, with the same token and scopes
+  (and only from the engine that token was paired with). The connection
+  shows whether it goes over the LAN, the internet or a relay.
 - An **MPD server**, so existing MPD clients can drive Motif.
 - Scrobbling to Last.fm, ListenBrainz and Libre.fm, with an offline queue.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now

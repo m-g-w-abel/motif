@@ -5,6 +5,10 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
+- **Control your desktop from anywhere**: a phone (or another desktop) whose
+  engine is linked keeps controlling it away from home, over the same
+  encrypted link, with the same permissions as at home. The connection shows
+  whether it goes over the LAN, the internet or a relay.
 - **Songs on your other devices show up in your library**: a linked device's
   songs mix in with yours (the same song on both shows once), marked with a
   cloud and dimmed while that device can't be reached. The sort menu's "Only

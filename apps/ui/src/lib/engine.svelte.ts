@@ -13,13 +13,25 @@ import type { QueryResult } from './protocol/QueryResult';
 import type { PlayerState } from './protocol/PlayerState';
 import type { QueueItem } from './protocol/QueueItem';
 import type { ServerMessage } from './protocol/ServerMessage';
-import { currentEngine, loadEngines, LOCAL_ID, removeEngine, setToken, socketUrl, type EngineList } from './engines';
+import { currentEngine, loadEngines, LOCAL_ID, removeEngine, routeAt, setToken, type EngineList, type Route } from './engines';
 import { toasts } from './toast.svelte';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
+/** How an open connection to another device's engine goes: the LAN, or the tunnel over the internet, directly or through a relay. */
+export type Via = 'lan' | 'internet' | 'relayed';
+export const VIA_LABELS: Record<Via, string> = { lan: 'LAN', internet: 'internet', relayed: 'relayed' };
+
+/** Whether this is the app, whose engine can tunnel to linked engines away from home; browsers stay on the LAN. */
+const canTunnel = () => '__TAURI_INTERNALS__' in window;
 
 const PROTOCOL_VERSION = 9;
 const MAX_BACKOFF_MS = 5000;
+/** How long another device's engine may take to answer at one address: away from home, a LAN address can hang for a minute. */
+const CONNECT_TIMEOUT_MS = 4000;
+/** The tunnel may first have to find a way through, over a relay. */
+const TUNNEL_TIMEOUT_MS = 15_000;
+/** How often the tunnel's route is checked: it changes when a relayed one gets through directly. */
+const VIA_POLL_MS = 5000;
 
 const ENGINES_KEY = 'engines';
 /** Where the token lived before there was a list of engines. */
@@ -90,6 +102,8 @@ async function ownEngineUrl(): Promise<string> {
  */
 export class EngineClient {
   status = $state<ConnectionStatus>('connecting');
+  /** How the open connection goes; `null` for this device's own engine, or while not open. */
+  via = $state<Via | null>(null);
   player = $state<PlayerState | null>(null);
   /** Tracks added to play before the context resumes. Raw (not deeply reactive): only ever replaced. */
   queue = $state.raw<QueueItem[]>([]);
@@ -262,13 +276,37 @@ export class EngineClient {
     this.#socket?.close();
   }
 
+  /** The WebSocket URL for `route`; the tunnel's is a loopback proxy this app's engine runs. */
+  async #url(route: Route): Promise<string> {
+    if (route.kind === 'own') return ownEngineUrl();
+    if (route.kind === 'lan') return `ws://${route.address}/ws`;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return `ws://${await invoke<string>('tunnel', { key: engines.current.id })}/ws`;
+  }
+
+  /** Shows the tunnel's route now and every {@link VIA_POLL_MS} while open. */
+  #followTunnel(): () => void {
+    const check = async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const reach = await invoke<string>('tunnel_reach', { key: engines.current.id });
+        if (this.via) this.via = reach === 'relayed' ? 'relayed' : 'internet';
+      } catch {
+        // Shown as before until the next check.
+      }
+    };
+    this.via = 'internet';
+    void check();
+    const timer = setInterval(() => void check(), VIA_POLL_MS);
+    return () => clearInterval(timer);
+  }
+
   async #connect() {
     // Stays `closed` while reconnecting, so a lost engine reads as lost.
     let socket: WebSocket;
+    const route = routeAt(engines.current, this.#attempts++, canTunnel());
     try {
-      const engine = engines.current;
-      // Another device's engine needs no lookup of this one's (which a page not the app's own can't do).
-      const url = socketUrl(engine, this.#attempts++, engine.addresses.length ? '' : await ownEngineUrl());
+      const url = await this.#url(route);
       this.httpBase = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
       socket = new WebSocket(withToken(url));
     } catch (e) {
@@ -278,16 +316,26 @@ export class EngineClient {
     }
     this.#socket = socket;
     let opened = false;
+    let stopFollowing = () => {};
+    // The engine's own (loopback) answers at once.
+    const wait = { own: undefined, lan: CONNECT_TIMEOUT_MS, tunnel: TUNNEL_TIMEOUT_MS }[route.kind];
+    const timeout = wait ? setTimeout(() => socket.close(), wait) : undefined;
 
     socket.onopen = () => {
       opened = true;
+      clearTimeout(timeout);
       this.status = 'open';
+      if (route.kind === 'lan') this.via = 'lan';
+      if (route.kind === 'tunnel') stopFollowing = this.#followTunnel();
       this.error = null;
       this.#backoff = 250;
       if (this.#bands.size) this.#subscribe(true);
     };
     socket.onmessage = (e) => this.#handle(JSON.parse(e.data) as ServerMessage);
     socket.onclose = () => {
+      clearTimeout(timeout);
+      stopFollowing();
+      this.via = null;
       this.status = 'closed';
       for (const { reject } of [...this.#pending.values(), ...this.#queries.values()]) {
         reject(new Error('connection closed'));
@@ -302,7 +350,7 @@ export class EngineClient {
 
   async #checkPaired() {
     try {
-      const response = await fetch(withToken(`${this.httpBase}/art/probe`));
+      const response = await fetch(withToken(`${this.httpBase}/art/probe`), { signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS) });
       if (response.status === 401) {
         this.status = 'closed';
         this.unpaired = true;

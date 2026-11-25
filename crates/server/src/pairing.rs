@@ -465,6 +465,13 @@ impl Pairing {
         Some(stored.device.id.clone())
     }
 
+    /// The key of the engine in the app of paired `device`, if it has one.
+    pub(crate) fn key_of(&self, device: &str) -> Option<String> {
+        let inner = self.lock();
+        let stored = inner.saved.devices.iter().find(|d| d.device.id == device)?;
+        stored.device.public_key.clone()
+    }
+
     /// Whether `who` may do what needs `scope`, now: a revoked device may
     /// do nothing.
     pub(crate) fn allows(&self, who: &Who, scope: Scope) -> bool {
@@ -489,7 +496,7 @@ impl Pairing {
 
     /// Lists a new connection; the returned `Notify` fires when it should
     /// close. Call [`Pairing::disconnected`] when it does.
-    pub(crate) fn connected(&self, who: &Who, peer: SocketAddr) -> (u32, Arc<Notify>) {
+    pub(crate) fn connected(&self, who: &Who, address: String) -> (u32, Arc<Notify>) {
         let mut inner = self.lock();
         let id = inner.next_id();
         let now = engine::wall_clock_ms();
@@ -504,7 +511,7 @@ impl Pairing {
             Connection {
                 id,
                 device,
-                address: peer.to_string(),
+                address,
                 connected_at_ms: now,
             },
             close.clone(),
