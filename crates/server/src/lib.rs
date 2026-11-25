@@ -10,6 +10,7 @@
 //!
 //! MPD clients have a server of their own (see `mpd.rs`), off by default.
 
+mod catalog;
 mod lan;
 mod links;
 mod live;

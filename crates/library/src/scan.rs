@@ -239,7 +239,7 @@ fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
         r.get(0)
     })?;
     let hashing = conn.query_row(
-        "SELECT count(*) FROM tracks WHERE audio_hash IS NULL AND missing = 0",
+        "SELECT count(*) FROM tracks WHERE audio_hash IS NULL AND missing = 0 AND device = ''",
         [],
         |r| r.get(0),
     )?;
@@ -396,7 +396,7 @@ fn thumb_next(shared: &Shared, conn: &Connection, thumbs: &mut Vec<(String, Stri
 fn hash_next(shared: &Shared, conn: &Connection) -> bool {
     let next: Option<(i64, String)> = conn
         .query_row(
-            "SELECT id, path FROM tracks WHERE audio_hash IS NULL AND missing = 0 ORDER BY id LIMIT 1",
+            "SELECT id, path FROM tracks WHERE audio_hash IS NULL AND missing = 0 AND device = '' ORDER BY id LIMIT 1",
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )

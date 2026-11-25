@@ -5,8 +5,9 @@
 //! also browses `_motif._tcp` over mDNS, whose adverts carry the iroh port,
 //! so engines whose addresses changed find each other again without relays.
 //! It binds again when the relay settings change. Over each link's life it
-//! syncs playlists, plays and marks ([`net::Alpn::Sync`], sync.rs) when they
-//! meet and after each change here. Connections for other purposes are
+//! syncs playlists, plays and marks ([`net::Alpn::Sync`], sync.rs) and
+//! swaps catalogs ([`net::Alpn::Catalog`], catalog.rs) when they meet and
+//! after each change here; unlinking drops that engine's catalog. Connections for other purposes are
 //! refused until the features that use them exist.
 
 use std::{
@@ -21,20 +22,23 @@ use net::{Alpn, Connection, Net};
 use protocol::{LibraryStatus, Reach};
 use tokio::task::JoinSet;
 
-use crate::{Pairing, pairing::relays, sync};
+use crate::{Pairing, catalog, pairing::relays, sync};
 
 // shortcut: a fixed retry; back off if unreachable engines cost battery.
 const RETRY: Duration = Duration::from_secs(60);
 /// How long changes may gather before they are synced: a burst of edits
 /// (a playlist being reordered) goes in one session.
 const SETTLE: Duration = Duration::from_secs(1);
-/// How soon a failed sync session is tried again.
+/// How soon a failed sync or catalog session is tried again.
 const AGAIN: Duration = Duration::from_secs(5);
 
 /// Runs the endpoint on UDP `port` (another if taken), which LAN addresses
 /// of this engine share with its HTTP server ([`Pairing::link`]), syncing
 /// `library` if there is one. Never ends.
 pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
+    if let Some(library) = &library {
+        tokio::spawn(drop_unlinked_catalogs(pairing.clone(), library.clone()));
+    }
     let mut states = pairing.subscribe();
     loop {
         let wanted = {
@@ -73,6 +77,28 @@ pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
     }
 }
 
+/// Drops the catalogs of engines no longer linked, whenever the links
+/// change (and at start, for ones unlinked while it was off).
+async fn drop_unlinked_catalogs(pairing: Pairing, library: Library) {
+    let mut states = pairing.subscribe();
+    let mut kept = None;
+    loop {
+        let mut linked: Vec<String> = pairing.linked().into_iter().map(|(key, _)| key).collect();
+        linked.sort();
+        if kept.as_ref() != Some(&linked) {
+            let (library, keep) = (library.clone(), linked.clone());
+            match tokio::task::spawn_blocking(move || library.keep_catalogs(&keep)).await {
+                Ok(Ok(())) => kept = Some(linked),
+                Ok(Err(err)) => tracing::warn!(%err, "can't drop unlinked catalogs"),
+                Err(err) => tracing::warn!(%err, "can't drop unlinked catalogs"),
+            }
+        }
+        if states.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
 /// A live link and which end dialled it.
 struct Live {
     conn: Connection,
@@ -103,11 +129,15 @@ async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
                         let library = library.cloned();
                         tasks.spawn(keep(net.clone(), pairing.clone(), links.clone(), library, conn, dialler));
                     }
-                    (Alpn::Sync, Some(library)) => {
+                    (Alpn::Sync | Alpn::Catalog, Some(library)) => {
                         let library = library.clone();
                         tasks.spawn(async move {
-                            if let Err(err) = sync::session(&library, &conn, false).await {
-                                tracing::debug!(key = %net::key(&conn), %err, "sync: failed");
+                            let done = match alpn {
+                                Alpn::Catalog => catalog::session(&library, &conn, false).await,
+                                _ => sync::session(&library, &conn, false).await,
+                            };
+                            if let Err(err) = done {
+                                tracing::debug!(key = %net::key(&conn), %err, ?alpn, "can't keep in step");
                             }
                         });
                     }
@@ -257,7 +287,8 @@ async fn keep(
     }
     tokio::select! {
         () = net::follow_reach(&conn, |reach| pairing.set_reach(&key, reach)) => {}
-        () = keep_in_sync(&net, &pairing, library.as_ref(), &key) => {}
+        () = keep_in_step(&net, &pairing, library.as_ref(), &key, Alpn::Sync) => {}
+        () = keep_in_step(&net, &pairing, library.as_ref(), &key, Alpn::Catalog) => {}
     }
     let mut shared = lock(&links);
     if shared
@@ -270,25 +301,36 @@ async fn keep(
     }
 }
 
-/// Syncs with the linked engine `key` now and after every change here to
-/// what syncs (the engine at the other end does the same). Never ends.
-async fn keep_in_sync(net: &Net, pairing: &Pairing, library: Option<&Library>, key: &str) {
+/// Runs a [`Alpn::Sync`] or [`Alpn::Catalog`] session with the linked
+/// engine `key` now and after every change here to what it carries
+/// (the engine at the other end does the same). Never ends.
+async fn keep_in_step(
+    net: &Net,
+    pairing: &Pairing,
+    library: Option<&Library>,
+    key: &str,
+    alpn: Alpn,
+) {
     let Some(library) = library else {
         return std::future::pending().await;
     };
-    let synced = |s: &LibraryStatus| (s.playlists, s.plays, s.ratings);
+    let synced = |s: &LibraryStatus| match alpn {
+        Alpn::Catalog => (s.revision, 0, 0),
+        _ => (s.playlists, s.plays, s.ratings),
+    };
     let mut changes = library.subscribe();
     loop {
         let before = synced(&changes.borrow_and_update());
         let addr = pairing.linked().into_iter().find(|(k, _)| k == key);
         let mut failed = false;
         if let Some((_, addr)) = addr {
-            let synced = match net.connect(key, &addr, Alpn::Sync).await {
+            let synced = match net.connect(key, &addr, alpn).await {
+                Ok(conn) if alpn == Alpn::Catalog => catalog::session(library, &conn, true).await,
                 Ok(conn) => sync::session(library, &conn, true).await,
                 Err(err) => Err(err),
             };
             if let Err(err) = synced {
-                tracing::debug!(%key, %err, "sync: failed");
+                tracing::debug!(%key, %err, ?alpn, "can't keep in step");
                 failed = true;
             }
         }
@@ -392,6 +434,28 @@ mod tests {
         (Library::open(&dir).unwrap(), dir)
     }
 
+    /// A tenth of a second of silence, 16-bit mono at 8 kHz.
+    fn wav() -> Vec<u8> {
+        let data = vec![0u8; 1600];
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        for field in [
+            16u32.to_le_bytes(),
+            [1, 0, 1, 0],
+            8000u32.to_le_bytes(),
+            16000u32.to_le_bytes(),
+        ] {
+            wav.extend_from_slice(&field);
+        }
+        wav.extend_from_slice(&[2, 0, 16, 0]);
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        wav.extend_from_slice(&data);
+        wav
+    }
+
     fn playlists(library: &Library) -> Vec<String> {
         let protocol::QueryResult::Playlists { playlists } =
             library.query(protocol::LibraryQuery::Playlists).unwrap()
@@ -401,7 +465,7 @@ mod tests {
         playlists.into_iter().map(|p| p.name).collect()
     }
 
-    async fn until(library: &Library, done: impl Fn(&Library) -> bool) {
+    async fn until(what: &str, library: &Library, done: impl Fn(&Library) -> bool) {
         let mut changes = library.subscribe();
         tokio::time::timeout(Duration::from_secs(20), async {
             while !done(library) {
@@ -409,11 +473,11 @@ mod tests {
             }
         })
         .await
-        .expect("timed out");
+        .unwrap_or_else(|_| panic!("timed out: {what}"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn linked_engines_sync_when_they_meet_and_on_change() {
+    async fn linked_engines_sync_and_share_catalogs_when_they_meet_and_on_change() {
         let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
         for p in [&a, &b] {
             p.command(protocol::PairingCommand::SetInternet { allowed: false })
@@ -436,7 +500,7 @@ mod tests {
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
         tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
-        until(&library_b, |l| playlists(l) == ["Before"]).await;
+        until("made before", &library_b, |l| playlists(l) == ["Before"]).await;
         // A change on the end that was dialled goes the other way.
         library_b
             .query(protocol::LibraryQuery::RenamePlaylist {
@@ -444,7 +508,34 @@ mod tests {
                 name: "After".into(),
             })
             .unwrap();
-        until(&library_a, |l| playlists(l) == ["After"]).await;
+        until("renamed", &library_a, |l| playlists(l) == ["After"]).await;
+        // A's files show on B, as A's.
+        let music = dir_a.join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        std::fs::write(music.join("tone.wav"), wav()).unwrap();
+        let path = music.to_string_lossy().into_owned();
+        library_a
+            .query(protocol::LibraryQuery::AddRoot { path })
+            .unwrap();
+        let on_b = |l: &Library| {
+            let protocol::QueryResult::Tracks { tracks, .. } = l
+                .query(protocol::LibraryQuery::Tracks {
+                    search: None,
+                    sort: vec![],
+                    filter: Default::default(),
+                    offset: 0,
+                    limit: 10,
+                })
+                .unwrap()
+            else {
+                panic!()
+            };
+            tracks.into_iter().map(|t| t.devices).collect::<Vec<_>>()
+        };
+        until("catalog", &library_b, |l| {
+            on_b(l) == [vec![a.engine_key().to_string()]]
+        })
+        .await;
         for dir in [dir_a, dir_b] {
             let _ = std::fs::remove_dir_all(dir);
         }

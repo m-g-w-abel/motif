@@ -11,4 +11,8 @@ favourite: boolean,
 /**
  * Only tracks rated at least this many half stars (1 to 10).
  */
-min_rating?: number, };
+min_rating?: number, 
+/**
+ * Only tracks whose audio is on this engine, not linked engines'.
+ */
+this_device: boolean, };

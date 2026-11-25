@@ -143,6 +143,11 @@ impl Library {
                 [],
             )?;
         }
+        // For the engines a track's audio is on (`LibraryTrack::devices`).
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('device', ?1)",
+            [key],
+        )?;
         tx.commit()?;
         // Still holding the database, so no change is logged in between.
         *self.shared.device.lock().unwrap() = key.into();
@@ -353,13 +358,14 @@ pub(crate) fn track_at(conn: &Connection, path: &str) -> Result<Option<Track>> {
     Ok(track)
 }
 
-/// A present file holding `track`, matched by audio hash, MusicBrainz
-/// recording or ISRC, else by artist, title and duration.
+/// A present track holding `track`, matched by audio hash, MusicBrainz
+/// recording or ISRC, else by artist, title and duration; a file here
+/// before another engine's copy (catalog.rs).
 pub(crate) fn locate(conn: &Connection, track: &Track) -> Option<String> {
     let by = |column: &str, value: &Option<String>| -> Option<String> {
         let value = value.as_ref().filter(|v| !v.is_empty())?;
         conn.query_row(
-            &format!("SELECT path FROM tracks WHERE {column} = ?1 AND missing = 0 LIMIT 1"),
+            &format!("SELECT path FROM tracks WHERE {column} = ?1 AND missing = 0 ORDER BY device LIMIT 1"),
             [value],
             |r| r.get(0),
         )
@@ -378,7 +384,7 @@ pub(crate) fn locate(conn: &Connection, track: &Track) -> Option<String> {
                  WHERE missing = 0 AND lower(title) = lower(?1)
                    AND lower(coalesce(artist, album_artist)) = lower(?2)
                    AND (?3 < 0 OR abs(coalesce(duration_ms, ?3) - ?3) <= 2000)
-                 ORDER BY lower(coalesce(album, '')) = lower(coalesce(?4, '')) DESC LIMIT 1",
+                 ORDER BY device, lower(coalesce(album, '')) = lower(coalesce(?4, '')) DESC LIMIT 1",
                 params![title.trim(), artist.trim(), duration, track.album],
                 |r| r.get(0),
             )

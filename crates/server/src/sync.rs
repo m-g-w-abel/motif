@@ -1,8 +1,7 @@
 //! A metadata sync session with a linked engine ([`net::Alpn::Sync`], #239):
 //! both ends say what they have ([`Versions`]), send the ops the other lacks
 //! a page at a time, and apply what they hear (`library/src/sync.rs`). On
-//! one stream each way: versions, pages, an empty page, then an empty page
-//! once all the other's are applied, after which the dialler closes. An
+//! one stream each way: versions, pages, an empty page, then [`done`]. An
 //! interrupted session loses nothing: the next one starts where it ended.
 
 use std::time::Duration;
@@ -57,19 +56,30 @@ pub(crate) async fn session(
         }
     };
     tokio::try_join!(give, take)?;
-    write(&mut send, &Vec::<Logged>::new()).await?;
+    done(conn, send, recv, dialled).await
+}
+
+/// Ends a session once both ends have applied all they heard: each says so
+/// with an empty frame, then the dialler closes.
+pub(crate) async fn done(
+    conn: &Connection,
+    mut send: SendStream,
+    mut recv: RecvStream,
+    dialled: bool,
+) -> Result<(), String> {
+    write(&mut send, &()).await?;
     send.finish().map_err(|e| e.to_string())?;
     if dialled {
-        let _: Vec<Logged> = read(&mut recv).await?;
+        let () = read(&mut recv).await?;
         conn.close(0u32.into(), b"done");
     } else {
-        // The dialler closes once it has heard that its ops are applied.
+        // The dialler closes once it has heard that its changes are applied.
         let _ = tokio::time::timeout(Duration::from_secs(10), conn.closed()).await;
     }
     Ok(())
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     library: &Library,
     f: impl FnOnce(&Library) -> library::Result<T> + Send + 'static,
 ) -> Result<T, String> {
@@ -81,7 +91,7 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// A frame: its length (4 bytes, big-endian), then JSON.
-async fn write(send: &mut SendStream, value: &impl Serialize) -> Result<(), String> {
+pub(crate) async fn write(send: &mut SendStream, value: &impl Serialize) -> Result<(), String> {
     let json = serde_json::to_vec(value).map_err(|e| e.to_string())?;
     send.write_all(&(json.len() as u32).to_be_bytes())
         .await
@@ -89,7 +99,7 @@ async fn write(send: &mut SendStream, value: &impl Serialize) -> Result<(), Stri
     send.write_all(&json).await.map_err(|e| e.to_string())
 }
 
-async fn read<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<T, String> {
+pub(crate) async fn read<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<T, String> {
     let mut len = [0; 4];
     recv.read_exact(&mut len).await.map_err(|e| e.to_string())?;
     let len = u32::from_be_bytes(len) as usize;

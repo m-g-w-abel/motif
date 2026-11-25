@@ -1458,6 +1458,7 @@ mod tests {
             problem: None,
             favourite: false,
             rating: None,
+            devices: vec![],
         }
     }
 

@@ -86,7 +86,7 @@ impl Library {
             .query_map(params![limit, offset], |r| {
                 Ok(PlayedTrack {
                     track: library_track(r)?,
-                    played_at: r.get::<_, i64>(25)? as u64,
+                    played_at: r.get::<_, i64>(26)? as u64,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -112,6 +112,7 @@ impl Library {
                  SELECT {key} AS played_key, max(played_at) AS last
                  FROM {played} GROUP BY played_key
              ) ON played_key = {key}
+             WHERE tracks.shadowed = 0
              GROUP BY k ORDER BY last DESC, k LIMIT ?1 OFFSET ?2",
             key = db::ALBUM_KEY,
             art = db::ALBUM_ART

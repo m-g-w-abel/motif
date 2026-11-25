@@ -53,10 +53,10 @@
 
   const engine = new EngineClient();
   const position = new PlaybackPosition(engine);
-  const library = new LibraryClient(engine);
+  const settings = new SettingsStore();
+  const library = new LibraryClient(engine, () => settings.current.thisDevice);
   const layout = new LayoutStore();
   const themes = new UserThemes();
-  const settings = new SettingsStore();
   const sheet = new PlayerSheet();
   const settingsView = new SettingsView();
   const views = new Views();
