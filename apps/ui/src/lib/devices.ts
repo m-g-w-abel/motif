@@ -31,3 +31,13 @@ export function deviceMark(track: LibraryTrack | undefined, pairing: PairingStat
   const away = cantReach(track, pairing);
   return away ? { title: `On ${away}, which can’t be reached now`, away: true } : { title: `On ${heldOn(track, pairing)}`, away: false };
 }
+
+/** An album's or playlist's page mark when any of its songs is elsewhere; it dims while none of those can be reached. */
+export function pageMark(tracks: (LibraryTrack | undefined)[], pairing: PairingState | null): { title: string; away: boolean } | null {
+  const away = tracks.filter((t): t is LibraryTrack => t !== undefined && elsewhere(t));
+  if (!away.length) return null;
+  const names = [...new Set(away.flatMap((t) => holders(t, pairing).map((d) => d?.name ?? 'another device')))].join(' or ');
+  return away.every((t) => cantReach(t, pairing))
+    ? { title: `Some songs are on ${names}, which can’t be reached now`, away: true }
+    : { title: `Some songs are on ${names}`, away: false };
+}
