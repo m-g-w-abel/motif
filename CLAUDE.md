@@ -111,6 +111,9 @@ for now, so these local runs are the only check. If no Rust changed (no
 In a new git worktree, run `scripts/seed-build.sh` before the first build: it
 copies the main checkout's compiled dependencies (never share one build folder
 between checkouts; cargo would mix their workspace crates).
+`scripts/prune-builds.sh` (run weekly by a user systemd timer) deletes the build
+folders of removed worktrees and cleans our own crates in the rest; never delete
+single build files by age instead (it breaks build-script outputs).
 Never use `pkill -f` or `pgrep -f`: the pattern is in the shell's own command
 line, so it matches that shell, killing it or never ending a wait loop (which
 blocks archiving the session). A hook in `.claude/settings.json` refuses them.
