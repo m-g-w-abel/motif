@@ -28,7 +28,13 @@ pub(crate) const SCHEMA: &str = "
     -- (`name/<playlist>`, `pos/<playlist>/<item>`, `favourite/<ratings key>`,
     -- `rating/<ratings key>`), and tombstones (`deleted/<playlist>`,
     -- `removed/<playlist>/<item>`).
-    CREATE TABLE IF NOT EXISTS stamps (key TEXT PRIMARY KEY, at INTEGER NOT NULL, device TEXT NOT NULL);";
+    CREATE TABLE IF NOT EXISTS stamps (key TEXT PRIMARY KEY, at INTEGER NOT NULL, device TEXT NOT NULL);
+    -- Plays (the op `device`/`seq` that logged them) a scrobbling service has
+    -- been given or can't take (#240).
+    CREATE TABLE IF NOT EXISTS scrobbled (
+        service TEXT NOT NULL, device TEXT NOT NULL, seq INTEGER NOT NULL,
+        PRIMARY KEY (service, device, seq)
+    );";
 
 /// A track as other engines can find it ([`locate`]): never its path.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -97,6 +103,21 @@ pub enum Op {
         track: Track,
         rating: Option<u8>,
     },
+    /// Play `seq` of `device` is done with for `service`: sent, or not sendable.
+    Scrobbled {
+        service: String,
+        device: String,
+        seq: u64,
+    },
+}
+
+/// A play a service may still lack ([`Library::unscrobbled`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unscrobbled {
+    pub device: String,
+    pub seq: u64,
+    pub started: u64,
+    pub track: Track,
 }
 
 /// An op as the log holds it.
@@ -238,6 +259,8 @@ impl Library {
                     match op {
                         Op::Play { .. } => plays = true,
                         Op::Favourite { .. } | Op::Rating { .. } => ratings = true,
+                        // Nothing a client shows.
+                        Op::Scrobbled { .. } => {}
                         _ => playlists = true,
                     }
                 }
@@ -252,6 +275,65 @@ impl Library {
             });
         }
         Ok(())
+    }
+
+    /// Plays from every engine that started at or after `since` (Unix
+    /// seconds) and that `service` hasn't been given, oldest first. Empty
+    /// until [`Self::set_device`], as marks need the plays' ids.
+    pub fn unscrobbled(&self, service: &str, since: u64) -> Result<Vec<Unscrobbled>> {
+        if self.device().is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.db();
+        // A play is logged after it started, so `at` bounds it and uses the index.
+        let mut stmt = conn.prepare(
+            "SELECT device, seq, op FROM ops
+             WHERE at >= ?2 AND json_extract(op, '$.type') = 'play'
+               AND json_extract(op, '$.started') >= ?3
+               AND NOT EXISTS (SELECT 1 FROM scrobbled s
+                               WHERE s.service = ?1 AND s.device = ops.device AND s.seq = ops.seq)
+             ORDER BY json_extract(op, '$.started'), device, seq",
+        )?;
+        let rows = stmt
+            .query_map(params![service, since as i64 * 1000, since as i64], |r| {
+                Ok((r.get(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+            })?
+            .collect::<rusqlite::Result<Vec<(String, i64, String)>>>()?;
+        rows.into_iter()
+            .filter_map(|(device, seq, op)| match serde_json::from_str(&op) {
+                Ok(Op::Play { track, started }) => Some(Ok(Unscrobbled {
+                    device,
+                    seq: seq as u64,
+                    started,
+                    track,
+                })),
+                Ok(_) => None,
+                Err(e) => Some(Err(Error::Other(e.to_string()))),
+            })
+            .collect()
+    }
+
+    /// Notes that `service` is done with a play from [`Self::unscrobbled`],
+    /// for every engine; whether that was news. Safe to repeat.
+    pub fn mark_scrobbled(&self, service: &str, device: &str, seq: u64) -> Result<bool> {
+        let op = Op::Scrobbled {
+            service: service.into(),
+            device: device.into(),
+            seq,
+        };
+        let conn = self.db();
+        let tx = conn.unchecked_transaction()?;
+        let done = tx
+            .query_row(
+                "SELECT 1 FROM scrobbled WHERE service = ?1 AND device = ?2 AND seq = ?3",
+                params![service, device, seq as i64],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        let added = !done && record(&tx, &self.device(), op, None)?;
+        tx.commit()?;
+        Ok(added)
     }
 
     /// The key changes here are logged under ('' until [`Self::set_device`]).
@@ -414,6 +496,16 @@ fn apply(conn: &Connection, op: &Op, stamp: &Stamp, here: Option<&str>) -> Resul
             conn.execute(
                 "INSERT OR IGNORE INTO plays (track_path, played_at, hash) VALUES (?1, ?2, ?3)",
                 params![path, *started as i64, hash],
+            )? > 0
+        }
+        Op::Scrobbled {
+            service,
+            device,
+            seq,
+        } => {
+            conn.execute(
+                "INSERT OR IGNORE INTO scrobbled (service, device, seq) VALUES (?1, ?2, ?3)",
+                params![service, device, *seq as i64],
             )? > 0
         }
         Op::Name { playlist, name } => {
@@ -1022,5 +1114,48 @@ mod tests {
                 "seed {seed}: meeting again changes nothing"
             );
         }
+    }
+
+    #[test]
+    fn a_scrobbled_play_is_marked_for_every_engine_and_service_separately() {
+        let (a, b) = (engine("a"), engine("b"));
+        let now = 10_000_000;
+        a.play("A", now - 100);
+        a.play("B", now - 15 * 86_400);
+        meet(&a, &b);
+        let listed =
+            |e: &Engine, service| e.library.unscrobbled(service, now - 14 * 86_400).unwrap();
+        let found = listed(&b, "lastfm");
+        assert_eq!(
+            found
+                .iter()
+                .map(|p| (p.track.title.clone().unwrap(), p.started))
+                .collect::<Vec<_>>(),
+            [("A".to_string(), now - 100)],
+            "the old play is past what services take"
+        );
+        assert!(
+            b.library
+                .mark_scrobbled("lastfm", &found[0].device, found[0].seq)
+                .unwrap()
+        );
+        assert!(
+            !b.library
+                .mark_scrobbled("lastfm", &found[0].device, found[0].seq)
+                .unwrap(),
+            "safe to repeat"
+        );
+        assert!(listed(&b, "lastfm").is_empty());
+        assert_eq!(
+            listed(&b, "listenbrainz").len(),
+            1,
+            "another service still lacks it"
+        );
+        meet(&a, &b);
+        assert!(
+            listed(&a, "lastfm").is_empty(),
+            "the mark synced back to where it was played"
+        );
+        assert_eq!(a.seen(), b.seen(), "marks aren't something a user sees");
     }
 }

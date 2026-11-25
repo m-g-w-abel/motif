@@ -12,6 +12,9 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 - **Play songs from your other devices**: a song that is only on a linked
   device plays here, streamed from it in its original quality, with seeking
   and gapless albums. If that device can't be reached, the song says so.
+- **Scrobbles from every device**: a device with a scrobbling account also
+  sends the plays synced from your devices without one (up to 14 days old),
+  each play once.
 - **Playlists, history and ratings sync**: linked devices share playlists
   (names, songs, order), what you played (so Recently Played and play counts
   cover every device) and favourites and ratings. Changes made apart merge

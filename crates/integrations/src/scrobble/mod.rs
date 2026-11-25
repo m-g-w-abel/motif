@@ -14,7 +14,7 @@ use std::{
 };
 
 use engine::Engine;
-use library::Library;
+use library::{Library, sync::Unscrobbled};
 use protocol::{IntegrationSettings, ScrobbleAccount, TrackRef};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -32,6 +32,11 @@ use crate::settings::Secrets;
 /// Retries after a failed submission start at this and double up to an hour.
 const FIRST_RETRY: Duration = Duration::from_secs(30);
 const LAST_RETRY: Duration = Duration::from_secs(3600);
+
+/// Plays from history older than this aren't scrobbled: Last.fm takes none
+/// older than 14 days, and for the others it keeps a newly signed-in account
+/// from sending the whole history.
+const MAX_AGE: Duration = Duration::from_secs(14 * 86_400);
 
 /// A track as services want it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +62,22 @@ impl Listen {
             duration_ms: track.duration_ms,
             recording_mbid: track.keys.musicbrainz_recording.clone(),
             isrc: track.keys.isrc.clone(),
+        })
+    }
+}
+
+impl Listen {
+    /// A play from the synced history; `None` without artist and title.
+    fn of_play(play: &Unscrobbled) -> Option<Self> {
+        let track = &play.track;
+        Some(Self {
+            listened_at: play.started,
+            artist: track.artist.clone()?,
+            title: track.title.clone()?,
+            album: track.album.clone(),
+            duration_ms: track.duration_ms,
+            recording_mbid: track.musicbrainz.clone(),
+            isrc: track.isrc.clone(),
         })
     }
 }
@@ -127,18 +148,21 @@ pub fn start(
                 actions.subscribe(),
                 settings.clone(),
                 dir.to_owned(),
+                library.clone(),
             ));
             tokio::spawn(run(
                 LastFm::new(http.clone()),
                 actions.subscribe(),
                 settings.clone(),
                 dir.to_owned(),
+                library.clone(),
             ));
             tokio::spawn(run(
                 LastFm::libre_fm(http),
                 actions.subscribe(),
                 settings,
                 dir.to_owned(),
+                library.clone(),
             ));
         }
         // History is kept anyway.
@@ -165,18 +189,35 @@ async fn follow(engine: Engine, library: Option<Library>, actions: broadcast::Se
     let mut states = engine.subscribe();
     let mut tracker = Tracker::default();
     let mut found = tracker.update(&states.borrow_and_update());
+    // The scrobble of a listen, held until its play is known to be in the history.
+    let mut held = None;
     loop {
         for action in found.drain(..) {
-            if let (Action::Played { track, started_at }, Some(library)) = (&action, &library) {
-                let (library, track, started_at) = (library.clone(), track.clone(), *started_at);
-                // SQLite waits on the scanner's writes, so not on this task.
-                tokio::task::spawn_blocking(move || {
-                    if let Err(err) = library.record_play(&track, started_at) {
-                        tracing::warn!(%err, "can't record the play");
+            match (action, &library) {
+                (Action::Scrobble(listen), Some(_)) => held = Some(listen),
+                (Action::Played { track, started_at }, Some(library)) => {
+                    let library = library.clone();
+                    // SQLite waits on the scanner's writes, so not on this task.
+                    let recorded = tokio::task::spawn_blocking(move || {
+                        library
+                            .record_play(&track, started_at)
+                            .unwrap_or_else(|err| {
+                                tracing::warn!(%err, "can't record the play");
+                                false
+                            })
+                    })
+                    .await
+                    .unwrap_or(false);
+                    // Plays in the history are scrobbled from there (`pull_history`),
+                    // once, whichever linked device has an account; others go now.
+                    if let Some(listen) = held.take().filter(|_| !recorded) {
+                        let _ = actions.send(Action::Scrobble(listen));
                     }
-                });
+                }
+                (action, _) => {
+                    let _ = actions.send(action);
+                }
             }
-            let _ = actions.send(action);
         }
         let due = tracker.due_in_ms();
         tokio::select! {
@@ -202,18 +243,52 @@ fn is_uuid(id: &str) -> bool {
         })
 }
 
+/// Queues the plays in the synced history that `name` hasn't been given
+/// (made here or on a linked device without an account), then marks them
+/// for every device. Marked after queueing: a crash between sends a play
+/// twice, which the services' own dedupe (same track and time) absorbs.
+async fn pull_history(library: &Library, name: &'static str, queue: &mut Queue) {
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs().saturating_sub(MAX_AGE.as_secs()));
+    let lib = library.clone();
+    let plays = match tokio::task::spawn_blocking(move || lib.unscrobbled(name, since)).await {
+        Ok(Ok(plays)) if !plays.is_empty() => plays,
+        Ok(Err(err)) => return tracing::warn!(%err, "can't read the play history"),
+        _ => return,
+    };
+    for listen in plays.iter().filter_map(Listen::of_play) {
+        if let Err(err) = queue.push(listen) {
+            return tracing::warn!(%err, "can't save the {name} scrobble queue");
+        }
+    }
+    let lib = library.clone();
+    // Plays without an artist or title can't be sent; they are marked too, so they aren't read again.
+    let marked = tokio::task::spawn_blocking(move || {
+        plays
+            .iter()
+            .try_for_each(|p| lib.mark_scrobbled(name, &p.device, p.seq).map(drop))
+    })
+    .await;
+    if let Ok(Err(err)) = marked {
+        tracing::warn!(%err, "can't mark plays as scrobbled");
+    }
+}
+
 /// Signs in and out of one service and submits to it.
 async fn run<S: Scrobbler>(
     service: S,
     mut actions: broadcast::Receiver<Action>,
     settings: watch::Sender<IntegrationSettings>,
     dir: PathBuf,
+    library: Option<Library>,
 ) {
     let name = service.name();
     let secrets = Secrets::new(&dir);
     let mut secret = secrets.get(name);
     let mut queue = Queue::open(dir.join(format!("scrobbles-{name}.json")));
     let mut changes = settings.subscribe();
+    let mut history = library.as_ref().map(Library::subscribe);
     // When to try again and the wait before that, after a failure.
     let mut retry: Option<(Instant, Duration)> = None;
     let set = |change: &dyn Fn(&mut ScrobbleAccount)| {
@@ -288,6 +363,9 @@ async fn run<S: Scrobbler>(
             continue;
         }
         let active = account.enabled && secret.is_some();
+        if active && let Some(library) = &library {
+            pull_history(library, name, &mut queue).await;
+        }
         if active
             && !queue.is_empty()
             && retry.is_none_or(|(at, _)| at <= Instant::now())
@@ -352,6 +430,13 @@ async fn run<S: Scrobbler>(
                     return;
                 }
             }
+            // Plays were added here or synced from another device.
+            _ = async {
+                match &mut history {
+                    Some(history) => drop(history.changed().await),
+                    None => std::future::pending().await,
+                }
+            } => {}
             _ = tokio::time::sleep_until(retry_at.unwrap_or_else(Instant::now)), if retry_at.is_some() => {}
         }
     }
@@ -414,6 +499,7 @@ mod tests {
             actions.subscribe(),
             settings.clone(),
             dir.clone(),
+            None,
         ));
         let ask =
             |credential: &str| settings.send_modify(|s| s.lastfm.sign_in = Some(credential.into()));
@@ -445,6 +531,87 @@ mod tests {
         .await;
         assert!(!seen.borrow().lastfm.enabled);
         assert_eq!(Secrets::new(&dir).get("fake-run"), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Takes everything; remembers what it was given.
+    #[derive(Clone, Default)]
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl Scrobbler for Sink {
+        const BATCH: usize = 10;
+        fn name(&self) -> &'static str {
+            "sink"
+        }
+        fn account<'a>(&self, settings: &'a mut IntegrationSettings) -> &'a mut ScrobbleAccount {
+            &mut settings.lastfm
+        }
+        async fn sign_in(
+            &self,
+            _: &str,
+            _: &(dyn Fn(&str) + Sync),
+        ) -> Result<(String, String), Error> {
+            unreachable!()
+        }
+        async fn now_playing(&self, _: &str, _: &Listen) -> Result<(), Error> {
+            unreachable!()
+        }
+        async fn scrobble(&self, _: &str, listens: &[Listen]) -> Result<(), Error> {
+            let mut got = self.0.lock().unwrap();
+            got.extend(
+                listens
+                    .iter()
+                    .map(|l| format!("{}@{}", l.title, l.listened_at)),
+            );
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_play_synced_from_a_device_without_an_account_is_scrobbled_once() {
+        use library::sync::{Logged, Op, Track};
+
+        let dir =
+            std::env::temp_dir().join(format!("motif-history-scrobble-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let library = Library::open(&dir).unwrap();
+        library.set_device("desktop").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let play = |seq, title: &str, artist: Option<&str>, started| Logged {
+            device: "phone".into(),
+            seq,
+            at: now * 1000,
+            op: Op::Play {
+                track: Track {
+                    title: Some(title.into()),
+                    artist: artist.map(Into::into),
+                    ..Default::default()
+                },
+                started,
+            },
+        };
+        library
+            .merge(vec![
+                play(1, "Song", Some("Band"), now - 60),
+                play(2, "Old", Some("Band"), now - 15 * 86_400),
+                play(3, "Nameless", None, now - 30),
+            ])
+            .unwrap();
+
+        let sink = Sink::default();
+        let mut queue = Queue::open(dir.join("scrobbles-sink.json"));
+        for _ in 0..2 {
+            pull_history(&library, "sink", &mut queue).await;
+            queue.flush(&sink, "secret").await.unwrap();
+        }
+        assert_eq!(
+            *sink.0.lock().unwrap(),
+            [format!("Song@{}", now - 60)],
+            "once; not the one past 14 days, nor the one services can't take"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
