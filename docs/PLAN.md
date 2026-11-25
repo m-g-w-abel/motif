@@ -823,6 +823,18 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   linking with that key again clears it. Linking from the app sends this
   engine's key to the other first (`SetEngineKey`), then links: dialled
   before it knew the key, the other would refuse and unlink it here.
+- **A snippet of the last song (2026-11-25 phone test):** a burst of noise,
+  maybe the previous song, as a streamed song started. Not the stream: every
+  fixture decodes to the same samples from a stream as from its file
+  (`streams_decode_to_the_same_samples_as_their_files`). Pausing pauses the
+  device stream, which keeps the audio it holds so playing resumes without
+  a gap; but a load, seek or stop made while paused left that audio from
+  before, and the device played it first on resuming (on Android, AAudio's
+  pause; cpal has no flush), then silence while the linked engine answered,
+  which made it stand out. Such a cut now marks the device's audio stale,
+  decided as the commands are sent (a play sent just after a load would
+  resume it before the decode thread's flush), and playing then starts a
+  new stream on the same buffers instead.
 - **Opening off the decode thread:** tracks asked for and preloads open (and
   move to their start) on two long-lived threads beside the decode thread
   (`audio::opener`), so a dial or a slow disk never starves the 0.5 s output

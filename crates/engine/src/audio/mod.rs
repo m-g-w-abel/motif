@@ -58,6 +58,9 @@ struct Shared {
     armed: AtomicBool,
     /// The callback copies what it plays into the tap buffer.
     tap: AtomicBool,
+    /// Flushed while paused: the paused device still holds audio from
+    /// before, which it would play first on resuming.
+    stale: AtomicBool,
 }
 
 impl Shared {
@@ -69,6 +72,7 @@ impl Shared {
             underruns: AtomicU64::new(0),
             armed: AtomicBool::new(false),
             tap: AtomicBool::new(false),
+            stale: AtomicBool::new(false),
         }
     }
 }
@@ -132,20 +136,36 @@ impl Audio {
                 .name("audio-output".into())
                 .spawn(move || {
                     match open_stream(device.as_deref(), shared.clone(), events.clone()) {
-                        Ok((stream, producer, consumer, tap, rate, channels)) => {
+                        Ok((stream, rebuild, producer, consumer, tap, rate, channels)) => {
+                            let mut stream = Some(stream);
                             let _ = ready_tx.send(Ok((producer, consumer, tap, rate, channels)));
                             // The stream lives until the handle is dropped. Paused,
                             // it stops calling back, so the device stops waking the
                             // app every buffer (#254).
                             while let Ok(playing) = output_rx.recv() {
                                 if playing {
+                                    // What the paused device holds is from before a
+                                    // load, seek or stop: a new stream starts empty.
+                                    if shared.stale.swap(false, Ordering::Relaxed) {
+                                        tracing::debug!(
+                                            "audio: a new stream, without what the paused one held"
+                                        );
+                                        stream = None;
+                                        match rebuild() {
+                                            Ok(new) => stream = Some(new),
+                                            Err(err) => {
+                                                let _ = events.send(AudioEvent::DeviceLost(err));
+                                            }
+                                        }
+                                    }
+                                    let Some(stream) = &stream else { continue };
                                     // Again here: a pause queued before this one cleared it.
                                     shared.playing.store(true, Ordering::Relaxed);
                                     if let Err(err) = stream.play() {
                                         let _ =
                                             events.send(AudioEvent::DeviceLost(err.to_string()));
                                     }
-                                } else {
+                                } else if let Some(stream) = &stream {
                                     // Paused before the flag, so the device keeps the
                                     // audio it holds and resumes without a gap. A device
                                     // that can't pause plays silence instead.
@@ -204,6 +224,7 @@ impl Audio {
     /// playing, at ReplayGain factor `gain`. Returns the token that
     /// [`Playhead::token`] reports while it is audible.
     pub fn load(&mut self, item: u64, path: Source, start: Duration, gain: f32) -> u64 {
+        cut(&self.shared, self.playing);
         let token = self.token();
         let _ = self.commands.send(Command::Load {
             token,
@@ -238,10 +259,13 @@ impl Audio {
     }
 
     pub fn seek(&self, to: Duration) {
+        cut(&self.shared, self.playing);
         let _ = self.commands.send(Command::Seek(to));
     }
 
+    /// Always followed by `set_playing(false)`.
     pub fn stop(&self) {
+        cut(&self.shared, false);
         let _ = self.commands.send(Command::Stop);
     }
 
@@ -309,8 +333,20 @@ impl Audio {
     }
 }
 
+/// Notes a cut in what plays (a load, seek or stop): made while paused,
+/// the audio the paused device holds is from before it ([`Shared::stale`]).
+/// Decided here, in the order the commands are sent, not when the decode
+/// thread flushes: by then a play sent just after may have resumed it.
+fn cut(shared: &Shared, playing: bool) {
+    if !playing {
+        shared.stale.store(true, Ordering::Relaxed);
+    }
+}
+
 type Opened = (
     cpal::Stream,
+    // A new stream on the same buffers.
+    Box<dyn Fn() -> Result<cpal::Stream, String>>,
     Producer<f32>,
     Arc<Mutex<Consumer<f32>>>,
     Consumer<f32>,
@@ -373,23 +409,39 @@ fn open_stream(
     let consumer = Arc::new(Mutex::new(consumer));
     // A quarter second: the engine reads it 30 times a second.
     let (tap, tapped) = RingBuffer::new(rate as usize * channels / 4);
+    let tap = Arc::new(Mutex::new(tap));
     let config = supported.config();
-    let stream = match supported.sample_format() {
-        SampleFormat::F32 => build::<f32>(&device, &config, consumer.clone(), tap, shared, events),
-        SampleFormat::I16 => build::<i16>(&device, &config, consumer.clone(), tap, shared, events),
-        SampleFormat::U16 => build::<u16>(&device, &config, consumer.clone(), tap, shared, events),
-        SampleFormat::I32 => build::<i32>(&device, &config, consumer.clone(), tap, shared, events),
-        other => Err(format!("unsupported output sample format {other}")),
-    }?;
+    let format = supported.sample_format();
+    let shared_consumer = consumer.clone();
+    let rebuild = move || {
+        let (consumer, tap) = (shared_consumer.clone(), tap.clone());
+        let (shared, events) = (shared.clone(), events.clone());
+        match format {
+            SampleFormat::F32 => build::<f32>(&device, &config, consumer, tap, shared, events),
+            SampleFormat::I16 => build::<i16>(&device, &config, consumer, tap, shared, events),
+            SampleFormat::U16 => build::<u16>(&device, &config, consumer, tap, shared, events),
+            SampleFormat::I32 => build::<i32>(&device, &config, consumer, tap, shared, events),
+            other => Err(format!("unsupported output sample format {other}")),
+        }
+    };
+    let stream = rebuild()?;
     // Started by the first `set_playing(true)`.
-    Ok((stream, producer, consumer, tapped, rate, channels))
+    Ok((
+        stream,
+        Box::new(rebuild),
+        producer,
+        consumer,
+        tapped,
+        rate,
+        channels,
+    ))
 }
 
 fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     consumer: Arc<Mutex<Consumer<f32>>>,
-    mut tap: Producer<f32>,
+    tap: Arc<Mutex<Producer<f32>>>,
     shared: Arc<Shared>,
     events: UnboundedSender<AudioEvent>,
 ) -> Result<cpal::Stream, String> {
@@ -418,7 +470,10 @@ fn build<T: SizedSample + FromSample<f32>>(
                     let (a, b) = chunk.as_slices();
                     // Before the gain, so a visualiser still moves at volume 0.
                     // Wait-free and allocation-free; whole frames, dropped if the engine falls behind.
-                    if shared.tap.load(Ordering::Relaxed) {
+                    // Only a stream being replaced shares it: then skipped.
+                    if shared.tap.load(Ordering::Relaxed)
+                        && let Ok(mut tap) = tap.try_lock()
+                    {
                         let room = tap.slots() / channels * channels;
                         if let Ok(copy) = tap.write_chunk_uninit(room.min(take)) {
                             copy.fill_from_iter(a.iter().chain(b).copied());
@@ -928,6 +983,22 @@ mod tests {
         feeder.flush(&mut Stream::new(1000, 2), &mut Vec::new(), &mut 0);
         assert!(started.elapsed() < Duration::from_millis(100), "no waiting");
         assert_eq!(consumer.lock().unwrap().slots(), 0, "stale audio gone");
+    }
+
+    #[test]
+    fn a_cut_while_paused_leaves_the_devices_audio_stale() {
+        // Paused, the device still holds audio from before the load: it is
+        // dropped when playing starts again, not played first (a snippet of
+        // the last song before the next).
+        let shared = Shared::new();
+        cut(&shared, false);
+        assert!(shared.stale.load(Ordering::Relaxed));
+        let shared = Shared::new();
+        cut(&shared, true);
+        assert!(
+            !shared.stale.load(Ordering::Relaxed),
+            "playing, it plays on into the new audio"
+        );
     }
 
     /// Applies `target` to `frames` mono frames of 1.0, returning each frame's level.

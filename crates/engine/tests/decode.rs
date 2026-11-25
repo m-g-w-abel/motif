@@ -184,3 +184,30 @@ fn streams_decode_and_seek_like_files() {
         .unwrap();
     assert!(err.contains("ffmpeg:"), "{err}");
 }
+
+/// A stream (a linked engine's track) gives the very samples its file does,
+/// from the first: no format guessed wrong without the file's extension.
+#[test]
+fn streams_decode_to_the_same_samples_as_their_files() {
+    let decode = |source: &Source| {
+        let mut decoder = decoder::open(source, &decoder::all()).unwrap();
+        let mut samples = Vec::new();
+        while decoder.decode(&mut samples).unwrap() {}
+        (decoder.channels(), samples)
+    };
+    // WavPack goes through FFmpeg, which reads files only.
+    for file in [
+        "sine.flac",
+        "sine.mp3",
+        "sine.m4a",
+        "sine-alac.m4a",
+        "sine.ogg",
+        "sine.opus",
+        "sine.wav",
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(file);
+        assert!(decode(&stream(file)) == decode(&path.into()), "{file}");
+    }
+}
