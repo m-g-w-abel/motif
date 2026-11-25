@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use iroh::endpoint::{ConnectError, ConnectionError};
 pub use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey, TransportAddr,
@@ -143,13 +144,19 @@ impl Net {
         key: &str,
         addr: &PeerAddr,
         alpn: Alpn,
-    ) -> Result<Connection, String> {
-        let id: EndpointId = key.parse().map_err(|_| "bad engine key")?;
+    ) -> Result<Connection, Failed> {
+        let id: EndpointId = key.parse().map_err(|_| Failed {
+            refused: false,
+            why: "bad engine key".into(),
+        })?;
         let addr = EndpointAddr::from_parts(id, dialled(addr, self.internet));
         self.endpoint
             .connect(addr, alpn.bytes())
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|err| Failed {
+                refused: matches!(&err, ConnectError::Connection { source, .. } if not_linked(source)),
+                why: err.to_string(),
+            })
     }
 
     /// The next connection from a linked engine; `None` once closed. Safe
@@ -162,6 +169,49 @@ impl Net {
         self.endpoint.close().await;
     }
 }
+
+/// Why a dial failed.
+#[derive(Debug)]
+pub struct Failed {
+    /// The engine dialled isn't linked with this one ([`refused`]).
+    pub refused: bool,
+    why: String,
+}
+
+impl std::fmt::Display for Failed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.why)
+    }
+}
+
+impl From<Failed> for String {
+    fn from(failed: Failed) -> String {
+        failed.why
+    }
+}
+
+/// Closes `conn` as the engine at the other end is no longer linked: it
+/// can tell ([`refused`]) and drop its side of the link.
+pub fn unlinked(conn: &Connection) {
+    conn.close(NOT_LINKED.into(), b"not linked");
+}
+
+/// Whether the engine at the other end closed `conn` because it isn't
+/// linked with this one (refused at the handshake, or unlinked since).
+/// Only the peer's key can send that close (it comes in the encrypted
+/// space; one in the handshake's shows as a transport error), so dropping
+/// the link on it is safe.
+pub fn refused(conn: &Connection) -> bool {
+    conn.close_reason().is_some_and(|e| not_linked(&e))
+}
+
+fn not_linked(err: &ConnectionError) -> bool {
+    matches!(err, ConnectionError::ApplicationClosed(c)
+        if c.error_code == NOT_LINKED.into() && &c.reason[..] == b"not linked")
+}
+
+/// The close code of [`unlinked`] and the gate's refusal.
+const NOT_LINKED: u32 = 1;
 
 /// The key (hex) of the engine at the other end.
 pub fn key(conn: &Connection) -> String {
@@ -289,7 +339,7 @@ impl EndpointHooks for Gate {
         }
         tracing::info!(key = %key(conn), "iroh: refused an engine that isn't linked");
         AfterHandshakeOutcome::Reject {
-            error_code: 1u32.into(),
+            error_code: NOT_LINKED.into(),
             reason: b"not linked".to_vec(),
         }
     }
@@ -396,6 +446,38 @@ mod tests {
         let (refused, accepted) = tokio::join!(refused, accepted);
         assert!(refused.unwrap());
         assert!(accepted.is_err(), "b let an unlinked engine in");
+    }
+
+    /// An engine that is refused, or unlinked while connected, can tell it
+    /// from any other loss, and so drop its side of the link.
+    #[tokio::test]
+    async fn an_engine_can_tell_it_was_refused_or_unlinked() {
+        let (a, b) = (net(1, Some(2)).await, net(2, None).await);
+        let (at_b, b_key) = (loopback(&b), b.key());
+        let seen = tokio::time::timeout(Duration::from_secs(5), async {
+            match a.connect(&b_key, &at_b, Alpn::Link).await {
+                Err(err) => err.refused,
+                Ok(conn) => {
+                    conn.closed().await;
+                    refused(&conn)
+                }
+            }
+        });
+        assert!(seen.await.unwrap(), "refusal not seen");
+
+        let (a, b) = (net(1, Some(2)).await, net(2, Some(1)).await);
+        let (at_b, b_key) = (loopback(&b), b.key());
+        let (dialled, accepted) = tokio::join!(a.connect(&b_key, &at_b, Alpn::Link), b.accept());
+        let (dialled, (_, accepted)) = (dialled.unwrap(), accepted.unwrap());
+        unlinked(&accepted);
+        dialled.closed().await;
+        assert!(refused(&dialled));
+        // Any other close isn't.
+        let (dialled, accepted) = tokio::join!(a.connect(&b_key, &at_b, Alpn::Link), b.accept());
+        let (dialled, (_, accepted)) = (dialled.unwrap(), accepted.unwrap());
+        accepted.close(0u32.into(), b"duplicate");
+        dialled.closed().await;
+        assert!(!refused(&dialled));
     }
 
     #[test]

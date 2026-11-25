@@ -116,7 +116,8 @@ pub fn run() {
             show_in_folder,
             remote::discover_engines,
             remote::pair_engine,
-            remote::link_engine
+            remote::link_engine,
+            remote::unlink_engine
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

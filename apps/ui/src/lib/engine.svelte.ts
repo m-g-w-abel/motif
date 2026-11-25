@@ -13,7 +13,7 @@ import type { QueryResult } from './protocol/QueryResult';
 import type { PlayerState } from './protocol/PlayerState';
 import type { QueueItem } from './protocol/QueueItem';
 import type { ServerMessage } from './protocol/ServerMessage';
-import { currentEngine, loadEngines, LOCAL_ID, setToken, socketUrl, type EngineList } from './engines';
+import { currentEngine, loadEngines, LOCAL_ID, removeEngine, setToken, socketUrl, type EngineList } from './engines';
 import { toasts } from './toast.svelte';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
@@ -45,6 +45,19 @@ class Engines {
       localStorage.removeItem(LEGACY_TOKEN_KEY);
     } catch {
       // Lasts until reload.
+    }
+  }
+
+  /** Forgets engine `id` (its key), and this app's engine unlinks from it: it learns when it next calls. */
+  async forget(id: string) {
+    this.update((list) => removeEngine(list, id));
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('unlink_engine', { key: id });
+    } catch (e) {
+      // The headless engine serves this app: nothing here was linked.
+      console.warn("can't unlink the engines:", e);
     }
   }
 }

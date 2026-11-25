@@ -802,6 +802,17 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   ~1 ms in a test with public relays on); the relay is only its backup path,
   so the relay's "rate-limiting" warning seen then is about that backup
   traffic, not where the stream went.
+- **Forgetting (2026-11-25 phone test):** songs still played from an engine
+  after forgetting it. The phone's Forget only dropped the engine from the
+  app's list, and Remove on the desktop dropped one entry while the same
+  engine, paired twice, stayed linked under another. Now Remove drops every
+  entry with that engine key, Forget in the app unlinks its own engine too
+  (`unlink_engine`), and the other end forgets as well: a live link is
+  closed "not linked" (code 1, only the peer's key can send it, encrypted),
+  and one away is refused at its next dial. Either way it drops the link,
+  its catalog rows and its connections, without telling back. A forgetting
+  engine keeps the key (`forgotten` in pairing.json) and its endpoint up
+  until that engine has been told, even with no links left.
 - **Opening off the decode thread:** tracks asked for and preloads open (and
   move to their start) on two long-lived threads beside the decode thread
   (`audio::opener`), so a dial or a slow disk never starves the 0.5 s output

@@ -109,6 +109,15 @@ pub fn link_engine(
     Ok(pairing.engine_key().to_owned())
 }
 
+/// Unlinks this app's engine from the engine with `key`, which this app
+/// forgot; that engine is told when it next calls. Safe to repeat.
+#[tauri::command]
+pub fn unlink_engine(own: tauri::State<'_, OwnEngine>, key: String) -> Result<(), String> {
+    let pairing = own.0.as_ref().ok_or("this app's engine runs elsewhere")?;
+    pairing.unlink(&key);
+    Ok(())
+}
+
 async fn pair(
     address: String,
     code: String,

@@ -30,7 +30,7 @@
   import { engines } from '../../engine.svelte';
   import { GROUP_INFO, phoneGroups, searchSettings } from '../../settingsSearch';
   import { SETTINGS_GROUPS } from '../../settingsView.svelte';
-  import { LOCAL_ID, removeEngine, switchTo } from '../../engines';
+  import { LOCAL_ID, switchTo } from '../../engines';
   import WindowButtons from './WindowButtons.svelte';
 
   // `page`: phones show the list and each group as screens of their own, each fixed to its page; desktop's follows the group.
@@ -293,7 +293,7 @@
                 <button class="button" onclick={() => engines.update((list) => switchTo(list, saved.id))}>Switch</button>
               {/if}
               {#if saved.id !== LOCAL_ID}
-                <button class="button" onclick={() => engines.update((list) => removeEngine(list, saved.id))}>Forget</button>
+                <button class="button" onclick={() => engines.forget(saved.id)}>Forget</button>
               {/if}
             </div>
           {/each}
