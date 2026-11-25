@@ -6,10 +6,15 @@
 //! and waveforms by audio hash, so each is fetched once. The owner serves
 //! only linked engines, and covers by key, never a path.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use library::{Library, catalog::valid_art_key};
 use net::{Alpn, Connection, RecvStream, SendStream};
+use protocol::Reach;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Semaphore};
 
@@ -31,8 +36,12 @@ const COVER_SIZE: u32 = 1024;
 const MAX_ANSWER: usize = 16 << 20;
 /// Requests answered at once on a connection (each can hold an image).
 const SERVING: usize = 3;
-/// How long a request, dialling included, may take.
+/// How long a request, dialling excluded, may take.
 const TIMEOUT: Duration = Duration::from_secs(15);
+/// How long dialling may take, and how long a failed dial counts for every
+/// request meanwhile, so a grid of covers of an engine that can't be reached
+/// doesn't hold the art route's slots dialling it again and again.
+const DIAL: Duration = Duration::from_secs(5);
 
 /// Answers requests on `conn` from a linked engine (while `linked` says it
 /// is) until it closes.
@@ -98,10 +107,13 @@ async fn answer(
     send.finish().map_err(|e| e.to_string())
 }
 
+/// A kept connection to an engine, or why dialling it failed, and when.
+type Dialled = Result<Connection, (String, Instant)>;
+
 /// Asks linked engines for covers and waveforms, over a connection kept
 /// for each while it lives.
 pub(crate) struct Remote {
-    conns: Mutex<HashMap<String, Connection>>,
+    conns: Mutex<HashMap<String, Dialled>>,
     /// Fetches at once: a grid asks for hundreds of covers.
     gate: Semaphore,
 }
@@ -161,8 +173,11 @@ impl Remote {
     }
 
     async fn ask(&self, pairing: &Pairing, owner: &str, ask: &Ask) -> Result<Vec<u8>, String> {
+        if pairing.reach(owner) == Reach::Unreachable {
+            return Err("the linked engine can't be reached now".into());
+        }
+        let conn = self.connection(pairing, owner).await?;
         let asked = async {
-            let conn = self.connection(pairing, owner).await?;
             let (mut send, mut recv) = conn.open_bi().await.map_err(|e| e.to_string())?;
             write(&mut send, ask).await?;
             send.finish().map_err(|e| e.to_string())?;
@@ -178,20 +193,34 @@ impl Remote {
     }
 
     async fn connection(&self, pairing: &Pairing, owner: &str) -> Result<Connection, String> {
+        // Held while dialling: requests wait for that one dial, which fails
+        // or is remembered as failed for the others.
         let mut conns = self.conns.lock().await;
-        if let Some(conn) = conns.get(owner).filter(|c| c.close_reason().is_none()) {
-            return Ok(conn.clone());
+        match conns.get(owner) {
+            Some(Ok(conn)) if conn.close_reason().is_none() => return Ok(conn.clone()),
+            Some(Err((err, at))) if at.elapsed() < DIAL => return Err(err.clone()),
+            _ => {}
         }
-        let (_, addr) = pairing
-            .linked()
-            .into_iter()
-            .find(|(key, _)| key == owner)
-            .ok_or("the engine with it is no longer linked")?;
-        let net = pairing
-            .net()
-            .ok_or("on a linked engine, but not connected to any now")?;
-        let conn = net.connect(owner, &addr, Alpn::Art).await?;
-        conns.insert(owner.into(), conn.clone());
-        Ok(conn)
+        let dialled = async {
+            let (_, addr) = pairing
+                .linked()
+                .into_iter()
+                .find(|(key, _)| key == owner)
+                .ok_or("the engine with it is no longer linked")?;
+            let net = pairing
+                .net()
+                .ok_or("on a linked engine, but not connected to any now")?;
+            let dialled = net.connect(owner, &addr, Alpn::Art);
+            let conn = tokio::time::timeout(DIAL, dialled)
+                .await
+                .map_err(|_| "the linked engine didn't answer".to_string())??;
+            Ok::<_, String>(conn)
+        };
+        let dialled = dialled.await;
+        conns.insert(
+            owner.into(),
+            dialled.clone().map_err(|err| (err, Instant::now())),
+        );
+        dialled
     }
 }

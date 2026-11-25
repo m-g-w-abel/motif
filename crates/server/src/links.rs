@@ -684,6 +684,74 @@ mod tests {
         }
     }
 
+    /// Covers of an engine that can't be reached fail at once, without each
+    /// request dialling it for [`art`]'s whole timeout (#266).
+    async fn covers_of_an_unreachable_engine(reach: Option<Reach>, within: Duration) {
+        let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
+        b.command(protocol::PairingCommand::SetInternet { allowed: false })
+            .unwrap();
+        let (library_b, dir_b) = library("art-off");
+        library_b.set_device(b.engine_key()).unwrap();
+        // Linked, but whatever holds its address never answers.
+        let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        b.link(
+            "A",
+            a.engine_key(),
+            &[silent.local_addr().unwrap().to_string()],
+        )
+        .unwrap();
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        bound(&b).await;
+        if let Some(reach) = reach {
+            b.set_reach(a.engine_key(), reach);
+        }
+        let keys: Vec<String> = (0..20).map(|i| format!("{i:032x}")).collect();
+        let changes = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| library::catalog::Change {
+                version: i as u64 + 1,
+                id: i as i64,
+                track: Some(library::catalog::CatalogTrack {
+                    art: Some(key.clone()),
+                    ..Default::default()
+                }),
+            })
+            .collect();
+        library_b
+            .merge_catalog(
+                a.engine_key(),
+                library::catalog::Page {
+                    epoch: "e".into(),
+                    from: 0,
+                    changes,
+                },
+            )
+            .unwrap();
+        let remote = Arc::new(art::Remote::new());
+        let asked = keys.into_iter().map(|key| {
+            let (remote, b, library) = (remote.clone(), b.clone(), library_b.clone());
+            tokio::spawn(async move { remote.cover(&b, &library, &key).await })
+        });
+        let answers = tokio::time::timeout(within, futures_util::future::join_all(asked))
+            .await
+            .expect("requests for an unreachable engine's covers waited on dialling it");
+        assert!(answers.into_iter().all(|a| a.unwrap().is_err()));
+        drop(silent);
+        let _ = std::fs::remove_dir_all(dir_b);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn covers_of_an_engine_known_to_be_unreachable_are_not_dialled() {
+        covers_of_an_unreachable_engine(None, Duration::from_secs(2)).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn covers_of_an_engine_that_fails_to_answer_share_one_failed_dial() {
+        // Reached a moment ago, as far as anyone knows: one dial finds out.
+        covers_of_an_unreachable_engine(Some(Reach::Direct), Duration::from_secs(9)).await;
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_linked_engines_waveform_comes_from_its_owner() {
         let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
