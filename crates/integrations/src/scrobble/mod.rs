@@ -245,19 +245,33 @@ fn is_uuid(id: &str) -> bool {
 
 /// Queues the plays in the synced history that `name` hasn't been given
 /// (made here or on a linked device without an account), then marks them
-/// for every device. Marked after queueing: a crash between sends a play
+/// for every device. With `send` off (signed in but switched off) it only
+/// marks what was played here, so switching on later doesn't send it. Marked after queueing: a crash between sends a play
 /// twice, which the services' own dedupe (same track and time) absorbs.
-async fn pull_history(library: &Library, name: &'static str, queue: &mut Queue) {
+async fn pull_history(library: &Library, name: &'static str, queue: &mut Queue, send: bool) {
     let since = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs().saturating_sub(MAX_AGE.as_secs()));
     let lib = library.clone();
-    let plays = match tokio::task::spawn_blocking(move || lib.unscrobbled(name, since)).await {
-        Ok(Ok(plays)) if !plays.is_empty() => plays,
+    let plays = match tokio::task::spawn_blocking(move || {
+        let own = lib.device();
+        lib.unscrobbled(name, since).map(|plays| (plays, own))
+    })
+    .await
+    {
+        Ok(Ok((mut plays, own))) => {
+            if !send {
+                plays.retain(|p| p.device == own);
+            }
+            plays
+        }
         Ok(Err(err)) => return tracing::warn!(%err, "can't read the play history"),
         _ => return,
     };
-    for listen in plays.iter().filter_map(Listen::of_play) {
+    if plays.is_empty() {
+        return;
+    }
+    for listen in plays.iter().filter(|_| send).filter_map(Listen::of_play) {
         if let Err(err) = queue.push(listen) {
             return tracing::warn!(%err, "can't save the {name} scrobble queue");
         }
@@ -363,8 +377,10 @@ async fn run<S: Scrobbler>(
             continue;
         }
         let active = account.enabled && secret.is_some();
-        if active && let Some(library) = &library {
-            pull_history(library, name, &mut queue).await;
+        if let Some(library) = &library
+            && secret.is_some()
+        {
+            pull_history(library, name, &mut queue, account.enabled).await;
         }
         if active
             && !queue.is_empty()
@@ -604,13 +620,58 @@ mod tests {
         let sink = Sink::default();
         let mut queue = Queue::open(dir.join("scrobbles-sink.json"));
         for _ in 0..2 {
-            pull_history(&library, "sink", &mut queue).await;
+            pull_history(&library, "sink", &mut queue, true).await;
             queue.flush(&sink, "secret").await.unwrap();
         }
         assert_eq!(
             *sink.0.lock().unwrap(),
             [format!("Song@{}", now - 60)],
             "once; not the one past 14 days, nor the one services can't take"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plays_made_here_while_a_service_is_switched_off_are_never_sent() {
+        use library::sync::{Logged, Op, Track};
+
+        let dir = std::env::temp_dir().join(format!("motif-off-scrobble-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let library = Library::open(&dir).unwrap();
+        library.set_device("desktop").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let play = |device: &str, title: &str| Logged {
+            device: device.into(),
+            seq: 1,
+            at: now * 1000,
+            op: Op::Play {
+                track: Track {
+                    title: Some(title.into()),
+                    artist: Some("Band".into()),
+                    ..Default::default()
+                },
+                started: now - 60,
+            },
+        };
+        library
+            .merge(vec![play("desktop", "Private"), play("phone", "Shared")])
+            .unwrap();
+
+        let sink = Sink::default();
+        let mut queue = Queue::open(dir.join("scrobbles-sink.json"));
+        // Signed in but switched off: what was played here is done with, unsent.
+        pull_history(&library, "sink", &mut queue, false).await;
+        assert!(queue.is_empty());
+        // Switched back on.
+        pull_history(&library, "sink", &mut queue, true).await;
+        queue.flush(&sink, "secret").await.unwrap();
+        assert_eq!(
+            *sink.0.lock().unwrap(),
+            [format!("Shared@{}", now - 60)],
+            "only what another device played"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

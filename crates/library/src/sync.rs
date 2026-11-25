@@ -337,7 +337,7 @@ impl Library {
     }
 
     /// The key changes here are logged under ('' until [`Self::set_device`]).
-    pub(crate) fn device(&self) -> String {
+    pub fn device(&self) -> String {
         self.shared.device.lock().unwrap().clone()
     }
 }
