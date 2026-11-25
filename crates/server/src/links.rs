@@ -24,7 +24,7 @@ use net::{Alpn, Connection, Net};
 use protocol::{LibraryStatus, Reach};
 use tokio::task::JoinSet;
 
-use crate::{Pairing, catalog, files, sync};
+use crate::{Pairing, art, catalog, files, sync};
 
 // shortcut: a fixed retry; back off if unreachable engines cost battery.
 const RETRY: Duration = Duration::from_secs(60);
@@ -169,6 +169,11 @@ async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
                         let gate = pairing.clone();
                         let linked: net::Linked = Arc::new(move |key| gate.is_linked(key));
                         tasks.spawn(files::serve(library.clone(), conn, linked, None));
+                    }
+                    (Alpn::Art, Some(library)) => {
+                        let gate = pairing.clone();
+                        let linked: net::Linked = Arc::new(move |key| gate.is_linked(key));
+                        tasks.spawn(art::serve(library.clone(), conn, linked));
                     }
                     _ => conn.close(2u32.into(), b"not yet"),
                 }
@@ -604,6 +609,135 @@ mod tests {
             .unwrap();
         wait_for(&b, |s| s.devices.is_empty()).await;
         until("catalog dropped", &library_b, |l| on_b(l).is_empty()).await;
+        for dir in [dir_a, dir_b] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_linked_engines_cover_and_waveform_are_fetched_once_and_kept() {
+        let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
+        for p in [&a, &b] {
+            p.command(protocol::PairingCommand::SetInternet { allowed: false })
+                .unwrap();
+        }
+        let ((library_a, dir_a), (library_b, dir_b)) = (library("art-a"), library("art-b"));
+        library_a.set_device(a.engine_key()).unwrap();
+        library_b.set_device(b.engine_key()).unwrap();
+        // A folder with a non-ASCII name (#266) holding a track and its cover.
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../library/tests/fixtures/Artist B/Second Album");
+        let music = dir_a.join("music/フリクリ OST 2");
+        std::fs::create_dir_all(&music).unwrap();
+        for file in ["01 Beginning.mp3", "cover.png"] {
+            std::fs::copy(fixtures.join(file), music.join(file)).unwrap();
+        }
+        library_a
+            .query(protocol::LibraryQuery::AddRoot {
+                path: dir_a.join("music").to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        b.link("A", a.engine_key(), &[]).unwrap();
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        let b_port = bound(&b).await;
+        a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
+            .unwrap();
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
+        let shown = |l: &Library| {
+            let protocol::QueryResult::Tracks { tracks, .. } = l
+                .query(protocol::LibraryQuery::Tracks {
+                    search: None,
+                    sort: vec![],
+                    filter: Default::default(),
+                    offset: 0,
+                    limit: 10,
+                })
+                .unwrap()
+            else {
+                panic!()
+            };
+            tracks.into_iter().next()
+        };
+        until("catalog", &library_b, |l| {
+            shown(l).is_some_and(|t| t.art.is_some())
+        })
+        .await;
+        let track = shown(&library_b).unwrap();
+        let key = track.art.unwrap();
+        assert!(library_b.art_image(&key, None).is_err(), "not fetched yet");
+
+        let remote = art::Remote::new();
+        remote.cover(&b, &library_b, &key).await.unwrap();
+        assert_eq!(library_b.art_image(&key, None).unwrap().1, "image/png");
+        assert!(library_b.art_image(&key, Some(32)).is_ok());
+        // Kept: asked for again with the owner gone, it is not needed.
+        let device = a.subscribe().borrow().devices[0].id.clone();
+        a.command(protocol::PairingCommand::Revoke { device })
+            .unwrap();
+        wait_for(&b, |s| s.devices.is_empty()).await;
+        assert!(library_b.art_image(&key, None).is_ok());
+        // Not a key, nor a linked engine's: refused without asking anyone.
+        assert!(remote.cover(&b, &library_b, "../x").await.is_ok());
+        assert!(library_b.art_image("../x", None).is_err());
+        for dir in [dir_a, dir_b] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_linked_engines_waveform_comes_from_its_owner() {
+        let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
+        for p in [&a, &b] {
+            p.command(protocol::PairingCommand::SetInternet { allowed: false })
+                .unwrap();
+        }
+        let ((library_a, dir_a), (library_b, dir_b)) = (library("wave-a"), library("wave-b"));
+        library_a.set_device(a.engine_key()).unwrap();
+        library_b.set_device(b.engine_key()).unwrap();
+        let music = dir_a.join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        std::fs::write(music.join("tone.wav"), wav()).unwrap();
+        library_a
+            .query(protocol::LibraryQuery::AddRoot {
+                path: music.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        b.link("A", a.engine_key(), &[]).unwrap();
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        let b_port = bound(&b).await;
+        a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
+            .unwrap();
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
+        let first = |l: &Library| {
+            let protocol::QueryResult::Tracks { tracks, .. } = l
+                .query(protocol::LibraryQuery::Tracks {
+                    search: None,
+                    sort: vec![],
+                    filter: Default::default(),
+                    offset: 0,
+                    limit: 10,
+                })
+                .unwrap()
+            else {
+                panic!()
+            };
+            tracks.into_iter().next()
+        };
+        until("catalog", &library_b, |l| first(l).is_some()).await;
+        let path = first(&library_b).unwrap().track.id;
+        let remote = art::Remote::new();
+        let levels = remote
+            .waveform(&b, &library_b, &path)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!levels.is_empty());
+        assert!(
+            remote
+                .waveform(&b, &library_b, "/local.flac")
+                .await
+                .is_none()
+        );
         for dir in [dir_a, dir_b] {
             let _ = std::fs::remove_dir_all(dir);
         }

@@ -5,6 +5,9 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
+- **Covers and seek bar waveforms of your other devices' songs**: a song that is
+  only on a linked device shows its real cover and waveform, fetched from that
+  device the first time and kept here.
 - **Songs on your other devices show up in your library**: a linked device's
   songs mix in with yours (the same song on both shows once), marked with a
   cloud and dimmed while that device can't be reached. The sort menu's "Only

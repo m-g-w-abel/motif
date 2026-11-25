@@ -1327,3 +1327,65 @@ fn artists_and_folders_are_searched_and_folders_play() {
     // Only a folder's own songs play, as the list counts them.
     assert!(play(music.join("Artist B").to_str().unwrap()).is_err());
 }
+
+/// #266: an album whose title is not ASCII lists with its cover, the cover
+/// reads back, and its key finds the tracks.
+#[test]
+fn a_non_ascii_album_has_its_cover() {
+    use lofty::{config::WriteOptions, prelude::*};
+    let (data, music) = (temp_dir("data"), temp_dir("music"));
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let title = "フリクリ オリジナルサウンドトラック 2 海賊王";
+    let folder = music.join(title);
+    fs::create_dir_all(&folder).unwrap();
+    for file in ["01 Beginning.mp3", "cover.png"] {
+        fs::copy(
+            fixtures.join("Artist B/Second Album").join(file),
+            folder.join(file),
+        )
+        .unwrap();
+    }
+    let song = folder.join("01 Beginning.mp3");
+    let mut tagged = lofty::read_from_path(&song).unwrap();
+    tagged.primary_tag_mut().unwrap().set_album(title.into());
+    tagged
+        .primary_tag_mut()
+        .unwrap()
+        .save_to_path(&song, WriteOptions::default())
+        .unwrap();
+    let library = Library::open(&data).unwrap();
+    library
+        .query(LibraryQuery::AddRoot {
+            path: music.to_str().unwrap().into(),
+        })
+        .unwrap();
+    wait_until(&library, |s| s.tracks == 1 && !s.scanning && s.hashing == 0);
+    let QueryResult::Albums { albums, .. } = library
+        .query(LibraryQuery::Albums {
+            search: Some("フリクリ".into()),
+            artist: None,
+            sort: vec![],
+            offset: 0,
+            limit: 10,
+            filter: TrackFilter::default(),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(albums.len(), 1, "found by its Japanese title");
+    let art = albums[0].art.clone().expect("the album has a cover");
+    assert_eq!(library.art_image(&art, None).unwrap().1, "image/png");
+    assert_eq!(titles(&library, Some("フリクリ")), ["Beginning"]);
+    let QueryResult::Tracks { tracks, .. } = library
+        .query(LibraryQuery::AlbumTracks {
+            albums: vec![albums[0].key.clone()],
+            sort: vec![],
+            filter: TrackFilter::default(),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(tracks.len(), 1);
+}
