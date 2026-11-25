@@ -13,7 +13,7 @@ import type { QueryResult } from './protocol/QueryResult';
 import type { PlayerState } from './protocol/PlayerState';
 import type { QueueItem } from './protocol/QueueItem';
 import type { ServerMessage } from './protocol/ServerMessage';
-import { currentEngine, loadEngines, LOCAL_ID, setToken, socketUrl, type EngineList } from './engines';
+import { currentEngine, loadEngines, LOCAL_ID, removeEngine, setToken, socketUrl, type EngineList } from './engines';
 import { toasts } from './toast.svelte';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
@@ -45,6 +45,19 @@ class Engines {
       localStorage.removeItem(LEGACY_TOKEN_KEY);
     } catch {
       // Lasts until reload.
+    }
+  }
+
+  /** Forgets engine `id` (its key), and this app's engine unlinks from it: it learns when it next calls. */
+  async forget(id: string) {
+    this.update((list) => removeEngine(list, id));
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('unlink_engine', { key: id });
+    } catch (e) {
+      // The headless engine serves this app: nothing here was linked.
+      console.warn("can't unlink the engines:", e);
     }
   }
 }
@@ -150,16 +163,23 @@ export class EngineClient {
   }
 
   /** Sends a pairing command; shows failures in the UI. */
-  pair(pairing: PairingCommand): void {
+  /** Sends a pairing command; resolves to whether the engine carried it out. */
+  pair(pairing: PairingCommand): Promise<boolean> {
     const socket = this.#socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       this.error = 'not connected to the engine';
-      return;
+      return Promise.resolve(false);
     }
     const id = this.#nextId++;
     const message: ClientMessage = { id, pairing };
     socket.send(JSON.stringify(message));
-    new Promise<void>((resolve, reject) => this.#pending.set(id, { resolve, reject })).catch((e: Error) => (this.error = e.message));
+    return new Promise<void>((resolve, reject) => this.#pending.set(id, { resolve, reject })).then(
+      () => true,
+      (e: Error) => {
+        this.error = e.message;
+        return false;
+      },
+    );
   }
 
   /** Asks the library a question. */
@@ -225,8 +245,12 @@ export class EngineClient {
     this.#linked = true;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const key = await invoke<string>('link_engine', { key: id, name, addresses });
-      this.pair({ type: 'set_engine_key', key });
+      // The other engine learns this one's key first: dialled before, it
+      // would refuse an engine it doesn't know, which unlinks it here.
+      const key = await invoke<string>('own_engine_key');
+      if (await this.pair({ type: 'set_engine_key', key })) {
+        await invoke('link_engine', { key: id, name, addresses });
+      }
     } catch (e) {
       // The headless engine serves this app: nothing here to link.
       console.warn("can't link the engines:", e);

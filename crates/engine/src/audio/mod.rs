@@ -12,7 +12,6 @@ pub mod ogg;
 pub mod pipeline;
 
 use std::{
-    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -32,6 +31,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use bands::Analyser;
 use decoder::{Decoder, Plugin};
 use pipeline::{Playhead, Stream, Timeline};
+
+use crate::Source;
 
 /// Reported by the audio threads to the engine.
 #[derive(Debug)]
@@ -57,6 +58,9 @@ struct Shared {
     armed: AtomicBool,
     /// The callback copies what it plays into the tap buffer.
     tap: AtomicBool,
+    /// Flushed while paused: the paused device still holds audio from
+    /// before, which it would play first on resuming.
+    stale: AtomicBool,
 }
 
 impl Shared {
@@ -68,6 +72,7 @@ impl Shared {
             underruns: AtomicU64::new(0),
             armed: AtomicBool::new(false),
             tap: AtomicBool::new(false),
+            stale: AtomicBool::new(false),
         }
     }
 }
@@ -76,14 +81,14 @@ enum Command {
     Load {
         token: u64,
         item: u64,
-        path: PathBuf,
+        path: Source,
         start: Duration,
         gain: f32,
     },
     Preload {
         token: u64,
         item: u64,
-        path: PathBuf,
+        path: Source,
         gain: f32,
     },
     /// Changes the ReplayGain factor of the loaded or preloaded `token`.
@@ -131,20 +136,36 @@ impl Audio {
                 .name("audio-output".into())
                 .spawn(move || {
                     match open_stream(device.as_deref(), shared.clone(), events.clone()) {
-                        Ok((stream, producer, consumer, tap, rate, channels)) => {
+                        Ok((stream, rebuild, producer, consumer, tap, rate, channels)) => {
+                            let mut stream = Some(stream);
                             let _ = ready_tx.send(Ok((producer, consumer, tap, rate, channels)));
                             // The stream lives until the handle is dropped. Paused,
                             // it stops calling back, so the device stops waking the
                             // app every buffer (#254).
                             while let Ok(playing) = output_rx.recv() {
                                 if playing {
+                                    // What the paused device holds is from before a
+                                    // load, seek or stop: a new stream starts empty.
+                                    if shared.stale.swap(false, Ordering::Relaxed) {
+                                        tracing::debug!(
+                                            "audio: a new stream, without what the paused one held"
+                                        );
+                                        stream = None;
+                                        match rebuild() {
+                                            Ok(new) => stream = Some(new),
+                                            Err(err) => {
+                                                let _ = events.send(AudioEvent::DeviceLost(err));
+                                            }
+                                        }
+                                    }
+                                    let Some(stream) = &stream else { continue };
                                     // Again here: a pause queued before this one cleared it.
                                     shared.playing.store(true, Ordering::Relaxed);
                                     if let Err(err) = stream.play() {
                                         let _ =
                                             events.send(AudioEvent::DeviceLost(err.to_string()));
                                     }
-                                } else {
+                                } else if let Some(stream) = &stream {
                                     // Paused before the flag, so the device keeps the
                                     // audio it holds and resumes without a gap. A device
                                     // that can't pause plays silence instead.
@@ -170,6 +191,9 @@ impl Audio {
         let (commands, commands_rx) = mpsc::channel();
         let feeder = Feeder {
             commands: commands_rx,
+            // Apart, so a slow preload never holds up a track asked for.
+            loader: opener("audio-load")?,
+            preloader: opener("audio-preload")?,
             producer,
             consumer,
             shared: shared.clone(),
@@ -199,7 +223,8 @@ impl Audio {
     /// Starts decoding queue item `item` from `start`, replacing whatever was
     /// playing, at ReplayGain factor `gain`. Returns the token that
     /// [`Playhead::token`] reports while it is audible.
-    pub fn load(&mut self, item: u64, path: PathBuf, start: Duration, gain: f32) -> u64 {
+    pub fn load(&mut self, item: u64, path: Source, start: Duration, gain: f32) -> u64 {
+        cut(&self.shared, self.playing);
         let token = self.token();
         let _ = self.commands.send(Command::Load {
             token,
@@ -212,7 +237,7 @@ impl Audio {
     }
 
     /// Prepares `item` to follow the current track without a gap.
-    pub fn preload(&mut self, item: u64, path: PathBuf, gain: f32) -> u64 {
+    pub fn preload(&mut self, item: u64, path: Source, gain: f32) -> u64 {
         let token = self.token();
         let _ = self.commands.send(Command::Preload {
             token,
@@ -234,10 +259,13 @@ impl Audio {
     }
 
     pub fn seek(&self, to: Duration) {
+        cut(&self.shared, self.playing);
         let _ = self.commands.send(Command::Seek(to));
     }
 
+    /// Always followed by `set_playing(false)`.
     pub fn stop(&self) {
+        cut(&self.shared, false);
         let _ = self.commands.send(Command::Stop);
     }
 
@@ -305,8 +333,20 @@ impl Audio {
     }
 }
 
+/// Notes a cut in what plays (a load, seek or stop): made while paused,
+/// the audio the paused device holds is from before it ([`Shared::stale`]).
+/// Decided here, in the order the commands are sent, not when the decode
+/// thread flushes: by then a play sent just after may have resumed it.
+fn cut(shared: &Shared, playing: bool) {
+    if !playing {
+        shared.stale.store(true, Ordering::Relaxed);
+    }
+}
+
 type Opened = (
     cpal::Stream,
+    // A new stream on the same buffers.
+    Box<dyn Fn() -> Result<cpal::Stream, String>>,
     Producer<f32>,
     Arc<Mutex<Consumer<f32>>>,
     Consumer<f32>,
@@ -369,23 +409,39 @@ fn open_stream(
     let consumer = Arc::new(Mutex::new(consumer));
     // A quarter second: the engine reads it 30 times a second.
     let (tap, tapped) = RingBuffer::new(rate as usize * channels / 4);
+    let tap = Arc::new(Mutex::new(tap));
     let config = supported.config();
-    let stream = match supported.sample_format() {
-        SampleFormat::F32 => build::<f32>(&device, &config, consumer.clone(), tap, shared, events),
-        SampleFormat::I16 => build::<i16>(&device, &config, consumer.clone(), tap, shared, events),
-        SampleFormat::U16 => build::<u16>(&device, &config, consumer.clone(), tap, shared, events),
-        SampleFormat::I32 => build::<i32>(&device, &config, consumer.clone(), tap, shared, events),
-        other => Err(format!("unsupported output sample format {other}")),
-    }?;
+    let format = supported.sample_format();
+    let shared_consumer = consumer.clone();
+    let rebuild = move || {
+        let (consumer, tap) = (shared_consumer.clone(), tap.clone());
+        let (shared, events) = (shared.clone(), events.clone());
+        match format {
+            SampleFormat::F32 => build::<f32>(&device, &config, consumer, tap, shared, events),
+            SampleFormat::I16 => build::<i16>(&device, &config, consumer, tap, shared, events),
+            SampleFormat::U16 => build::<u16>(&device, &config, consumer, tap, shared, events),
+            SampleFormat::I32 => build::<i32>(&device, &config, consumer, tap, shared, events),
+            other => Err(format!("unsupported output sample format {other}")),
+        }
+    };
+    let stream = rebuild()?;
     // Started by the first `set_playing(true)`.
-    Ok((stream, producer, consumer, tapped, rate, channels))
+    Ok((
+        stream,
+        Box::new(rebuild),
+        producer,
+        consumer,
+        tapped,
+        rate,
+        channels,
+    ))
 }
 
 fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     consumer: Arc<Mutex<Consumer<f32>>>,
-    mut tap: Producer<f32>,
+    tap: Arc<Mutex<Producer<f32>>>,
     shared: Arc<Shared>,
     events: UnboundedSender<AudioEvent>,
 ) -> Result<cpal::Stream, String> {
@@ -414,7 +470,10 @@ fn build<T: SizedSample + FromSample<f32>>(
                     let (a, b) = chunk.as_slices();
                     // Before the gain, so a visualiser still moves at volume 0.
                     // Wait-free and allocation-free; whole frames, dropped if the engine falls behind.
-                    if shared.tap.load(Ordering::Relaxed) {
+                    // Only a stream being replaced shares it: then skipped.
+                    if shared.tap.load(Ordering::Relaxed)
+                        && let Ok(mut tap) = tap.try_lock()
+                    {
                         let room = tap.slots() / channels * channels;
                         if let Ok(copy) = tap.write_chunk_uninit(room.min(take)) {
                             copy.fill_from_iter(a.iter().chain(b).copied());
@@ -448,6 +507,8 @@ fn build<T: SizedSample + FromSample<f32>>(
 /// splices the preloaded one in at the exact sample when it ends.
 struct Feeder {
     commands: mpsc::Receiver<Command>,
+    loader: mpsc::Sender<OpenRequest>,
+    preloader: mpsc::Sender<OpenRequest>,
     producer: Producer<f32>,
     consumer: Arc<Mutex<Consumer<f32>>>,
     shared: Arc<Shared>,
@@ -465,13 +526,79 @@ struct Loaded {
     decoder: Box<dyn Decoder>,
 }
 
+/// A decoder and the position it was moved to, or why it couldn't open.
+type Decoded = Result<(Box<dyn Decoder>, Duration), String>;
+
+/// A decoder for an [`opener`] thread to open at `start`.
+struct OpenRequest {
+    source: Source,
+    plugins: Vec<&'static Plugin>,
+    start: Duration,
+    /// Skipped once no longer wanted.
+    wanted: Arc<AtomicBool>,
+    done: mpsc::Sender<Decoded>,
+}
+
+/// A thread that opens decoders and moves them to their start, as opening
+/// may wait on a slow disk or a linked engine for seconds and the decode
+/// thread must go on playing and taking commands. Long-lived: a thread for
+/// each would leave decoder buffers spread over a malloc arena each, and
+/// memory growing.
+fn opener(name: &str) -> Result<mpsc::Sender<OpenRequest>, String> {
+    let (opener, requests) = mpsc::channel::<OpenRequest>();
+    thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            for request in requests {
+                if !request.wanted.load(Ordering::Relaxed) {
+                    continue;
+                }
+                let opened = decoder::open(&request.source, &request.plugins).and_then(|mut d| {
+                    let reached = match request.start.is_zero() {
+                        true => Duration::ZERO,
+                        false => d.seek(request.start)?,
+                    };
+                    Ok((d, reached))
+                });
+                let _ = request.done.send(opened);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(opener)
+}
+
+/// A track being opened by [`Feeder::open_aside`]; dropped, it is no
+/// longer wanted.
+struct Opening {
+    token: u64,
+    item: u64,
+    gain: f32,
+    source: Source,
+    opened: mpsc::Receiver<Decoded>,
+    wanted: Arc<AtomicBool>,
+}
+
+impl Drop for Opening {
+    fn drop(&mut self) {
+        self.wanted.store(false, Ordering::Relaxed);
+    }
+}
+
+/// How long a gapless move waits for the next track still opening. Then the
+/// track ends instead, and the engine loads the next one.
+const GAPLESS_WAIT: Duration = Duration::from_millis(100);
+
 impl Feeder {
     fn run(mut self) {
         let mut current: Option<Loaded> = None;
         let mut next: Option<Loaded> = None;
-        // A preload waits to be opened until the buffer is full, so opening a
-        // file (slow on a busy disk) never starves the current track.
-        let mut next_request: Option<(u64, u64, PathBuf, f32)> = None;
+        // A preload waits to be opened until the buffer is full, then opens
+        // on the preloader, so opening a file (slow on a busy disk, or from a
+        // linked engine) never starves the current track.
+        let mut next_request: Option<(u64, u64, Source, f32)> = None;
+        let mut opening: Option<Opening> = None;
+        // The track asked for, opening on the loader.
+        let mut loading: Option<Opening> = None;
         let mut stream = Stream::new(self.rate, self.channels);
         stream.reset(self.shared.played.load(Ordering::Acquire));
         let mut decoded = Vec::new();
@@ -486,18 +613,44 @@ impl Feeder {
                 // Filled since the last flush: from now on running dry is an underrun.
                 self.shared.armed.store(true, Ordering::Relaxed);
                 if let Some((token, item, path, gain)) = next_request.take() {
-                    next = self.open(token, item, &path, gain);
+                    let request = (token, item, path, gain);
+                    opening = Some(self.open_aside(&self.preloader, request, Duration::ZERO));
+                }
+            }
+            if let Some(open) = &opening {
+                match open.opened.try_recv() {
+                    Ok(opened) => {
+                        next = self.loaded(open, opened).map(|(loaded, _)| loaded);
+                        opening = None;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                    Err(mpsc::TryRecvError::Disconnected) => opening = None,
+                }
+            }
+            if let Some(open) = &loading {
+                match open.opened.try_recv() {
+                    Ok(opened) => {
+                        if let Some((loaded, reached)) = self.loaded(open, opened) {
+                            let (token, item) = (loaded.token, loaded.item);
+                            self.lock().start(stream.next_frame(), token, item, reached);
+                            current = Some(loaded);
+                        }
+                        loading = None;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                    Err(mpsc::TryRecvError::Disconnected) => loading = None,
                 }
             }
             let busy = current.is_some() || sent < pending.len();
             // Paused and full, nothing changes until a command (or `Wake`).
             let paused = full && !self.shared.playing.load(Ordering::Relaxed);
-            let command = if !busy || paused {
+            let command = if (!busy && loading.is_none()) || paused {
                 match self.commands.recv() {
                     Ok(command) => Some(command),
                     Err(_) => return,
                 }
-            } else if full {
+            } else if full || !busy {
+                // Full, or waiting for the track asked for to open.
                 match self.commands.recv_timeout(Duration::from_millis(10)) {
                     Ok(command) => Some(command),
                     Err(mpsc::RecvTimeoutError::Timeout) => None,
@@ -520,22 +673,13 @@ impl Feeder {
                     gain,
                 }) => {
                     self.flush(&mut stream, &mut pending, &mut sent);
+                    current = None;
                     next = None;
                     next_request = None;
+                    opening = None;
                     level.jump(gain);
-                    current = self.open(token, item, &path, gain).and_then(|mut loaded| {
-                        let reached = if start.is_zero() {
-                            Duration::ZERO
-                        } else {
-                            loaded
-                                .decoder
-                                .seek(start)
-                                .map_err(|reason| self.fail(item, reason))
-                                .ok()?
-                        };
-                        self.lock().start(stream.next_frame(), token, item, reached);
-                        Some(loaded)
-                    });
+                    let request = (token, item, path, gain);
+                    loading = Some(self.open_aside(&self.loader, request, start));
                 }
                 Some(Command::Preload {
                     token,
@@ -544,6 +688,7 @@ impl Feeder {
                     gain,
                 }) => {
                     next = None;
+                    opening = None;
                     next_request = Some((token, item, path, gain));
                 }
                 Some(Command::Gain { token, gain }) => {
@@ -560,12 +705,23 @@ impl Feeder {
                     {
                         request.3 = gain;
                     }
+                    for open in [&mut opening, &mut loading].into_iter().flatten() {
+                        if open.token == token {
+                            open.gain = gain;
+                        }
+                    }
                 }
                 Some(Command::ClearPreload) => {
                     next = None;
                     next_request = None;
+                    opening = None;
                 }
                 Some(Command::Seek(to)) => {
+                    // Still opening: opened again, to start there.
+                    if let Some(open) = loading.take() {
+                        let request = (open.token, open.item, open.source.clone(), open.gain);
+                        loading = Some(self.open_aside(&self.loader, request, to));
+                    }
                     if let Some(loaded) = &mut current {
                         self.flush(&mut stream, &mut pending, &mut sent);
                         level.settle(loaded.gain);
@@ -588,6 +744,8 @@ impl Feeder {
                     current = None;
                     next = None;
                     next_request = None;
+                    opening = None;
+                    loading = None;
                 }
                 Some(Command::Wake) | None => {}
             }
@@ -612,7 +770,14 @@ impl Feeder {
                     Ok(false) => {
                         // Track done: the preloaded one starts on the very next frame.
                         if let Some((token, item, path, gain)) = next_request.take() {
-                            next = self.open(token, item, &path, gain);
+                            let request = (token, item, path, gain);
+                            opening =
+                                Some(self.open_aside(&self.preloader, request, Duration::ZERO));
+                        }
+                        if let Some(open) = opening.take()
+                            && let Ok(opened) = open.opened.recv_timeout(GAPLESS_WAIT)
+                        {
+                            next = self.loaded(&open, opened).map(|(loaded, _)| loaded);
                         }
                         current = next.take();
                         level.next_track();
@@ -655,16 +820,46 @@ impl Feeder {
         }
     }
 
-    fn open(&self, token: u64, item: u64, path: &std::path::Path, gain: f32) -> Option<Loaded> {
+    /// Opens `source` on `opener`, at `start`.
+    fn open_aside(
+        &self,
+        opener: &mpsc::Sender<OpenRequest>,
+        (token, item, source, gain): (u64, u64, Source, f32),
+        start: Duration,
+    ) -> Opening {
         let plugins = self.plugins.lock().map(|p| p.clone()).unwrap_or_default();
-        decoder::open(path, &plugins)
-            .map(|decoder| Loaded {
-                token,
-                item,
-                gain,
-                decoder,
+        let (done, opened) = mpsc::channel();
+        let wanted = Arc::new(AtomicBool::new(true));
+        let _ = opener.send(OpenRequest {
+            source: source.clone(),
+            plugins,
+            start,
+            wanted: wanted.clone(),
+            done,
+        });
+        Opening {
+            token,
+            item,
+            gain,
+            source,
+            opened,
+            wanted,
+        }
+    }
+
+    /// What `open` opened, with where it starts; a failure is reported.
+    fn loaded(&self, open: &Opening, opened: Decoded) -> Option<(Loaded, Duration)> {
+        opened
+            .map(|(decoder, reached)| {
+                let loaded = Loaded {
+                    token: open.token,
+                    item: open.item,
+                    gain: open.gain,
+                    decoder,
+                };
+                (loaded, reached)
             })
-            .map_err(|reason| self.fail(item, reason))
+            .map_err(|reason| self.fail(open.item, reason))
             .ok()
     }
 
@@ -773,6 +968,8 @@ mod tests {
         let consumer = Arc::new(Mutex::new(consumer));
         let mut feeder = Feeder {
             commands: mpsc::channel().1,
+            loader: mpsc::channel().0,
+            preloader: mpsc::channel().0,
             producer,
             consumer: consumer.clone(),
             shared: Arc::new(Shared::new()),
@@ -786,6 +983,22 @@ mod tests {
         feeder.flush(&mut Stream::new(1000, 2), &mut Vec::new(), &mut 0);
         assert!(started.elapsed() < Duration::from_millis(100), "no waiting");
         assert_eq!(consumer.lock().unwrap().slots(), 0, "stale audio gone");
+    }
+
+    #[test]
+    fn a_cut_while_paused_leaves_the_devices_audio_stale() {
+        // Paused, the device still holds audio from before the load: it is
+        // dropped when playing starts again, not played first (a snippet of
+        // the last song before the next).
+        let shared = Shared::new();
+        cut(&shared, false);
+        assert!(shared.stale.load(Ordering::Relaxed));
+        let shared = Shared::new();
+        cut(&shared, true);
+        assert!(
+            !shared.stale.load(Ordering::Relaxed),
+            "playing, it plays on into the new audio"
+        );
     }
 
     /// Applies `target` to `frames` mono frames of 1.0, returning each frame's level.

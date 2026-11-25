@@ -1,14 +1,18 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use engine::{Playable, Resolver};
 use library::Library;
 use protocol::TrackRef;
 
+use crate::{Pairing, files};
+
 /// Resolves queue entries on this device: the referenced local file if it is
 /// here, else a library track with matching identity keys (a reference queued
-/// on another device).
+/// on another device), else a stream of a linked engine's copy.
 pub struct LibraryResolver {
     pub library: Option<Library>,
+    /// The linked engines to stream from; `None` plays only what is here.
+    pub pairing: Option<Pairing>,
 }
 
 impl LibraryResolver {
@@ -19,6 +23,23 @@ impl LibraryResolver {
             return Some(path);
         }
         self.library.as_ref()?.find(track)
+    }
+
+    /// A linked engine's copy of `track` to stream. Whether one is reachable
+    /// is found out when it is opened, so resolving never waits on the
+    /// network and a queue restored before the links are up keeps it.
+    fn linked(&self, track: &TrackRef) -> Option<Playable> {
+        let (library, pairing) = (self.library.as_ref()?, self.pairing.as_ref()?);
+        let runtime = tokio::runtime::Handle::try_current().ok()?;
+        let copies: Vec<_> = library
+            .copies(track)
+            .into_iter()
+            .filter(|(key, _)| pairing.is_linked(key))
+            .collect();
+        let (key, id) = copies.first()?;
+        let gain = library.replay_gain(Path::new(&format!("remote:{key}:{id}")));
+        let source = files::source(pairing.clone(), copies, runtime);
+        Some(Playable::File(source, gain))
     }
 }
 
@@ -34,7 +55,11 @@ impl Resolver for LibraryResolver {
                 .as_ref()
                 .map(|library| library.replay_gain(&path))
                 .unwrap_or_default();
-            return Ok(Playable::File(path, gain));
+            return Ok(Playable::File(path.into(), gain));
+        }
+        // A downloaded copy comes next, once there are any.
+        if let Some(linked) = self.linked(track) {
+            return Ok(linked);
         }
         Err(match track.source.as_str() {
             "local" => format!("not on this device: {}", track.id),

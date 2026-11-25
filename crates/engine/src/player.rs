@@ -1822,7 +1822,7 @@ mod tests {
     impl Resolver for Measuring {
         fn resolve(&self, track: &TrackRef) -> Result<Playable, String> {
             Ok(Playable::File(
-                track.id.clone().into(),
+                std::path::PathBuf::from(&track.id).into(),
                 ReplayGain::default(),
             ))
         }
@@ -1846,7 +1846,10 @@ mod tests {
         p.apply(album, t0).unwrap();
         let resolver = Measuring::default();
         p.resolve_current(&resolver, t0);
-        let untagged = Playable::File("/b.flac".into(), ReplayGain::default());
+        let untagged = Playable::File(
+            std::path::PathBuf::from("/b.flac").into(),
+            ReplayGain::default(),
+        );
         assert_eq!(p.playable(), Some(&untagged), "plays before it's measured");
         let ids = |v: &[&str]| v.iter().map(|s| format!("/{s}.flac")).collect::<Vec<_>>();
         assert_eq!(
@@ -1885,7 +1888,10 @@ mod tests {
                 album_peak: album.then_some(0.5),
                 ..TAGS
             };
-            Ok(Playable::File(track.id.clone().into(), tags))
+            Ok(Playable::File(
+                std::path::PathBuf::from(&track.id).into(),
+                tags,
+            ))
         }
     }
 

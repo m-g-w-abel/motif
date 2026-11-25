@@ -77,7 +77,7 @@ fn packet_hash(path: &Path) -> Result<Option<String>, String> {
 
 fn open(path: &Path) -> Result<Box<dyn FormatReader>, String> {
     let stream = MediaSourceStream::new(
-        engine::audio::ogg::source(path).map_err(|e| e.to_string())?,
+        engine::audio::ogg::source(&path.to_path_buf().into()).map_err(|e| e.to_string())?,
         Default::default(),
     );
     symphonia::default::get_probe()

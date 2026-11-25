@@ -9,6 +9,9 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
   songs mix in with yours (the same song on both shows once), marked with a
   cloud and dimmed while that device can't be reached. The sort menu's "Only
   songs on this device" narrows songs, albums, artists and search to what's here.
+- **Play songs from your other devices**: a song that is only on a linked
+  device plays here, streamed from it in its original quality, with seeking
+  and gapless albums. If that device can't be reached, the song says so.
 - **Playlists, history and ratings sync**: linked devices share playlists
   (names, songs, order), what you played (so Recently Played and play counts
   cover every device) and favourites and ratings. Changes made apart merge

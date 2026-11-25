@@ -753,6 +753,125 @@ passed on), when a link comes up and after each library change, and again
 - Not done: other engines' artwork (follow-up ticket; their tracks show the
   placeholder), playing them (#243) and the UI mark (#242).
 
+### Playing from linked engines (#243, 2026-11-24)
+
+`crates/server/src/files.rs`. The resolver (`LibraryResolver`) tries a file
+here, then a downloaded copy (none yet, the slot is kept), then a linked
+engine holding the track (`Library::copies`: the row's own `remote:` path or
+the same audio hash, directly linked engines only). Resolving never touches
+the network, so a queue restored before links are up keeps such tracks; the
+engine gets an `engine::Source::Stream` whose `open` dials on the decode
+thread, reachable engines first. Nothing reachable, or a link lost mid-track,
+fails that entry with the reason (`QueueItem.error`) and playback moves on or
+stops: never a hang, and never a silent end (a lost read is an error, not an
+end of file). The engine stays playback-only: it just reads a `ByteSource`
+(`Read + Seek` + length), as it would a file.
+- **Wire (`motif/files/1`):** a connection per playing track; each range is a
+  QUIC stream of its own: a `{id, offset, len}` frame (sync's framing: u32
+  length + JSON), the answer `{"Ok": file size}` or `{"Err": why}`, then up to
+  `len` raw bytes (fewer only at the end) and the stream's end. The owner
+  serves only its own present tracks, by id (`Library::own_file`), never a
+  path, and only to linked engines: the endpoint's gate at the handshake,
+  then every range, so an engine unlinked mid-track gets no more. Ranges are
+  at most 64 KiB, 8 answered at once a connection, each within 8 s.
+  Originals only; transcoding is #244.
+- **Reader:** 64 KiB ranges; reading straight through fetches up to 2 MiB
+  ahead (32 ranges, ~16 s of CD FLAC), 4 in flight at once, lowest first: 32
+  at once arrived in any order, so the one needed next came last (6 s to
+  start at 8 Mb/s, timeouts at 2 Mb/s). A jump (a seek probing the file)
+  fetches only what it reads; the range being waited for is always fetched.
+  The first and last ranges stay (every decoder plugin probes them), and the
+  plugins tried in turn share one connection. A range taking over 8 s is a
+  lost link; a failed range is asked for again when read again, a late
+  answer to a range asked for since is dropped, and a range whose answer
+  gives another file size fails (the file changed on its owner: no
+  splicing). Fetches still in flight count against the 4 after a seek, and
+  a reader dropped (a skip) stops reading ahead. A range lost because its
+  connection closed (the owner restarted or closed it) is asked for once
+  more on a new connection to the same engine, found where it is now and
+  only while it is still linked, so a track that started plays on; a failed
+  redial is shared by the reads waiting (for 5 s), not tried by each. A
+  range that stalls on a live connection still fails after 8 s: a silent
+  network change shows so, as the connection stays open until it times out.
+- **Accepting (2026-11-25 phone test):** the first track of an album often
+  skipped after a moment, the phone logging "aborted by peer … closed
+  during the handshake" and "connection lost". The owner's link loop raced
+  `Net::accept` against its other events in a `select!`, and accept awaited
+  the handshake inside it: a sync session ending or a pairing change
+  (playing a track changes both) dropped the half-done handshake. Each
+  incoming handshake now runs on its own task and `accept` takes finished
+  ones from a channel (safe to race; one slow handshake holds up no other;
+  16 at once, more are refused, since anyone can call through a relay).
+  On the LAN a new connection goes direct from the start (selected within
+  ~1 ms in a test with public relays on); the relay is only its backup path,
+  so the relay's "rate-limiting" warning seen then is about that backup
+  traffic, not where the stream went.
+- **Forgetting (2026-11-25 phone test):** songs still played from an engine
+  after forgetting it. The phone's Forget only dropped the engine from the
+  app's list, and Remove on the desktop dropped one entry while the same
+  engine, paired twice, stayed linked under another. Now Remove drops every
+  entry with that engine key, Forget in the app unlinks its own engine too
+  (`unlink_engine`), and the other end forgets as well: a live link is
+  closed "not linked" (code 1, only the peer's key can send it, encrypted),
+  and one away is refused at its next dial. Either way it drops the link,
+  its catalog rows and its connections, without telling back. The
+  forgetting end closes every connection with it, sync, catalog and file
+  sessions it accepted too. It keeps the key (`to_tell` in pairing.json)
+  and its endpoint up until that engine has been told: refused at a dial,
+  or 150 s after its link was closed (one that missed the close calls again
+  by then), and for 30 days at most (a wiped phone never calls); pairing or
+  linking with that key again clears it. Linking from the app sends this
+  engine's key to the other first (`SetEngineKey`), then links: dialled
+  before it knew the key, the other would refuse and unlink it here.
+- **A snippet of the last song (2026-11-25 phone test):** a burst of noise,
+  maybe the previous song, as a streamed song started. Not the stream: every
+  fixture decodes to the same samples from a stream as from its file
+  (`streams_decode_to_the_same_samples_as_their_files`). Pausing pauses the
+  device stream, which keeps the audio it holds so playing resumes without
+  a gap; but a load, seek or stop made while paused left that audio from
+  before, and the device played it first on resuming (on Android, AAudio's
+  pause; cpal has no flush), then silence while the linked engine answered,
+  which made it stand out. Such a cut now marks the device's audio stale,
+  decided as the commands are sent (a play sent just after a load would
+  resume it before the decode thread's flush), and playing then starts a
+  new stream on the same buffers instead.
+- **Opening off the decode thread:** tracks asked for and preloads open (and
+  move to their start) on two long-lived threads beside the decode thread
+  (`audio::opener`), so a dial or a slow disk never starves the 0.5 s output
+  buffer nor holds up stop, skip or seek. A preload still opening at the end
+  of a track gets 100 ms; then the track ends and the engine loads the next
+  (a gap, not a freeze). Long-lived threads, not one per open: a thread each
+  grew the `soak.mjs play` RSS without end (100 → 164 MB in 7 min, glibc
+  arenas); with long-lived ones it stays flat.
+- **Slow link** (`files::tests::slow_link_buffering`, ignored; a paced link,
+  each range answered `latency` late; 20 s tracks at CD bitrate, 1411 kb/s,
+  more than CD FLAC ~900 kb/s; decoding modelled into the real 0.5 s ring
+  buffer; three runs on the desktop, debug build):
+
+| Link | Open | Start | Preload open | Seek | Underruns | Starved |
+|---|---|---|---|---|---|---|
+| 100 Mb/s, 1 ms (LAN) | 0.02–0.03 s | 0.04 s | 0.03 s | 0.06–0.07 s | 0 | 0 |
+| 8 Mb/s, 20 ms | 0.17–0.30 s | 0.30–0.43 s | 0.17–0.43 s | 0.54–0.62 s | 0 | 0 |
+| 2 Mb/s, 50 ms | 0.6–1.6 s | 1.6–2.5 s | 0.6–1.6 s | 2.4–3.4 s | 0–1 | 0–0.5 s |
+| 1.6 Mb/s, 50 ms | 0.7–2.0 s | 1.4–3.1 s | 1.4–2.0 s | 2.7–4.3 s | 0–3 | 0–1.2 s |
+| 1.2 Mb/s, 50 ms (below the bitrate) | 0.9–1.8 s | 1.4–3.5 s | 2.2–2.7 s | 3.1–3.6 s | 20–50 | 2–7 s of 25 |
+
+  On a LAN it is as quick as a local file. Below ~3× the bitrate a seek
+  takes seconds and the start of a track may stutter once; below the bitrate
+  it can't keep up, which is what transcoding (#244) is for.
+- **Two engines** (`node scripts/linked.mjs`: two muted headless engines
+  linked through their pairing files, 25 s FLACs on A only): B starts A's
+  track in ~0.3 s, a seek holds, the next track follows gaplessly with no
+  underrun; killing A mid-track is reported on that track after its
+  buffered audio plus 8 s ("the linked engine stopped sending") and on the
+  next ("no linked engine with it is reachable"), and B stops.
+- Not done: FFmpeg-only formats (WMA, APE…) don't stream (FFmpeg reads files
+  only); a reader blocked on a range doesn't jump ahead of reads in flight
+  (QUIC stream priorities could), which is most of a slow seek. A seek in a
+  playing track, and a read waiting on a range, still run on the decode
+  thread: on a stalled link, stop and skip wait for them (up to 8 s; pause
+  doesn't, it goes to the output).
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game

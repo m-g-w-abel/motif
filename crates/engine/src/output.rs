@@ -3,7 +3,6 @@
 //! reports back what the listener actually hears.
 
 use std::{
-    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -12,7 +11,7 @@ use protocol::{PlaybackStatus, ReplayGain};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    Playable, Player, Resolver,
+    Playable, Player, Resolver, Source,
     audio::{Audio, AudioEvent, decoder::Plugin},
 };
 
@@ -47,7 +46,7 @@ pub struct Output {
 struct Preloaded {
     token: u64,
     item: u64,
-    path: PathBuf,
+    path: Source,
     tags: ReplayGain,
     gain: f32,
 }

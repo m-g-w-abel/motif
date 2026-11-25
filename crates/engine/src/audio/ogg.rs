@@ -4,25 +4,39 @@
 use std::{
     fs::File,
     io::{self, Read, Seek, SeekFrom},
-    path::Path,
 };
 
 use symphonia::core::{checksum::Crc32, io::MediaSource, io::Monitor as _};
 
-/// The file at `path` to demux. In Ogg Opus whose comment header spans pages
+use crate::Source;
+
+/// The bytes of `source` to demux. In Ogg Opus whose comment header spans pages
 /// (a large embedded cover), that header reads as an empty one. Its first
 /// page is shortened in place and nothing after it says "OggS" until the
 /// audio, so the reader skips the rest while looking for the next page; every
 /// other byte keeps its offset, so seeking still works. The engine reads no
 /// tags from it. Opening such a file reads its whole comment header once.
-pub fn source(path: &Path) -> io::Result<Box<dyn MediaSource>> {
-    let mut file = File::open(path)?;
+pub fn source(source: &Source) -> io::Result<Box<dyn MediaSource>> {
+    match source {
+        Source::File(path) => {
+            let file = File::open(path)?;
+            let len = file.metadata()?.len();
+            patched(file, len)
+        }
+        Source::Stream { open, .. } => {
+            let stream = open()?;
+            let len = stream.byte_len();
+            patched(stream, len)
+        }
+    }
+}
+
+fn patched<R: Read + Seek + Send + Sync + 'static>(
+    mut file: R,
+    len: u64,
+) -> io::Result<Box<dyn MediaSource>> {
     let patches = empty_comment(&mut file).unwrap_or_default();
     file.rewind()?;
-    if patches.is_empty() {
-        return Ok(Box::new(file));
-    }
-    let len = file.metadata()?.len();
     Ok(Box::new(Patched {
         file,
         pos: 0,
@@ -38,7 +52,7 @@ struct Page {
 }
 
 impl Page {
-    fn read(file: &mut File, at: u64) -> io::Result<Self> {
+    fn read(file: &mut impl ReadSeek, at: u64) -> io::Result<Self> {
         let mut header = [0; 27];
         file.seek(SeekFrom::Start(at))?;
         file.read_exact(&mut header)?;
@@ -62,7 +76,7 @@ impl Page {
 
 /// The patches that empty a comment header spanning pages, if the file is
 /// Ogg Opus with one.
-fn empty_comment(file: &mut File) -> io::Result<Vec<(u64, Vec<u8>)>> {
+fn empty_comment(file: &mut impl ReadSeek) -> io::Result<Vec<(u64, Vec<u8>)>> {
     let head = Page::read(file, 0)?;
     let mut magic = [0; 8];
     file.read_exact(&mut magic)?;
@@ -117,16 +131,19 @@ fn empty_comment(file: &mut File) -> io::Result<Vec<(u64, Vec<u8>)>> {
     Ok(patches)
 }
 
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
+
 /// A file read with some bytes replaced.
-struct Patched {
-    file: File,
+struct Patched<R> {
+    file: R,
     pos: u64,
     len: u64,
     /// Offsets and the bytes that replace those there.
     patches: Vec<(u64, Vec<u8>)>,
 }
 
-impl Read for Patched {
+impl<R: Read> Read for Patched<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = self.file.read(buf)?;
         let end = self.pos + n as u64;
@@ -143,14 +160,14 @@ impl Read for Patched {
     }
 }
 
-impl Seek for Patched {
+impl<R: Seek> Seek for Patched<R> {
     fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
         self.pos = self.file.seek(to)?;
         Ok(self.pos)
     }
 }
 
-impl MediaSource for Patched {
+impl<R: Read + Seek + Send + Sync> MediaSource for Patched<R> {
     fn is_seekable(&self) -> bool {
         true
     }
@@ -162,8 +179,8 @@ impl MediaSource for Patched {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::audio::decoder::{self, OPUS};
+    use std::path::Path;
     use std::time::Duration;
 
     /// A second of stereo Opus whose comment header holds a 17 MiB cover and
@@ -201,7 +218,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("motif-ogg-{}", std::process::id()));
         let path = big_cover_opus(&dir);
         let decoded = (|| {
-            let mut decoder = decoder::open(&path, &[&OPUS])?;
+            let mut decoder = decoder::open(&path.clone().into(), &[&OPUS])?;
             let mut samples = Vec::new();
             while decoder.decode(&mut samples)? {}
             let reached = decoder.seek(Duration::from_millis(500))?;
