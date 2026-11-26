@@ -506,6 +506,7 @@ async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr)
     let hello = ServerMessage::Hello {
         protocol_version: PROTOCOL_VERSION,
         engine_version: env!("CARGO_PKG_VERSION").into(),
+        engine_name: state.pairing.engine_name(),
         now_ms: engine::wall_clock_ms(),
     };
     let _ = out_tx.send(hello).await;
@@ -737,6 +738,7 @@ mod tests {
             integrations: watch::channel(Default::default()).0,
             pairing: Pairing::in_memory(),
         };
+        let name = format!("Motif {}", &config.pairing.engine_key()[..8]);
         let (addr, serve) = bind(engine, config).await.unwrap();
         tokio::spawn(serve);
 
@@ -745,8 +747,9 @@ mod tests {
             next_message(&mut ws).await,
             ServerMessage::Hello {
                 protocol_version: PROTOCOL_VERSION,
+                engine_name,
                 ..
-            }
+            } if engine_name == name
         ));
         assert!(matches!(
             next_message(&mut ws).await,

@@ -7,6 +7,11 @@ import type { QueryResult } from "./QueryResult";
  */
 export type ServerMessage = { "type": "hello", protocol_version: number, engine_version: string, 
 /**
+ * What the engine is called (as on the LAN), for clients that
+ * saved it under an address.
+ */
+engine_name: string, 
+/**
  * Engine wall clock (Unix ms), so clients can convert
  * [`PlayerState::sampled_at_ms`] to their own clock.
  */

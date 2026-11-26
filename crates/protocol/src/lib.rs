@@ -55,6 +55,9 @@ pub enum ServerMessage {
     Hello {
         protocol_version: u32,
         engine_version: String,
+        /// What the engine is called (as on the LAN), for clients that
+        /// saved it under an address.
+        engine_name: String,
         /// Engine wall clock (Unix ms), so clients can convert
         /// [`PlayerState::sampled_at_ms`] to their own clock.
         #[ts(type = "number")]

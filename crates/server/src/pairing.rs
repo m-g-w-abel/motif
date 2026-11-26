@@ -206,6 +206,11 @@ impl Pairing {
         &self.0.engine_key
     }
 
+    /// What it's called on the LAN and to its clients.
+    pub(crate) fn engine_name(&self) -> String {
+        format!("Motif {}", &self.engine_key()[..8])
+    }
+
     pub(crate) fn secret(&self) -> [u8; 32] {
         self.0.secret
     }

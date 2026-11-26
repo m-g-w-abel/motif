@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addEngine, currentEngine, loadEngines, LOCAL_ID, removeEngine, routeAt, setToken, switchTo, type SavedEngine } from './engines';
+import { addEngine, currentEngine, loadEngines, LOCAL_ID, removeEngine, routeAt, setName, setToken, switchTo, type SavedEngine } from './engines';
 
 const desk: SavedEngine = { id: 'abc', name: 'Desk', addresses: ['192.168.1.5:7700', '[fe80::1]:7700'], token: 'desk-token' };
 
@@ -47,6 +47,16 @@ describe('engine list', () => {
   it('sets the token of one engine only', () => {
     const list = setToken(addEngine(loadEngines(null, null), desk), LOCAL_ID, 'paired');
     expect(list.engines.map((e) => e.token)).toEqual(['paired', 'desk-token']);
+  });
+
+  it('names an engine saved under its address by the name it gives', () => {
+    const list = addEngine(loadEngines(null, null), { ...desk, name: '192.168.1.5:7700' });
+    expect(setName(list, 'abc', 'Motif abc').engines[1].name).toBe('Motif abc');
+  });
+
+  it('keeps a name that is not an address', () => {
+    const list = addEngine(loadEngines(null, null), desk);
+    expect(setName(list, 'abc', 'Motif abc').engines[1].name).toBe('Desk');
   });
 
   it('ignores switching to an engine it does not know', () => {

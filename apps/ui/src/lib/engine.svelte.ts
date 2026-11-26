@@ -13,7 +13,7 @@ import type { QueryResult } from './protocol/QueryResult';
 import type { PlayerState } from './protocol/PlayerState';
 import type { QueueItem } from './protocol/QueueItem';
 import type { ServerMessage } from './protocol/ServerMessage';
-import { currentEngine, loadEngines, LOCAL_ID, removeEngine, routeAt, setToken, type EngineList, type Route } from './engines';
+import { currentEngine, loadEngines, LOCAL_ID, removeEngine, routeAt, setName, setToken, type EngineList, type Route } from './engines';
 import { toasts } from './toast.svelte';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
@@ -373,6 +373,8 @@ export class EngineClient {
       case 'hello':
         // shortcut: ignores network latency (ms on a LAN), measure round trips when listen-along needs tighter sync (phase 7).
         this.clockOffset = message.now_ms - Date.now();
+        // Engines from before #237 send no name.
+        if (message.engine_name) engines.update((list) => setName(list, list.current, message.engine_name));
         if (message.protocol_version !== PROTOCOL_VERSION) {
           this.error = `engine speaks protocol v${message.protocol_version}, this UI expects v${PROTOCOL_VERSION}`;
         }

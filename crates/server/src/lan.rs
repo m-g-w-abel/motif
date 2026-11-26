@@ -190,13 +190,14 @@ impl Advert {
     ) -> Option<Self> {
         let key = pairing.engine_key();
         let short = &key[..8];
+        let name = pairing.engine_name();
         let txt: Vec<(&str, String)> = [("id", key.to_owned())]
             .into_iter()
             .chain(iroh.map(|p| ("iroh", p.to_string())))
             .collect();
         let service = ServiceInfo::new(
             &format!("{service}.local."),
-            &format!("Motif {short}"),
+            &name,
             &format!("motif-{short}.local."),
             (),
             port,
