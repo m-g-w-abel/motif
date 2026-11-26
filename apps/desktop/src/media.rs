@@ -36,6 +36,21 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .build()
 }
 
+/// Names the engine after the phone's model until it is renamed.
+pub fn name_engine<R: Runtime>(kotlin: &Kotlin<R>, pairing: server::Pairing) {
+    let kotlin = kotlin.0.clone();
+    // Plugin calls block until Kotlin answers, so not on the thread setting up.
+    std::thread::spawn(
+        move || match kotlin.run_mobile_plugin::<serde_json::Value>("model", ()) {
+            Ok(answer) => match answer["model"].as_str() {
+                Some(model) => pairing.name_by_default(model),
+                None => tracing::warn!(%answer, "no phone model"),
+            },
+            Err(err) => tracing::warn!(%err, "no phone model"),
+        },
+    );
+}
+
 /// Mirrors `engine` in the media session and sends its buttons to `engine`.
 pub fn start<R: Runtime>(kotlin: &Kotlin<R>, engine: Engine, library: Option<Library>) {
     let kotlin = kotlin.0.clone();

@@ -22,13 +22,14 @@ pub mod playback;
 mod resolver;
 pub mod settings;
 mod sync;
+mod tunnel;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use axum::{
     Json, Router,
     extract::{
-        ConnectInfo, Path, Query, State,
+        ConnectInfo, Extension, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode, Uri, header},
@@ -48,6 +49,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use pairing::Who;
 pub use pairing::{Pairing, pair_url};
 pub use resolver::LibraryResolver;
+pub use tunnel::Tunnel;
 
 pub struct Config {
     pub addr: SocketAddr,
@@ -96,7 +98,8 @@ const ART_SLOTS: usize = 6;
 /// Binding first lets callers use port 0 and learn the real port. While the
 /// LAN is open the server listens on every interface on that port. The
 /// future also serves MPD while [`Pairing`] says so, and links engines over
-/// iroh on the same port (UDP) while any are linked.
+/// iroh on the same port (UDP) while any are linked, whose apps can then
+/// control it from away (tunnel.rs).
 pub async fn bind(
     engine: Engine,
     config: Config,
@@ -107,13 +110,17 @@ pub async fn bind(
     let listener = axum::serve::ListenerExt::tap_io(listener, |_| {});
     let live = live::Live::new(engine.clone());
     let mpd = mpd::serve(live.clone(), config.library.clone(), config.pairing.clone());
-    let links = links::run(config.pairing.clone(), addr.port(), config.library.clone());
-    let app = app(live, config).into_make_service_with_connect_info::<SocketAddr>();
+    let (pairing, library) = (config.pairing.clone(), config.library.clone());
+    let app = app(live, config);
+    let (tunnels, tunnelled) = tunnel::serve(app.clone());
+    let links = links::run(pairing, addr.port(), library, Some(tunnels));
+    let app = app.into_make_service_with_connect_info::<SocketAddr>();
     Ok((addr, async move {
         tokio::select! {
             result = axum::serve(listener, app).into_future() => result,
             () = mpd => Ok(()),
             () = links => Ok(()),
+            () = tunnelled => Ok(()),
         }
     }))
 }
@@ -182,14 +189,18 @@ struct TokenParam {
     token: Option<String>,
 }
 
+/// The [`tunnel::Dialler`] of a tunnelled request.
+type Dialler = Option<Extension<ConnectInfo<tunnel::Dialler>>>;
+
 async fn upgrade(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    dialler: Dialler,
     Query(params): Query<TokenParam>,
     State(state): State<AppState>,
 ) -> Response {
-    let Some(who) = authorise(&state, peer, &headers, params.token.as_deref()) else {
+    let Some(who) = authorise(&state, peer, dialler, &headers, params.token.as_deref()) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
     ws.on_upgrade(move |socket| session(socket, state, who, peer))
@@ -198,10 +209,12 @@ async fn upgrade(
 /// Who a request comes from: the device whose token it carries (in
 /// `Authorization: Bearer` or, for browsers' `<img>` and WebSocket, a
 /// `token` parameter), else this machine if the peer is loopback and the
-/// page (if any) is local. `None` is refused.
+/// page (if any) is local. Tunnelled requests always need the token of the
+/// device paired with the app of the engine that dialled. `None` is refused.
 fn authorise(
     state: &AppState,
     peer: SocketAddr,
+    dialler: Dialler,
     headers: &HeaderMap,
     token: Option<&str>,
 ) -> Option<Who> {
@@ -213,7 +226,11 @@ fn authorise(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
     if let Some(token) = bearer.or(token) {
-        return state.pairing.authenticate(token).map(Who::Device);
+        let device = state.pairing.authenticate(token)?;
+        let from = dialler.map(|Extension(ConnectInfo(tunnel::Dialler(key)))| key);
+        let own = !tunnel::tunnelled(peer)
+            || from.is_some_and(|k| state.pairing.key_of(&device) == Some(k));
+        return own.then_some(Who::Device(device));
     }
     let origin = headers
         .get(header::ORIGIN)
@@ -222,9 +239,10 @@ fn authorise(
 }
 
 /// Whether `peer` may talk to this engine at all: other machines only while
-/// the LAN is open, which also cuts off their kept-alive connections.
+/// the LAN is open, which also cuts off their kept-alive connections, or
+/// through the tunnel, which only linked engines can open.
 fn reachable(state: &AppState, peer: SocketAddr) -> bool {
-    peer.ip().to_canonical().is_loopback() || state.pairing.lan_open()
+    peer.ip().to_canonical().is_loopback() || tunnel::tunnelled(peer) || state.pairing.lan_open()
 }
 
 /// A new device redeems a pairing code; the answer may wait for the host's
@@ -234,7 +252,8 @@ async fn pair(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(request): Json<PairRequest>,
 ) -> Response {
-    if !reachable(&state, peer) {
+    // Pairing is for devices in the same room.
+    if !reachable(&state, peer) || tunnel::tunnelled(peer) {
         return StatusCode::FORBIDDEN.into_response();
     }
     match state.pairing.redeem(request, peer).await {
@@ -257,9 +276,10 @@ async fn images(
     State(state): State<AppState>,
     headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    dialler: Dialler,
     Query(params): Query<ImagesParams>,
 ) -> Response {
-    if authorise(&state, peer, &headers, params.token.as_deref()).is_none() {
+    if authorise(&state, peer, dialler, &headers, params.token.as_deref()).is_none() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let origin = headers.get(header::ORIGIN).cloned();
@@ -301,10 +321,11 @@ async fn art(
     State(state): State<AppState>,
     headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    dialler: Dialler,
     Path(key): Path<String>,
     Query(params): Query<ArtParams>,
 ) -> Response {
-    if authorise(&state, peer, &headers, params.token.as_deref()).is_none() {
+    if authorise(&state, peer, dialler, &headers, params.token.as_deref()).is_none() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let origin = headers.get(header::ORIGIN).cloned();
@@ -477,7 +498,12 @@ fn origin_allowed(origin: Option<&str>) -> bool {
 /// One connected client: forwards state changes out and commands in.
 async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr) {
     let engine = state.engine.clone();
-    let (connection, close) = state.pairing.connected(&who, peer);
+    let address = if tunnel::tunnelled(peer) {
+        "internet".to_owned()
+    } else {
+        peer.to_string()
+    };
+    let (connection, close) = state.pairing.connected(&who, address);
     let (mut sink, mut stream) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<ServerMessage>(32);
 
@@ -493,6 +519,7 @@ async fn session(socket: WebSocket, state: AppState, who: Who, peer: SocketAddr)
     let hello = ServerMessage::Hello {
         protocol_version: PROTOCOL_VERSION,
         engine_version: env!("CARGO_PKG_VERSION").into(),
+        engine_name: state.pairing.engine_name(),
         now_ms: engine::wall_clock_ms(),
     };
     let _ = out_tx.send(hello).await;
@@ -724,6 +751,13 @@ mod tests {
             integrations: watch::channel(Default::default()).0,
             pairing: Pairing::in_memory(),
         };
+        config
+            .pairing
+            .command(protocol::PairingCommand::SetName {
+                name: "Desk".into(),
+            })
+            .unwrap();
+        let name = "Desk";
         let (addr, serve) = bind(engine, config).await.unwrap();
         tokio::spawn(serve);
 
@@ -732,8 +766,9 @@ mod tests {
             next_message(&mut ws).await,
             ServerMessage::Hello {
                 protocol_version: PROTOCOL_VERSION,
+                engine_name,
                 ..
-            }
+            } if engine_name == name
         ));
         assert!(matches!(
             next_message(&mut ws).await,
@@ -901,6 +936,11 @@ mod tests {
     }
 
     async fn token(pairing: &Pairing, preset: protocol::Preset) -> String {
+        token_for(pairing, preset, None).await
+    }
+
+    /// The token of a device whose app's engine has `key`.
+    async fn token_for(pairing: &Pairing, preset: protocol::Preset, key: Option<&str>) -> String {
         pairing
             .command(protocol::PairingCommand::SetAutoApprove {
                 preset: Some(preset),
@@ -909,7 +949,7 @@ mod tests {
         let request = PairRequest {
             code: pairing.start().code,
             name: "Phone".into(),
-            public_key: None,
+            public_key: key.map(str::to_owned),
         };
         let peer = "192.168.1.20:5000".parse().unwrap();
         pairing.redeem(request, peer).await.unwrap().token
@@ -1314,5 +1354,103 @@ mod tests {
         ] {
             assert!(!origin_allowed(Some(origin)), "{origin}");
         }
+    }
+
+    /// Serves as linked engines reach it from away, over the tunnel, with
+    /// the LAN closed; each call opens a new stream to it from the engine
+    /// with `key`.
+    fn tunnel_server(pairing: Pairing) -> impl Fn(&str) -> tokio::io::DuplexStream {
+        let config = Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            ui: None,
+            library: None,
+            integrations: watch::channel(Default::default()).0,
+            pairing,
+        };
+        let (streams, serve) = tunnel::serve(router(Engine::spawn(engine::LocalFiles), config));
+        tokio::spawn(serve);
+        move |key| {
+            let (ours, theirs) = tokio::io::duplex(64 * 1024);
+            streams.try_send((theirs, key.to_owned())).unwrap();
+            ours
+        }
+    }
+
+    /// The status line of `method path` over a tunnelled stream.
+    async fn tunnel_status(
+        mut stream: tokio::io::DuplexStream,
+        method: &str,
+        path: &str,
+    ) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let body = r#"{"code":"ABCDEFGH","name":"Phone","public_key":null}"#;
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: motif\r\nConnection: close\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        response.lines().next().unwrap_or_default().to_owned()
+    }
+
+    /// The same token and scope checks as on the LAN, and the token must be
+    /// the one paired with the app of the engine that opened the tunnel.
+    #[tokio::test]
+    async fn tunnelled_clients_need_their_own_token_and_get_its_scopes() {
+        let pairing = Pairing::in_memory();
+        assert!(!pairing.lan_open());
+        let (phone, other) = (Pairing::in_memory(), Pairing::in_memory());
+        let (phone, other) = (phone.engine_key(), other.engine_key());
+        let open = tunnel_server(pairing.clone());
+        let ws = |from: &str, path: String| {
+            tokio_tungstenite::client_async(format!("ws://motif{path}"), open(from))
+        };
+        assert!(
+            ws(phone, "/ws".into()).await.is_err(),
+            "no token: never taken for this machine"
+        );
+        assert!(ws(phone, "/ws?token=guess".into()).await.is_err());
+        let status = |from, method, path: String| {
+            let stream = open(from);
+            async move { tunnel_status(stream, method, &path).await }
+        };
+        assert_eq!(
+            status(phone, "GET", "/art/abc".into()).await,
+            "HTTP/1.1 401 Unauthorized"
+        );
+        assert_eq!(
+            status(phone, "POST", "/pair".into()).await,
+            "HTTP/1.1 403 Forbidden"
+        );
+
+        let token = token_for(&pairing, protocol::Preset::ViewOnly, Some(phone)).await;
+        let with_token = format!("/ws?token={token}");
+        assert!(
+            ws(other, with_token.clone()).await.is_err(),
+            "another engine can't use the phone's token"
+        );
+        let (mut ws, _) = ws(phone, with_token).await.unwrap();
+        ws.send(WsMessage::Text(
+            r#"{"id":1,"command":{"type":"play"}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        loop {
+            if let ServerMessage::Response { id: 1, error } = next_message(&mut ws).await {
+                assert!(error.unwrap().starts_with("not allowed"));
+                break;
+            }
+        }
+        // Past the auth check: this engine has no library.
+        let art = format!("/art/abc?token={token}");
+        assert_eq!(
+            status(phone, "GET", art.clone()).await,
+            "HTTP/1.1 404 Not Found"
+        );
+        assert_eq!(status(other, "GET", art).await, "HTTP/1.1 401 Unauthorized");
+        let shown = pairing.subscribe().borrow().connected[0].address.clone();
+        assert_eq!(shown, "internet");
     }
 }

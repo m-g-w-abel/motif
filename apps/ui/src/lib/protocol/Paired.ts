@@ -5,4 +5,4 @@
  * `Authorization: Bearer <token>` or a `token` URL parameter (for `/ws`,
  * `/art` and `/images`); the engine keeps only its hash.
  */
-export type Paired = { device: string, token: string, engine_key: string, };
+export type Paired = { device: string, token: string, engine_key: string, engine_name: string, };

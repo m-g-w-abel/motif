@@ -1,6 +1,7 @@
 //! The iroh endpoint ([`net`]) while this engine has linked engines: it keeps
 //! a [`net::Alpn::Link`] connection to each one it can reach, where they swap
-//! addresses for each other's address book ([`Pairing::met`]), and shows how
+//! addresses for each other's address book and their names
+//! ([`Pairing::met`]), and shows how
 //! each is reached ([`Pairing::set_reach`]). While the LAN switch is on it
 //! also browses `_motif._tcp` over mDNS, whose adverts carry the iroh port,
 //! so engines whose addresses changed find each other again without relays.
@@ -8,7 +9,8 @@
 //! syncs playlists, plays and marks ([`net::Alpn::Sync`], sync.rs) and
 //! swaps catalogs ([`net::Alpn::Catalog`], catalog.rs) when they meet and
 //! after each change here; unlinking drops that engine's catalog. It serves
-//! this engine's tracks to them ([`net::Alpn::Files`], files.rs).
+//! this engine's tracks to them ([`net::Alpn::Files`], files.rs), and their
+//! apps control it from away ([`net::Alpn::Remote`], tunnel.rs).
 //! Connections for other purposes are refused until the features that use
 //! them exist.
 
@@ -22,9 +24,9 @@ use library::Library;
 use mdns_sd::{ResolvedService, ServiceDaemon, ServiceEvent};
 use net::{Alpn, Connection, Net};
 use protocol::{LibraryStatus, Reach};
-use tokio::task::JoinSet;
+use tokio::{sync::mpsc, task::JoinSet};
 
-use crate::{Pairing, art, catalog, files, sync};
+use crate::{Pairing, art, catalog, files, sync, tunnel};
 
 // shortcut: a fixed retry; back off if unreachable engines cost battery.
 const RETRY: Duration = Duration::from_secs(60);
@@ -41,7 +43,12 @@ const AGAIN: Duration = Duration::from_secs(5);
 /// Runs the endpoint on UDP `port` (another if taken), which LAN addresses
 /// of this engine share with its HTTP server ([`Pairing::link`]), syncing
 /// `library` if there is one. Never ends.
-pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
+pub(crate) async fn run(
+    pairing: Pairing,
+    port: u16,
+    library: Option<Library>,
+    tunnels: Option<mpsc::Sender<(tunnel::Stream, String)>>,
+) {
     if let Some(library) = &library {
         tokio::spawn(drop_unlinked_catalogs(pairing.clone(), library.clone()));
     }
@@ -82,7 +89,7 @@ pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
         };
         tokio::select! {
             // The endpoint closed under us: start again.
-            () = keep_links(&net, &pairing, library.as_ref()) => {}
+            () = keep_links(&net, &pairing, library.as_ref(), tunnels.as_ref()) => {}
             () = changed => {}
         }
         net.close().await;
@@ -130,7 +137,12 @@ struct Links {
     accepted: Vec<Connection>,
 }
 
-async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
+async fn keep_links(
+    net: &Net,
+    pairing: &Pairing,
+    library: Option<&Library>,
+    tunnels: Option<&mpsc::Sender<(tunnel::Stream, String)>>,
+) {
     let links = Arc::new(Mutex::new(Links::default()));
     // Dropped with this future, which ends every connection's task.
     let mut tasks = JoinSet::new();
@@ -170,6 +182,12 @@ async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
                         let linked: net::Linked = Arc::new(move |key| gate.is_linked(key));
                         tasks.spawn(files::serve(library.clone(), conn, linked, None));
                     }
+                    (Alpn::Remote, _) => match tunnels {
+                        Some(tunnels) => {
+                            tasks.spawn(tunnel::accept(conn, tunnels.clone()));
+                        }
+                        None => conn.close(2u32.into(), b"not yet"),
+                    },
                     (Alpn::Art, Some(library)) => {
                         let gate = pairing.clone();
                         let linked: net::Linked = Arc::new(move |key| gate.is_linked(key));
@@ -333,8 +351,12 @@ async fn keep(
         };
         shared.live.insert(key.clone(), live);
     }
-    match net::hello(&conn, &net.addr()).await {
-        Ok(addr) => pairing.met(&key, addr),
+    let mine = Hello {
+        addr: net.addr(),
+        name: Some(pairing.engine_name()),
+    };
+    match net::hello(&conn, &mine).await {
+        Ok(Hello { addr, name }) => pairing.met(&key, addr, name.as_deref()),
         Err(err) => tracing::debug!(%key, %err, "iroh: no hello"),
     }
     tokio::select! {
@@ -355,6 +377,16 @@ async fn keep(
     if net::refused(&conn) {
         unlinked_by(&pairing, &key);
     }
+}
+
+/// What linked engines tell each other on meeting.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Hello {
+    #[serde(flatten)]
+    addr: net::PeerAddr,
+    /// Missing from engines before names.
+    #[serde(default)]
+    name: Option<String>,
 }
 
 /// The engine with `key` said it isn't linked with this one (it forgot this
@@ -562,11 +594,11 @@ mod tests {
             })
             .unwrap();
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone()), None));
         let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone()), None));
         until("made before", &library_b, |l| playlists(l) == ["Before"]).await;
         // A change on the end that was dialled goes the other way.
         library_b
@@ -638,11 +670,11 @@ mod tests {
             })
             .unwrap();
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone()), None));
         let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone()), None));
         let shown = |l: &Library| {
             let protocol::QueryResult::Tracks { tracks, .. } = l
                 .query(protocol::LibraryQuery::Tracks {
@@ -686,11 +718,12 @@ mod tests {
 
     /// Covers of an engine that can't be reached fail at once, without each
     /// request dialling it for [`art`]'s whole timeout (#266).
-    async fn covers_of_an_unreachable_engine(reach: Option<Reach>, within: Duration) {
+    async fn covers_of_an_unreachable_engine(name: &str, reach: Option<Reach>, within: Duration) {
         let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
         b.command(protocol::PairingCommand::SetInternet { allowed: false })
             .unwrap();
-        let (library_b, dir_b) = library("art-off");
+        // Its own folder: the two tests using this run at once.
+        let (library_b, dir_b) = library(name);
         library_b.set_device(b.engine_key()).unwrap();
         // Linked, but whatever holds its address never answers.
         let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -700,7 +733,7 @@ mod tests {
             &[silent.local_addr().unwrap().to_string()],
         )
         .unwrap();
-        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone()), None));
         bound(&b).await;
         if let Some(reach) = reach {
             b.set_reach(a.engine_key(), reach);
@@ -743,13 +776,14 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn covers_of_an_engine_known_to_be_unreachable_are_not_dialled() {
-        covers_of_an_unreachable_engine(None, Duration::from_secs(2)).await;
+        covers_of_an_unreachable_engine("art-off", None, Duration::from_secs(2)).await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn covers_of_an_engine_that_fails_to_answer_share_one_failed_dial() {
         // Reached a moment ago, as far as anyone knows: one dial finds out.
-        covers_of_an_unreachable_engine(Some(Reach::Direct), Duration::from_secs(9)).await;
+        covers_of_an_unreachable_engine("art-silent", Some(Reach::Direct), Duration::from_secs(9))
+            .await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -771,11 +805,11 @@ mod tests {
             })
             .unwrap();
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone()), None));
         let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone()), None));
         let first = |l: &Library| {
             let protocol::QueryResult::Tracks { tracks, .. } = l
                 .query(protocol::LibraryQuery::Tracks {
@@ -818,18 +852,26 @@ mod tests {
             p.command(protocol::PairingCommand::SetInternet { allowed: false })
                 .unwrap();
         }
+        b.command(protocol::PairingCommand::SetName {
+            name: "Desk".into(),
+        })
+        .unwrap();
         // A met B on the LAN; B knows nothing of A yet.
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(b.clone(), 0, None));
+        tokio::spawn(run(b.clone(), 0, None, None));
         let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        tokio::spawn(run(a.clone(), 0, None));
+        tokio::spawn(run(a.clone(), 0, None, None));
         let direct = |s: &PairingState| s.net.links.iter().all(|l| l.reach == Reach::Direct);
         wait_for(&a, direct).await;
         wait_for(&b, direct).await;
         let (_, told) = &b.linked()[0];
         assert!(!told.direct.is_empty(), "B learned where A is");
+        // And each other's names, which they were linked under.
+        wait_for(&a, |s| s.devices[0].name == "Desk").await;
+        let a_name = a.engine_name();
+        wait_for(&b, |s| s.devices[0].name == a_name).await;
 
         // Unlinking closes the link, and the other end forgets it too.
         let device = b.subscribe().borrow().devices[0].id.clone();
@@ -848,7 +890,7 @@ mod tests {
             .unwrap();
         let (library_b, dir_b) = library("sessions");
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(b.clone(), 0, Some(library_b)));
+        tokio::spawn(run(b.clone(), 0, Some(library_b), None));
         let b_port = bound(&b).await;
         // A's side by hand: a sync session B accepts and waits on.
         let net_a = Net::bind(a.secret(), 0, &net::Relays::Off, Arc::new(|_| true))
@@ -883,11 +925,11 @@ mod tests {
         let device = b.subscribe().borrow().devices[0].id.clone();
         b.command(protocol::PairingCommand::Revoke { device })
             .unwrap();
-        tokio::spawn(run(b.clone(), 0, None));
+        tokio::spawn(run(b.clone(), 0, None, None));
         let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        tokio::spawn(run(a.clone(), 0, None));
+        tokio::spawn(run(a.clone(), 0, None, None));
         wait_for(&a, |s| s.devices.is_empty()).await;
         // Told: B's endpoint, with nobody left, stops.
         until_port_gone(&b).await;

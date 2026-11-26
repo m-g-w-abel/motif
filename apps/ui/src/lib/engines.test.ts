@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addEngine, currentEngine, loadEngines, LOCAL_ID, removeEngine, setToken, socketUrl, switchTo, type SavedEngine } from './engines';
+import { addEngine, currentEngine, loadEngines, LOCAL_ID, removeEngine, routeAt, setName, setToken, switchTo, type SavedEngine } from './engines';
 
 const desk: SavedEngine = { id: 'abc', name: 'Desk', addresses: ['192.168.1.5:7700', '[fe80::1]:7700'], token: 'desk-token' };
 
@@ -49,6 +49,18 @@ describe('engine list', () => {
     expect(list.engines.map((e) => e.token)).toEqual(['paired', 'desk-token']);
   });
 
+  it('names an engine by the name it gives, whatever it was saved under', () => {
+    const list = addEngine(loadEngines(null, null), { ...desk, name: '192.168.1.5:7700' });
+    const named = setName(list, 'abc', 'Kitchen');
+    expect(named.engines.map((e) => e.name)).toEqual(['This device', 'Kitchen']);
+    expect(setName(named, 'abc', 'Desk').engines[1].name).toBe('Desk');
+  });
+
+  it('leaves the list as it is when the name is the same', () => {
+    const list = addEngine(loadEngines(null, null), desk);
+    expect(setName(list, 'abc', 'Desk')).toBe(list);
+  });
+
   it('ignores switching to an engine it does not know', () => {
     const list = loadEngines(null, null);
     expect(switchTo(list, 'nope')).toEqual(list);
@@ -68,16 +80,25 @@ describe('engine list', () => {
   });
 });
 
-describe('socketUrl', () => {
+describe('routeAt', () => {
   it("uses this device's own engine for the local entry", () => {
-    expect(socketUrl(currentEngine(loadEngines(null, null)), 3, 'ws://127.0.0.1:7700/ws')).toBe('ws://127.0.0.1:7700/ws');
+    expect(routeAt(currentEngine(loadEngines(null, null)), 3, true)).toEqual({ kind: 'own' });
   });
 
-  it('tries each address in turn', () => {
-    expect([0, 1, 2].map((attempt) => socketUrl(desk, attempt, 'unused'))).toEqual([
-      'ws://192.168.1.5:7700/ws',
-      'ws://[fe80::1]:7700/ws',
-      'ws://192.168.1.5:7700/ws',
+  it('tries each LAN address in turn, then the tunnel', () => {
+    expect([0, 1, 2, 3].map((attempt) => routeAt(desk, attempt, true))).toEqual([
+      { kind: 'lan', address: '192.168.1.5:7700' },
+      { kind: 'lan', address: '[fe80::1]:7700' },
+      { kind: 'tunnel' },
+      { kind: 'lan', address: '192.168.1.5:7700' },
+    ]);
+  });
+
+  it('stays on the LAN without an engine of its own to tunnel through', () => {
+    expect([0, 1, 2].map((attempt) => routeAt(desk, attempt, false))).toEqual([
+      { kind: 'lan', address: '192.168.1.5:7700' },
+      { kind: 'lan', address: '[fe80::1]:7700' },
+      { kind: 'lan', address: '192.168.1.5:7700' },
     ]);
   });
 });
