@@ -1,7 +1,7 @@
 // Playing from a linked engine (#243): two muted test engines, linked through
 // their pairing files; A holds three 25 s FLACs, B none. B plays A's tracks,
 // seeks, moves gaplessly into the next, then A is killed mid-track and B must
-// report it (the entry's error) and stop, not hang.
+// play on from what it fetched (the current and next tracks, whole).
 //
 //   cargo build -p headless
 //   node scripts/linked.mjs [motif-headless] [work dir]
@@ -112,13 +112,14 @@ if (underruns) throw new Error("not gapless");
 console.log("killing A mid-track");
 const killed = Date.now();
 engines.a.kill("SIGKILL");
-await until("B reports the loss", () => {
-  const items = [...b.get().context, ...b.get().queue];
-  return items.some((i) => i.error) && b.get().state.status !== "playing";
-}, 30000);
+// T2 and the next, T3, are on B's disk by now (#282): B plays on through both.
+await until("T3 playing on B without A", () => {
+  const s = b.get();
+  return s.state.current?.track.title === "T3" && s.state.status === "playing" && pos(s) > 1000;
+}, 40000);
 const items = [...b.get().context, ...b.get().queue];
-console.log(`reported after ${Date.now() - killed} ms; status ${b.get().state.status}`);
+console.log(`T3 playing ${Date.now() - killed} ms after A went`);
 for (const i of items) console.log(`  ${i.track.title}: ${i.error ?? "ok"}`);
-if (!items.find((i) => i.track.title === "T2")?.error) throw new Error("the lost link wasn't reported on T2");
+if (items.some((i) => i.error)) throw new Error("a track on disk failed without A");
 console.log("ok");
 process.exit(0);

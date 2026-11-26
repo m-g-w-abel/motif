@@ -906,6 +906,74 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   and a seek asks again from there. A packet lost because the connection
   closed is asked for again, on a new connection, from where it was.
 
+### Whole tracks on disk and the Downloaded group (#282, #245, 2026-11-26)
+
+- **Store** (`server::files::Store`, `<data dir>/streams`, outside the music
+  folder): one file per linked engine's track being played or downloaded,
+  shared by every stream of it (the engine's current and preloaded tracks,
+  a download). A track's file is deleted once nothing holds it (the engine
+  holds only the current and next tracks), unless a download keeps it; the
+  downloader deletes what is left from an engine that stopped, but for its
+  own downloads still to make.
+- **Ranges** (the original, on the LAN and for lossy files off it): fetched
+  whole into a sparse file of the track's size, four 64 KiB ranges
+  at a time, the chunk the decoder reads first, then on to the end and round
+  from the start; a byte per chunk in `<file>.have` says what is there, so a
+  fetch stopped part way carries on (the size must match, or it starts
+  again). A seek into fetched bytes is a read from the file; past them, the
+  chunk is asked for at once and ranges in flight that aren't needed soon
+  are dropped (fetched again later), so the needed one doesn't share the
+  link with them. Fetches hold the track weakly and stop when it goes.
+- **Opus** (encoded live off the LAN): the packets are taken as fast as the
+  owner encodes them (over 100× real time), into a file of the store and an
+  index, and decoders read them from there. A seek into them decodes from 80
+  ms before (Opus needs that to settle) with no request; one before or past
+  them asks again from there, as before. Either way playback rides out a
+  lost link once the bytes are here, and only fails on reaching bytes that
+  aren't.
+- **Downloaded group** (`library::downloads`): members (playlist, album key,
+  album artist, track by path and audio hash) are matched against the
+  library every time, so playlist edits and an artist's later albums
+  follow. The plan: linked engines' tracks they take in with no copy here
+  (by audio hash) and not downloaded already, and the downloaded copies
+  (`downloads` table) that no member takes in any more, which are deleted
+  with their track and the folders they leave empty. Only files Motif
+  downloaded are deleted. Membership is this device's own (not a sync op).
+- **Downloader** (`server::downloads`): runs the plan whenever the library or
+  playlists change, and a minute after a failure. Each track comes at the
+  download quality (#244's rules; Opus 256 by default) whole into the store,
+  then moves (renamed, or copied to another disk) to
+  `Music/Motif/<album artist>/<album>/<disc-><no> <title>.<ext>`, which joins
+  the library folders, with the album cover next to it. Opus copies are Ogg
+  Opus files (`library::transcode::OggOpus`) carrying the catalog's tags. A
+  copy takes its source's audio hash at the scan (an Opus copy hashes
+  differently otherwise), so it is the same track: it shadows the linked
+  engine's, plays from here and is never streamed. `LibraryStatus.downloads`
+  says how many wait and why the last failed ("the disk is full", "no linked
+  engine has it").
+- **Measured** (`slow_link_buffering`, as for #243 above, one run, debug
+  build, desktop):
+
+| Link | Open | Start | Preload open | Seek | Underruns | Starved |
+|---|---|---|---|---|---|---|
+| 100 Mb/s, 1 ms (LAN) | 0.04 s | 0.04 s | 0.02 s | 0.05 s | 0 | 0 |
+| 8 Mb/s, 20 ms | 0.23 s | 0.23 s | 0.23 s | 0.53 s | 0 | 0 |
+| 2 Mb/s, 50 ms | 1.64 s | 1.64 s | 1.64 s | 1.84 s | 0 | 0 |
+| 1.6 Mb/s, 50 ms | 2.02 s | 2.02 s | 1.04 s | 2.30 s | 0 | 0 |
+| 1.2 Mb/s, 50 ms (below the bitrate) | 2.66 s | 2.66 s | 0.91 s | 3.51 s | 26 | 1.7 s of 25 |
+
+  Seeks are quicker than before (1.8 s against 2.4–3.4 s at 2 Mb/s) and the
+  stutters at 1.6–2 Mb/s are gone. Reads of a file's first and last chunks
+  are a decoder probing it, not a seek: counted as one, they dropped the
+  read-ahead just started (start 0.8 s at 8 Mb/s, seeks slower than before).
+  The paced link books a range's time when it is asked for, so a dropped
+  range still costs it there; over QUIC a reset stream stops sending.
+  `scripts/linked.mjs` now kills A mid-track and B plays the current and
+  next tracks to their ends.
+- Not done: an Opus download stopped part way starts again (ranges carry
+  on); the phone's seek time against master isn't measured yet; UI (#247),
+  auto-fill (#246), Android background downloads (#248).
+
 ## Phase 1 plan: desktop player
 
 *Done 2026-10-26: all eight milestones below. CUE sheets and tracker, game
