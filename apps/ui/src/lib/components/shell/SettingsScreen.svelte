@@ -32,7 +32,8 @@
   import { engines } from '../../engine.svelte';
   import { GROUP_INFO, phoneGroups, searchSettings } from '../../settingsSearch';
   import { SETTINGS_GROUPS } from '../../settingsView.svelte';
-  import { LOCAL_ID, switchTo } from '../../engines';
+  import { switchTo } from '../../engines';
+  import { deviceRows } from '../../devices';
   import WindowButtons from './WindowButtons.svelte';
 
   // `page`: phones show the list and each group as screens of their own, each fixed to its page; desktop's follows the group.
@@ -195,7 +196,15 @@
   let listenBrainzToken = $state('');
   let mpdPassword = $state('');
   let relayUrl = $state('');
-  const REACH: Record<Reach, string> = { direct: 'Reachable directly', relayed: 'Reachable through a relay', unreachable: 'Unreachable now' };
+  const REACH: Record<Reach, string> = { direct: 'Online · direct', relayed: 'Online · relayed', unreachable: 'Offline' };
+  /** Every other device, not the engine in control (it heads the list). */
+  const rows = $derived(
+    deviceRows(
+      engines.list.engines.filter((e) => e.id !== engines.list.current),
+      engine.pairing?.devices ?? [],
+      engine.pairing?.net.links ?? [],
+    ),
+  );
   /** Signs the host in to a scrobbling service (a ListenBrainz user token; anything for Last.fm and Libre.fm), or out with ''. */
   function signIn(service: 'listenbrainz' | 'lastfm' | 'librefm', credential: string) {
     const account = engine.integrations?.[service];
@@ -296,21 +305,79 @@
     {/if}
 
     <div class="panel" bind:this={panel} hidden={settingsView.phone && (showList || searching)}>
-      {#if group === 'devices' && engines.list.engines.length > 1}
+      {#if group === 'devices'}
         <div class="row">
-          <span class="label">Engine in control</span>
-          {#each engines.list.engines as saved (saved.id)}
+          <span class="label">Devices</span>
+          <p class="status">Controlling {engines.current.name}: {engine.unpaired ? 'not paired' : { connecting: 'connecting…', open: 'connected', closed: 'disconnected' }[engine.status]}.</p>
+          {#each rows as row (row.key)}
+            {@const { device, saved } = row}
+            {@const connections = device ? engine.pairing?.connected.filter((c) => c.device === device.id) ?? [] : []}
+            {@const preset = device ? presetOf(device.scopes) : null}
+            <!-- An engine this one paired with has no token here, so no access to choose. -->
+            {@const linkOnly = row.linked && device?.scopes.length === 1}
             <div class="device">
-              <span class="name">{saved.name}</span>
-              {#if saved.id === engines.list.current}
-                <span class="status">{engine.unpaired ? 'Not paired' : { connecting: 'Connecting…', open: '● Connected', closed: 'Disconnected' }[engine.status]}</span>
+              {#if device}
+                <input
+                  class="select name"
+                  aria-label="Name of {device.name}"
+                  value={device.name}
+                  maxlength="64"
+                  onchange={(e) => rename(device.id, device.name, e.currentTarget)}
+                  onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                />
               {:else}
-                <button class="button" onclick={() => engines.update((list) => switchTo(list, saved.id))}>Switch</button>
+                <span class="name">{row.name}</span>
               {/if}
-              {#if saved.id !== LOCAL_ID}
-                <button class="button" title="Also stops syncing with it: its songs leave this library" onclick={() => engines.forget(saved.id)}>Forget</button>
+              <span class="acts">
+              {#if device && !linkOnly}
+                <select
+                  class="select preset"
+                  aria-label="Access for {device.name}"
+                  value={preset ?? ''}
+                  onchange={(e) => engine.pair({ type: 'set_preset', device: device.id, preset: e.currentTarget.value as Preset })}
+                >
+                  {#if !preset}<option value="" disabled>Custom</option>{/if}
+                  {#each PRESETS as [value, label] (value)}<option {value}>{label}</option>{/each}
+                </select>
               {/if}
+              {#if saved}<button class="button" onclick={() => engines.update((list) => switchTo(list, saved.id))}>Switch to</button>{/if}
+              <button class="button" onclick={() => (removing = row.key)}>Remove</button>
+              </span>
+              {#if removing === row.key}
+                <p class="status confirm">
+                  {#if device && saved}Remove {row.name} everywhere? You stop controlling it and it stops controlling this device{row.linked ? ', stops syncing, and its songs leave this library' : ''}.
+                  {:else if device}Remove {row.name}? It will need a new code to connect again{row.linked ? ', stops syncing with this device, and its songs leave this library' : ''}.
+                  {:else}Forget {row.name}? You stop controlling it, and this device stops syncing with it: its songs leave this library.{/if}
+                  <button
+                    class="button"
+                    onclick={() => {
+                      if (saved) void engines.forget(saved.id);
+                      if (device) engine.pair({ type: 'revoke', device: device.id });
+                      removing = null;
+                    }}>{device && saved ? 'Remove everywhere' : 'Remove'}</button>
+                  <button class="button" onclick={() => (removing = null)}>Cancel</button>
+                </p>
+              {/if}
+              <p class="status seen">
+                {#if row.browser}<span class="badge">browser</span>{/if}
+                {#if device}<span class="badge" title="Can control this engine">controls this · {linkOnly ? 'link only' : preset ? PRESETS.find(([v]) => v === preset)![1] : 'Custom'}</span>{/if}
+                {#if saved}<span class="badge">you control it</span>{/if}
+                {#if row.linked}<span class="badge syncs" title="Shares its library and synced data with this device">⇄ linked</span>{/if}
+                {#if row.reach}
+                  <span class:online={row.reach !== 'unreachable'} title="Over the encrypted link between the engines">{REACH[row.reach]}</span>
+                {:else}
+                  <span>Status unknown</span>
+                {/if}
+                {#if connections.length}
+                  <span class="online">● Connected now</span>
+                  {#each connections as c (c.id)}
+                    <button class="link" title="Close this connection; the device stays paired" onclick={() => engine.pair({ type: 'disconnect', connection: c.id })}>Disconnect {c.address.replace(/:\d+$/, '')}</button>
+                  {/each}
+                {:else if device?.last_seen_ms}Last seen {engineTime(device.last_seen_ms)}{/if}
+              </p>
             </div>
+          {:else}
+            <p class="status">No other devices yet.</p>
           {/each}
           <p class="status">Controls one engine at a time. Music playing on this device keeps playing while you control another.</p>
         </div>
@@ -808,63 +875,6 @@
             </div>
           </div>
           <div class="row">
-            <span class="label">Paired devices</span>
-            {#each p.devices as device (device.id)}
-              {@const connections = p.connected.filter((c) => c.device === device.id)}
-              {@const preset = presetOf(device.scopes)}
-              {@const syncs = !!device.public_key && device.scopes.includes('sync')}
-              <!-- An engine this one paired with: no token here, so no access to choose. -->
-              {@const linkOnly = syncs && device.scopes.length === 1}
-              <div class="device">
-                <input
-                  class="select name"
-                  aria-label="Name of {device.name}"
-                  value={device.name}
-                  maxlength="64"
-                  onchange={(e) => rename(device.id, device.name, e.currentTarget)}
-                  onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-                />
-                {#if linkOnly}
-                  <span class="preset">Paired from here</span>
-                {:else}
-                  <select
-                    class="select preset"
-                    aria-label="Access for {device.name}"
-                    value={preset ?? ''}
-                    onchange={(e) => engine.pair({ type: 'set_preset', device: device.id, preset: e.currentTarget.value as Preset })}
-                  >
-                    {#if !preset}<option value="" disabled>Custom</option>{/if}
-                    {#each PRESETS as [value, label] (value)}<option {value}>{label}</option>{/each}
-                  </select>
-                {/if}
-                <button class="button" onclick={() => (removing = device.id)}>Remove</button>
-                {#if removing === device.id}
-                  <p class="status confirm">
-                    Remove {device.name}? {linkOnly ? 'It stops syncing with this device, and its songs leave this library.' : syncs ? 'It will need a new code to connect again, stops syncing with this device, and its songs leave this library.' : 'It will need a new code to connect again.'}
-                    <button class="button" onclick={() => engine.pair({ type: 'revoke', device: device.id })}>Remove</button>
-                    <button class="button" onclick={() => (removing = null)}>Cancel</button>
-                  </p>
-                {/if}
-                <p class="status seen">
-                  {#if syncs}<span class="syncs" title="Shares its library and synced data with this device">⇄ Syncs</span>{/if}
-                  {#if syncs}
-                    {@const reach = p.net.links.find((l) => l.device === device.id)?.reach ?? 'unreachable'}
-                    <span class:online={reach !== 'unreachable'} title="Over the encrypted link between the engines">{REACH[reach]}</span> ·
-                  {/if}
-                  {#if connections.length}
-                    <span class="online">● Connected now</span>
-                    {#each connections as c (c.id)}
-                      <button class="link" title="Close this connection; the device stays paired" onclick={() => engine.pair({ type: 'disconnect', connection: c.id })}>Disconnect {c.address.replace(/:\d+$/, '')}</button>
-                    {/each}
-                  {:else if device.last_seen_ms}Last seen {engineTime(device.last_seen_ms)}
-                  {:else}Never connected{/if}
-                </p>
-              </div>
-            {:else}
-              <p class="status">No devices yet.</p>
-            {/each}
-          </div>
-          <div class="row">
             <span class="label">Linked devices over the internet</span>
             <div class="segmented" role="radiogroup" aria-label="Linked devices over the internet">
               {#each [[true, 'Allowed'], [false, 'Off']] as const as [value, text] (text)}
@@ -1134,8 +1144,8 @@
   }
 
   .device {
-    display: grid;
-    grid-template-columns: 1fr auto auto;
+    display: flex;
+    flex-wrap: wrap;
     gap: var(--space-1) var(--space-2);
     align-items: center;
     padding: var(--space-2) 0;
@@ -1143,7 +1153,14 @@
   }
 
   .device .name {
+    flex: 1 1 10em;
     min-width: 0;
+  }
+
+  .acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
   }
 
   .device .preset {
@@ -1151,19 +1168,25 @@
   }
 
   .seen {
-    grid-column: 1 / -1;
+    flex-basis: 100%;
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
   }
 
   .confirm {
-    grid-column: 1 / -1;
+    flex-basis: 100%;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
     color: var(--danger);
+  }
+
+  .badge {
+    padding: 0 var(--space-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 4px);
   }
 
   .online,

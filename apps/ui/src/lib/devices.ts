@@ -1,5 +1,9 @@
+import type { SavedEngine } from './engines';
 import type { LibraryTrack } from './protocol/LibraryTrack';
+import type { LinkState } from './protocol/LinkState';
+import type { PairedDevice } from './protocol/PairedDevice';
 import type { PairingState } from './protocol/PairingState';
+import type { Reach } from './protocol/Reach';
 import type { TrackRef } from './protocol/TrackRef';
 
 /** Whether a track's audio is on linked engines, not this one: a row of their catalog (`remote:<key>:<id>`). */
@@ -41,4 +45,38 @@ export function pageMark(tracks: (LibraryTrack | undefined)[], pairing: PairingS
   return away.every((t) => cantReach(t, pairing))
     ? { title: `Some songs are on ${names}, which can’t be reached now`, away: true }
     : { title: `Some songs are on ${names}`, away: false };
+}
+
+/** One other device in Settings → Devices: what this app controls and what controls the engine in control, joined by engine key. */
+export interface DeviceRow {
+  /** The engine key; the paired device's id for a client with none (a browser). */
+  key: string;
+  name: string;
+  browser: boolean;
+  /** Paired with the engine in control, so it can control that engine. */
+  device: PairedDevice | null;
+  /** In this app's switcher, so this app can control it. */
+  saved: SavedEngine | null;
+  linked: boolean;
+  /** How it is reached now: null where this can't tell (an engine only this app knows). */
+  reach: Reach | null;
+}
+
+/**
+ * Every other device once. `engines` are this app's (without the one in control, whose list `devices` is),
+ * `devices` and `links` the engine in control's. Shortcut: this app's own engine, when it isn't the one in
+ * control, shows under its own entry and again as a paired device if that engine paired it; there's no key to match.
+ */
+export function deviceRows(engines: SavedEngine[], devices: PairedDevice[], links: LinkState[]): DeviceRow[] {
+  const rows = new Map<string, DeviceRow>();
+  for (const saved of engines) rows.set(saved.id, { key: saved.id, name: saved.name, browser: false, device: null, saved, linked: false, reach: null });
+  for (const device of devices) {
+    const key = device.public_key ?? device.id;
+    const row = rows.get(key) ?? { key, name: device.name, browser: !device.public_key, device: null, saved: null, linked: false, reach: null };
+    row.device = device;
+    row.linked = !!device.public_key && device.scopes.includes('sync');
+    row.reach = links.find((l) => l.device === device.id)?.reach ?? 'unreachable';
+    rows.set(key, row);
+  }
+  return [...rows.values()];
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { cantReach, deviceMark, elsewhere, pageMark } from './devices';
+import { cantReach, deviceMark, deviceRows, elsewhere, pageMark } from './devices';
 import type { LibraryTrack } from './protocol/LibraryTrack';
+import type { PairedDevice } from './protocol/PairedDevice';
 import type { PairingState } from './protocol/PairingState';
 import type { Reach } from './protocol/Reach';
 
@@ -61,5 +62,35 @@ describe('tracks on other devices', () => {
     expect(pageMark([here, away, both], pairing({ d1: 'direct' }))).toEqual({ title: 'Some songs are on Laptop or Desk', away: false });
     expect(pageMark([away, desk], pairing({ d2: 'relayed' }))).toEqual({ title: 'Some songs are on Laptop or Desk', away: false });
     expect(pageMark([here, away], pairing({}))).toEqual({ title: 'Some songs are on Laptop, which can’t be reached now', away: true });
+  });
+});
+
+describe('deviceRows', () => {
+  const saved = (id: string, name: string) => ({ id, name, addresses: ['1.2.3.4:7700'], token: 't' });
+  const dev = (id: string, key: string | null, scopes: PairedDevice['scopes']) =>
+    ({ id, name: id, public_key: key, scopes, paired_at_ms: 0, last_seen_ms: null }) as PairedDevice;
+
+  it('joins a linked engine you also control into one row', () => {
+    const rows = deviceRows([saved('k1', 'Laptop')], [dev('d1', 'k1', ['sync', 'playback'])], [{ device: 'd1', reach: 'relayed' }]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ key: 'k1', browser: false, linked: true, reach: 'relayed' });
+    expect(rows[0].saved).not.toBeNull();
+    expect(rows[0].device).not.toBeNull();
+  });
+
+  it('lists a browser client by its device, marked as one', () => {
+    const [row] = deviceRows([], [dev('d2', null, ['playback'])], []);
+    expect(row).toMatchObject({ key: 'd2', browser: true, linked: false, saved: null, reach: 'unreachable' });
+  });
+
+  it('lists an engine you control that doesn’t know you, with no reach to tell', () => {
+    const [row] = deviceRows([saved('k3', 'Desk')], [], []);
+    expect(row).toMatchObject({ key: 'k3', device: null, linked: false, reach: null });
+    expect(row.saved).not.toBeNull();
+  });
+
+  it('lists a device that controls you that you don’t control', () => {
+    const [row] = deviceRows([], [dev('d4', 'k4', ['playback'])], [{ device: 'd4', reach: 'direct' }]);
+    expect(row).toMatchObject({ key: 'k4', saved: null, linked: false, reach: 'direct' });
   });
 });
