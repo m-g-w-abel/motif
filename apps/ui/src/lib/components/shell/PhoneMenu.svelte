@@ -6,6 +6,7 @@
   import { deviceRows, REACH_LABELS } from '../../devices';
   import { HELP_URL, openUrl } from '../../openUrl';
   import type { MenuItem } from '../../contextMenu.svelte';
+  import { trackMembers } from '../../downloads.svelte';
   import { pickActions, runPick, type PickAction, type Picking } from '../../picking';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { markActions, type MarkAction } from '../../ratings';
@@ -15,7 +16,7 @@
   // connection, which opens the engine switcher in its place, then Settings, Changelog and Help.
   // In select mode, the select bar's ⋮ opens it with the actions that don't fit on the bar,
   // and its Add to playlist with the playlists to add to (`Playlists.choices`).
-  const { engine, library, playlists, settings: prefs, settingsView, views } = getApp();
+  const { engine, library, playlists, downloads, settings: prefs, settingsView, views } = getApp();
   const statusLabel = { connecting: 'connecting…', open: 'connected', closed: 'disconnected' };
   const label = $derived(statusLabel[engine.status] + (engine.via ? ` · ${VIA_LABELS[engine.via]}` : ''));
   /** How each other engine in the switcher is reached, as Settings → Devices shows it (null: can't tell). */
@@ -53,6 +54,12 @@
     if (!more || !engine.can('library')) return [];
     const local = picked.filter((t) => t.source === 'local');
     return markActions(prefs.current.ratings, local.map((t) => library.details(t)));
+  });
+  // Download or Remove download: the picked albums or playlists themselves, else the songs.
+  const downloadItems = $derived.by(() => {
+    if (!more || !shown) return [];
+    const on = shown.picking;
+    return downloads.items(on.members?.() ?? trackMembers(picked)).map((item) => ({ ...item, run: () => (item.run(), on.done()) }));
   });
   const MARK_LABELS: Record<MarkAction, string> = { love: 'Love', unlove: 'Unlove', clear: 'Clear rating' };
 
@@ -109,6 +116,9 @@
     {/each}
     {#each marks as action (action)}
       <button class="item" onclick={() => mark(action)}>{MARK_LABELS[action]}</button>
+    {/each}
+    {#each downloadItems as item (item.label)}
+      <button class="item" onclick={() => choose(item)}>{item.label}</button>
     {/each}
   {:else if choices}
     <!-- By position: playlists may share a name. -->

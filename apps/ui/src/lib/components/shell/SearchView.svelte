@@ -2,7 +2,7 @@
   import { swap } from '../../motion/swap';
   import { untrack } from 'svelte';
   import { getApp, getViewState } from '../../context';
-  import { contextMenu, type MenuItem } from '../../contextMenu.svelte';
+  import { contextMenu, menu, type MenuItem } from '../../contextMenu.svelte';
   import { formatTime } from '../../format';
   import { type LibraryTracks, type Shown } from '../../library.svelte';
   import { queueTracks } from '../../menus';
@@ -17,7 +17,7 @@
   import SongList from '../widgets/SongList.svelte';
 
   // The Search view: a field, filter chips, a toolbar acting on the results, and the results.
-  const { engine, library, views } = getApp();
+  const { engine, library, views, downloads } = getApp();
   const area = getViewState();
 
   const FILTERS = ['All', 'Songs', 'Albums', 'Artists', 'Album Artists', 'Folders', 'Playlists'] as const;
@@ -103,6 +103,8 @@
     filter = 'All';
     search(name, true);
   }
+  /** An artist's menu: Download or Remove download, every album of theirs, later ones too. */
+  const artistMenu = (name: string) => downloads.items([{ kind: 'artist', name }]);
   function playFolder(path: string) {
     engine.query({ type: 'play_folder', path, start: 0 }).catch((e: Error) => (engine.error = e.message));
   }
@@ -163,7 +165,15 @@
   {#if best}
     <div class="best">
       <span class="kind">artist</span>
-      <button class="name" onclick={() => pickArtist(best!.artist.name)}>{best.artist.name}</button>
+      <button class="name" use:menu={() => artistMenu(best!.artist.name)} onclick={() => pickArtist(best!.artist.name)}>{best.artist.name}</button>
+      <!-- Phones open no menu on a long press, so the artist's download toggle shows here. -->
+      {#if artistMenu(best.artist.name)[0]}
+        {@const download = artistMenu(best.artist.name)[0]}
+        {@const on = downloads.has({ kind: 'artist', name: best.artist.name })}
+        <button class="tool downloaded" class:active={on} aria-pressed={on} aria-label="Download {best.artist.name}" title={download.label} onclick={download.run}>
+          <Icon name="download" size={18} />
+        </button>
+      {/if}
     </div>
     <ul class="albums">
       {#each best.albums as album (album.key)}{@render albumRow(album)}{/each}
@@ -181,9 +191,9 @@
   {#if songs.count}<h2 class="sub">Songs</h2>{/if}
 {/snippet}
 
-{#snippet nameRow(name: string, line: string, art: string | null, onclick: () => void)}
+{#snippet nameRow(name: string, line: string, art: string | null, onclick: () => void, items: () => MenuItem[] = () => [], downloaded = false)}
   <li>
-    <button class="name-row" {onclick}>
+    <button class="name-row" {onclick} use:menu={items}>
       <span class="cover small">
         {#if art}<Artwork track={undefined} {art} title={name} />{:else}<span class="initial">{name[0]?.toUpperCase()}</span>{/if}
       </span>
@@ -191,6 +201,7 @@
         <span class="title">{name}</span>
         <span class="artist">{line}</span>
       </span>
+      {#if downloaded}<span class="downloaded" title="Downloaded" aria-label="Downloaded"><Icon name="download" size={14} /></span>{/if}
     </button>
   </li>
 {/snippet}
@@ -301,6 +312,8 @@
               `${artist.albums} ${artist.albums === 1 ? 'album' : 'albums'} · ${artist.tracks} ${artist.tracks === 1 ? 'song' : 'songs'}`,
               artist.art,
               () => pickArtist(artist.name),
+              () => artistMenu(artist.name),
+              downloads.has({ kind: 'artist', name: artist.name }),
             )}
           {:else}
             <li class="empty">No artists match “{searched}”.</li>
@@ -442,6 +455,15 @@
     padding: var(--space-4) var(--space-3);
     color: var(--text-muted);
     list-style: none;
+  }
+
+  .downloaded {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    color: var(--text-muted);
+    flex: none;
   }
 
   .best {

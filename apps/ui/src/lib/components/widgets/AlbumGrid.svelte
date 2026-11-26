@@ -9,6 +9,7 @@
   import { gesture, mapped, swipeRow } from '../../gestures';
   import { hold, type LibraryAlbums, type Shown } from '../../library.svelte';
   import type { TrackRef } from '../../protocol/TrackRef';
+  import type { Downloadable } from '../../protocol/Downloadable';
   import { navTarget, scrollInto, vimTarget } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
   import type { MenuItem } from '../../contextMenu.svelte';
@@ -66,7 +67,7 @@
   /** What its cards open, for their cover and title to fly to the page (`lib/motion/stage.svelte.ts`). */
   const kind = $derived(items === 'playlists' ? 'playlist' : 'album');
 
-  const { engine, library, settings, playlists, views } = getApp();
+  const { engine, library, settings, playlists, views, downloads } = getApp();
   const view = getViewState();
   const memoryKey = $derived(at === undefined ? undefined : `${view.source}/${view.layoutId}/${at}`);
 
@@ -169,6 +170,8 @@
     view.browse.focusAlbum = null;
   }
   /** The albums an action on `album` applies to: the selection, in grid order, if the album is part of it. */
+  /** A card as a member of the Downloaded group. */
+  const memberOf = (key: string): Downloadable => (items === 'playlists' ? { kind: 'playlist', id: key } : { kind: 'album', album: key });
   const keysFor = (album: Card) => (inSelection(picked, album.key) ? ordered(picked) : [album.key]);
   function playAll(album: Card) {
     if (!inSelection(picked, album.key)) return play(album);
@@ -239,7 +242,11 @@
   });
   $effect(() => {
     if (!selecting || !views.phone) return;
-    views.picking = keyPicking(picked, count, albumTracks, { toggleAll: () => (picked.size === count ? clear() : selectAll()), done: () => (selecting = false) });
+    views.picking = keyPicking(picked, count, albumTracks, {
+      toggleAll: () => (picked.size === count ? clear() : selectAll()),
+      members: () => ordered(picked).map(memberOf),
+      done: () => (selecting = false),
+    });
     return () => (views.picking = null);
   });
   /** Middle-click: queues the album, or the picked albums it is part of. */
@@ -261,7 +268,13 @@
 
   function menuFor(album: Card): MenuItem[] {
     const keys = keysFor(album);
-    if (items !== 'playlists') return albumMenu(engine, album, () => playAll(album), () => albumTracks(keys), keys.length);
+    const download = downloads.items(keys.map(memberOf));
+    if (items !== 'playlists') {
+      const menu = albumMenu(engine, album, () => playAll(album), () => albumTracks(keys), keys.length);
+      const at = menu.findIndex((item) => item.label.startsWith('Copy'));
+      menu.splice(at < 0 ? menu.length : at, 0, ...download);
+      return menu;
+    }
     const label = keys.length > 1 ? `${keys.length} playlists` : album.title;
     const queue: MenuItem[] = engine.can('queue')
       ? [
@@ -270,10 +283,10 @@
         ]
       : [];
     const playlist = keys.length === 1 && playlists.list.find((p) => p.id === album.key);
-    if (!playlist) return [...(engine.can('playback') ? [{ label: 'Play', run: () => playAll(album) }] : []), ...queue];
+    if (!playlist) return [...(engine.can('playback') ? [{ label: 'Play', run: () => playAll(album) }] : []), ...queue, ...download];
     const menu = playlists.menu(playlist);
     const at = menu.findIndex((item) => item.label === 'Rename…');
-    menu.splice(at < 0 ? menu.length : at, 0, ...queue);
+    menu.splice(at < 0 ? menu.length : at, 0, ...queue, ...download);
     return menu;
   }
 
@@ -567,6 +580,9 @@
                   <Artwork track={album.track} art={album.art} title={album.title} size={grid ? undefined : 40} />
                 </span>
               {/if}
+              {#if downloads.has(memberOf(album.key))}
+                <span class="downloaded" title="Downloaded" aria-label="Downloaded"><Icon name="download" size={12} /></span>
+              {/if}
               {#if selecting}
                 <span class="check" class:on={picked.has(album.key)} aria-hidden="true">
                   {#if picked.has(album.key)}<Icon name="check" size={14} />{/if}
@@ -659,6 +675,32 @@
     border-radius: 50%;
     background: var(--bg);
     color: var(--accent-contrast);
+  }
+
+  /* In the Downloaded group: a mark in the cover's other corner, or before a row's end. */
+  .downloaded {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .rows .downloaded {
+    position: static;
+    margin-left: auto;
+    background: none;
+    color: var(--text-muted);
+    flex: none;
+  }
+
+  .rows .downloaded:has(+ .check) {
+    margin-right: 28px;
   }
 
   .check.on {

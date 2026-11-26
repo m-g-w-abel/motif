@@ -15,11 +15,12 @@ export type View =
   | { kind: 'played' }
   | { kind: 'added' }
   | { kind: 'favourites' }
+  | { kind: 'downloaded' }
   | { kind: 'album'; key: string; title: string; art?: string | null; artist?: string }
   | { kind: 'playlist'; id: string; name: string }
   | { kind: 'search' };
 
-export type Category = Extract<View['kind'], 'songs' | 'albums' | 'playlists' | 'played' | 'added' | 'favourites'>;
+export type Category = Extract<View['kind'], 'songs' | 'albums' | 'playlists' | 'played' | 'added' | 'favourites' | 'downloaded'>;
 
 /** The Library home's entries, in order, each with its round icon's colour. */
 export const CATEGORIES: { kind: Category; label: string; icon: IconName; colour: string }[] = [
@@ -29,6 +30,7 @@ export const CATEGORIES: { kind: Category; label: string; icon: IconName; colour
   { kind: 'played', label: 'Recently Played', icon: 'play', colour: '#3f3d8a' },
   { kind: 'added', label: 'Recently Added', icon: 'plus', colour: '#4e6043' },
   { kind: 'favourites', label: 'Favourites', icon: 'heart', colour: '#a8405a' },
+  { kind: 'downloaded', label: 'Downloaded', icon: 'download', colour: '#2f7a78' },
 ];
 
 /** The Library home's entries for the Hearts or Stars setting: Favourites are loved songs, so Stars hides them. */

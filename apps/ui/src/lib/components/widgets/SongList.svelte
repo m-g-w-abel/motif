@@ -65,7 +65,7 @@
     memory?: string;
   } = $props();
 
-  const { engine, library, settings, playlists, views } = getApp();
+  const { engine, library, settings, playlists, views, downloads } = getApp();
   const view = getViewState();
   $effect(() => data.sync?.());
 
@@ -274,7 +274,7 @@
               onkeydown={(e) => onKey(e, i)}
               onpointerdown={(e) => press(e, i)}
               onclick={() => activate(i)}
-              use:menu={() => trackMenu(engine, library, settings.current.ratings, playlists, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
+              use:menu={() => trackMenu(engine, library, settings.current.ratings, playlists, downloads, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
             >
               <span class="lead">
                 {#if mode !== 'list'}
@@ -298,6 +298,7 @@
                   {#if !inAlbum}<span class="artist">{track.artist || 'Unknown artist'}</span>{/if}
                 </span>
                 {#if mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={13} /></span>{/if}
+                {#if downloads.isCopy(track)}<span class="device" title="Downloaded" aria-label="Downloaded"><Icon name="download" size={13} /></span>{/if}
                 {#if settings.current.ratings === 'hearts' ? details?.favourite : details?.rating}
                   <span class="marks" aria-label={settings.current.ratings === 'hearts' ? 'Loved' : starsLabel(starsOf(details?.rating))}>
                     {#if settings.current.ratings === 'hearts'}<Icon name="heart" size={12} solid />{:else}<span class="stars">{'★'.repeat(starsOf(details?.rating))}</span>{/if}

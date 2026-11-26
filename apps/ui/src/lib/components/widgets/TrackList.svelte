@@ -46,7 +46,7 @@
     oncolumns?: (columns: Column[]) => void;
   } = $props();
 
-  const { engine, library, settings, playlists } = getApp();
+  const { engine, library, settings, playlists, downloads } = getApp();
   const view = getViewState();
   const memoryKey = $derived(at === undefined ? undefined : `${view.source}/${view.layoutId}/${at}`);
 
@@ -683,7 +683,7 @@
                 onauxclick={(e) => e.button === 1 && queueRow(i)}
                 ondblclick={() => data.play(i)}
                 onkeydown={(e) => e.target === e.currentTarget && onKey(e, i)}
-                use:menu={() => trackMenu(engine, library, settings.current.ratings, playlists, data, view, i)}
+                use:menu={() => trackMenu(engine, library, settings.current.ratings, playlists, downloads, data, view, i)}
               >
                 {#each shown as column (column)}
                   <td class={column}>
@@ -698,6 +698,7 @@
                     {:else}
                       {cell(column, i)}
                       {#if column === 'title' && mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={12} /></span>{/if}
+                      {#if column === 'title' && track && downloads.isCopy(track)}<span class="device" title="Downloaded" aria-label="Downloaded"><Icon name="download" size={12} /></span>{/if}
                       {#if column === 'title' && error}<span class="reason">{error}</span>{/if}
                     {/if}
                   </td>

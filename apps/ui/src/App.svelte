@@ -45,6 +45,7 @@
   import type { Swipe } from './lib/gestures';
   import PlaylistPrompt from './lib/components/playlists/PlaylistPrompt.svelte';
   import { Playlists } from './lib/playlists.svelte';
+  import { Downloads } from './lib/downloads.svelte';
   import Nav from './lib/components/shell/Nav.svelte';
   import ExpandedPlayer from './lib/components/player/ExpandedPlayer.svelte';
   import FloatingPlayer from './lib/components/player/FloatingPlayer.svelte';
@@ -62,9 +63,11 @@
   const settingsView = new SettingsView();
   const views = new Views();
   const playlists = new Playlists(engine);
-  setApp({ engine, library, position, layout, themes, settings, sheet, settingsView, views, playlists });
-  // The list is wanted everywhere: Add to playlist menus, the Playlists view.
+  const downloads = new Downloads(engine);
+  setApp({ engine, library, position, layout, themes, settings, sheet, settingsView, views, playlists, downloads });
+  // The lists are wanted everywhere: Add to playlist and Download menus, the Playlists and Downloaded views.
   $effect(() => playlists.sync());
+  $effect(() => downloads.sync());
   // All Songs is the layout-arranged view on desktop, where it also stands in for the Library home (the left
   // panel); phones use no layouts and show it as a song view.
   const allSongs = $derived(!views.phone && (views.top.kind === 'songs' || views.top.kind === 'home'));

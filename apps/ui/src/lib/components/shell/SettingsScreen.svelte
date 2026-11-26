@@ -7,7 +7,7 @@
   import type { Scope } from '../../protocol/Scope';
   import AddEngineDialog from '../pairing/AddEngineDialog.svelte';
   import PairDialog from '../pairing/PairDialog.svelte';
-  import { addFolder, androidStorage } from '../../folders';
+  import { addFolder, androidStorage, setDownloadFolder } from '../../folders';
   import { installTheme } from '../../layout/install';
   import { openUrl } from '../../openUrl';
   import { moveItem } from '../../reorder';
@@ -611,6 +611,33 @@
               Pick up changes made outside Motif
             </label>
           </div>
+          <div class="row">
+            <span class="label">Downloads</span>
+            <p class="status">
+              Songs, albums, artists and playlists you download from linked devices are kept here to play offline. Choose
+              Download in their menus; they're listed under Downloaded.
+            </p>
+            <div class="item">
+              <span class="path selectable" title={status.downloads.folder}>{status.downloads.folder || 'No download folder'}</span>
+            </div>
+            <div class="actions">
+              <button class="button" onclick={() => setDownloadFolder(engine)}>Change folder…</button>
+            </div>
+            {#if engine.pairing}
+              {@const net = engine.pairing.net}
+              <div class="actions">
+                <span>Quality</span>
+                <select class="select narrow" aria-label="Download quality" value={net.quality.download} onchange={(e) => engine.pair({ type: 'set_quality', of: 'download', quality: e.currentTarget.value as Quality })}>
+                  {#each QUALITIES as [value, label] (value)}<option {value}>{label}</option>{/each}
+                </select>
+              </div>
+            {/if}
+            <!-- #246's auto-fill size goes here. -->
+            <p class="status">
+              {#if status.downloads.waiting}{status.downloads.waiting} {status.downloads.waiting === 1 ? 'song' : 'songs'} to download{:else}Nothing waiting to download{/if}
+            </p>
+            {#if status.downloads.error}<p class="status error selectable">{status.downloads.error} <CopyButton text={status.downloads.error} /></p>{/if}
+          </div>
         {:else}
           <p class="status">The library isn't available yet.</p>
         {/if}
@@ -906,7 +933,7 @@
           </div>
           <div class="row">
             <span class="label">Quality from linked devices</span>
-            {#each [['stream', 'Streams away from home'], ['metered', 'Streams on metered networks'], ['download', 'Downloads']] as const as [of, text] (of)}
+            {#each [['stream', 'Streams away from home'], ['metered', 'Streams on metered networks']] as const as [of, text] (of)}
               <div class="actions">
                 <span>{text}</span>
                 <select class="select narrow" aria-label={text} value={p.net.quality[of]} onchange={(e) => engine.pair({ type: 'set_quality', of: of as QualityFor, quality: e.currentTarget.value as Quality })}>
@@ -916,6 +943,7 @@
             {/each}
             <p class="status">
               Lossless files and those above the bitrate come as Opus; other lossy files come as they are. On the same network, streams are always the original.
+              Downloads have their own quality, under Library.
               {#if p.net.metered}This device's network is metered now.{/if}
             </p>
           </div>

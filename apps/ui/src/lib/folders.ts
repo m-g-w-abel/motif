@@ -34,34 +34,44 @@ function pickAndroidFolder(android: AndroidBridge): Promise<string | null> {
 }
 
 /**
- * Asks for a music folder and adds it to the library: the system folder picker
+ * Asks for a folder on the machine running the engine: the system folder picker
  * on Android, a native folder picker in the desktop app, a path typed in a
- * browser (the folder is on the machine running the engine, which a browser
- * can't browse).
+ * browser (which can't browse that machine). Null if none was picked.
  */
-export async function addFolder(engine: EngineClient): Promise<void> {
+async function pickFolder(engine: EngineClient, title: string): Promise<string | null> {
   let path: string | null;
   const storage = androidStorage();
   if (storage) {
     if (!storage.hasAllFilesAccess()) {
-      engine.error = 'Motif needs All files access to read your music. Allow it, then add the folder again.';
+      engine.error = 'Motif needs All files access to read your music. Allow it, then pick the folder again.';
       storage.openAllFilesSettings();
-      return;
+      return null;
     }
     const uri = await pickAndroidFolder(storage);
-    if (!uri) return;
+    if (!uri) return null;
     path = treeUriToPath(uri);
     if (!path) {
       engine.error = 'Pick a folder on the phone’s storage or an SD card; Motif can’t read that location by path.';
-      return;
+      return null;
     }
   } else if ('__TAURI_INTERNALS__' in window && !android) {
     const { open } = await import('@tauri-apps/plugin-dialog');
-    const picked = await open({ directory: true, multiple: false, title: 'Add a music folder' });
+    const picked = await open({ directory: true, multiple: false, title });
     path = typeof picked === 'string' ? picked : null;
   } else {
-    path = window.prompt('Music folder to add (a path on the computer running Motif):');
+    path = window.prompt(`${title} (a path on the computer running Motif):`);
   }
-  if (!path?.trim()) return;
-  await engine.query({ type: 'add_root', path: path.trim() }).catch((e: Error) => (engine.error = e.message));
+  return path?.trim() || null;
+}
+
+/** Asks for a music folder and adds it to the library. */
+export async function addFolder(engine: EngineClient): Promise<void> {
+  const path = await pickFolder(engine, 'Add a music folder');
+  if (path) await engine.query({ type: 'add_root', path }).catch((e: Error) => (engine.error = e.message));
+}
+
+/** Asks where downloads go (a library folder; the engine moves nothing already there). */
+export async function setDownloadFolder(engine: EngineClient): Promise<void> {
+  const path = await pickFolder(engine, 'Save downloads in');
+  if (path) await engine.query({ type: 'set_download_folder', path }).catch((e: Error) => (engine.error = e.message));
 }

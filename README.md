@@ -127,6 +127,9 @@ control isn't an add-on: it's the normal code path.
   default, written as Ogg Opus with its tags), scanned in as the same track
   as the source (by audio hash) so they're never streamed, and deleted when
   no member needs them. Interrupted downloads resume from the chunks on disk.
+  Download / Remove download sits in the menus and select mode of songs,
+  albums, artists and playlists; downloaded copies and members are marked,
+  and the Downloaded view lists each member with how much of it is here.
 - Away from home, the app controls a linked engine over the same link: it
   tries the LAN first, then tunnels the same WebSocket protocol over an
   iroh stream through a loopback proxy, with the same token and scopes
