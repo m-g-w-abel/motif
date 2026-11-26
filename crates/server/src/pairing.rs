@@ -53,6 +53,8 @@ struct Shared {
     secret: [u8; 32],
     inner: Mutex<Inner>,
     state: watch::Sender<PairingState>,
+    /// Linked engines' tracks fetched here.
+    store: crate::files::Store,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -171,15 +173,17 @@ impl Pairing {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Saved::default(),
             Err(err) => return Err(err),
         };
-        Ok(Self::new(Some(file), secret, saved))
+        Ok(Self::new(Some(file), secret, saved, dir.join("streams")))
     }
 
     /// A new identity and no paired devices, forgotten on quitting.
     pub fn in_memory() -> Self {
-        Self::new(None, random(), Saved::default())
+        let secret = random();
+        let streams = std::env::temp_dir().join(format!("motif-streams-{}", hex(&secret[..8])));
+        Self::new(None, secret, Saved::default(), streams)
     }
 
-    fn new(file: Option<PathBuf>, secret: [u8; 32], mut saved: Saved) -> Self {
+    fn new(file: Option<PathBuf>, secret: [u8; 32], mut saved: Saved, streams: PathBuf) -> Self {
         // Full pairings from before Sync existed are Full still.
         for stored in &mut saved.devices {
             let scopes = &mut stored.device.scopes;
@@ -209,6 +213,7 @@ impl Pairing {
                 metered: false,
             }),
             state: watch::Sender::new(PairingState::default()),
+            store: crate::files::Store::new(streams),
         }));
         pairing.publish(&pairing.lock());
         pairing
@@ -410,6 +415,15 @@ impl Pairing {
             inner.metered = metered;
             self.publish(&inner);
         }
+    }
+
+    pub(crate) fn store(&self) -> crate::files::Store {
+        self.0.store.clone()
+    }
+
+    /// What to ask linked engines for downloaded copies.
+    pub(crate) fn download_quality(&self) -> Quality {
+        self.lock().saved.quality.download
     }
 
     /// What to ask linked engines off the LAN for, on this network now.

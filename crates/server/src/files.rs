@@ -12,13 +12,23 @@
 //! #244), from a point: the answer frame says what comes, [`Sent`], then the
 //! owner encodes as the reader takes it, packet by packet (2 bytes of
 //! length, 2 of the frames of audio in it, the packet), and ends the stream
-//! after the last. A seek asks again from there. Files that would lose more
-//! than they save come as they are ([`library::transcode::plan`]), as ranges.
+//! after the last. A seek past what came asks again from there. Files that
+//! would lose more than they save come as they are
+//! ([`library::transcode::plan`]), as ranges.
+//!
+//! Either way the reader fetches the whole track into a file of the
+//! [`Store`] (#282): playback rides out a lost link once the bytes are here,
+//! and a seek into them asks for nothing. Downloads (#245) fetch through it
+//! too ([`fetch_whole`]).
 
 use std::{
     collections::HashMap,
-    io::{self, Read, Seek, SeekFrom},
-    sync::{Arc, Condvar, Mutex},
+    io::{self, Read, Seek, SeekFrom, Write},
+    path::PathBuf,
+    sync::{
+        Arc, Condvar, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -80,9 +90,6 @@ enum Sent {
 
 /// Bytes per range: a third of a second of CD-quality FLAC.
 const CHUNK: u64 = 64 << 10;
-/// Ranges fetched ahead of the decoder while it reads straight through
-/// (2 MiB: about 16 s of CD-quality FLAC, 4 s of 24-bit/192 kHz).
-const AHEAD: u64 = 32;
 /// The largest range served.
 const MAX_RANGE: u32 = CHUNK as u32;
 /// Ranges answered at once on a connection; more wait to be read.
@@ -95,11 +102,13 @@ const STALL: Duration = Duration::from_secs(8);
 const DIAL: Duration = Duration::from_secs(5);
 
 /// A slower link, for measuring: `rate` bytes a second shared by every range
-/// on the connection, each answered `latency` late.
-#[derive(Debug, Clone, Copy)]
+/// on the connection, each answered `latency` late. Notes the offset of each
+/// range asked for in `served`.
+#[derive(Debug, Clone, Default)]
 pub(crate) struct Pace {
     pub rate: u64,
     pub latency: Duration,
+    pub served: Arc<Mutex<Vec<u64>>>,
 }
 
 /// Answers range requests on `conn` from a linked engine (while `linked`
@@ -121,13 +130,19 @@ pub(crate) async fn serve(
         let Ok((send, recv)) = conn.accept_bi().await else {
             return;
         };
-        let (library, free) = (library.clone(), free.clone());
+        let (library, free, pace) = (library.clone(), free.clone(), pace.clone());
         let allowed = linked(&peer);
         tokio::spawn(async move {
             let mut recv = recv;
             let asked = tokio::time::timeout(STALL, read::<Ask>(&mut recv)).await;
             let done = match asked {
                 Ok(Ok(Ask::Range(range))) => {
+                    if let Some(pace) = &pace {
+                        pace.served
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(range.offset);
+                    }
                     let answered = answer(&library, allowed, range, send, pace, &free);
                     tokio::time::timeout(STALL, answered)
                         .await
@@ -303,6 +318,19 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
         streamed,
         open: Arc::new(move || {
             let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
+            // Being fetched for another stream of it, or a download.
+            if open.is_none() {
+                let store = pairing.store();
+                let quality = pairing.stream_quality();
+                let live = match (store.live(&copies), store.live_encoded(&copies, quality)) {
+                    (Some(remote), _) => Some(Dialled::Original(remote)),
+                    (None, Some(packets)) => {
+                        Some(Dialled::Opus(packets.link.clone(), quality, packets))
+                    }
+                    (None, None) => None,
+                };
+                *open = live.map(|live| (Ok(live), Instant::now()));
+            }
             let dialled = match &*open {
                 Some((Ok(dialled), _)) if dialled.link().conn().close_reason().is_none() => {
                     dialled.clone()
@@ -311,7 +339,7 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
                     return Err(io::Error::other(err.clone()));
                 }
                 _ => {
-                    let dialled = dial(&pairing, &copies, tell.clone());
+                    let dialled = dial(&pairing, &copies, tell.clone(), None);
                     let dialled = runtime.block_on(dialled);
                     if dialled.is_err() {
                         let from = pairing.linked_name(&copies[0].0).unwrap_or_default();
@@ -327,11 +355,11 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
 }
 
 /// A linked engine's track, connected to: as ranges of its file, or as Opus
-/// encoded live (with the first answer, for the first decoder to take).
+/// encoded live, whose packets every decoder of it reads.
 #[derive(Clone)]
 enum Dialled {
     Original(Arc<Remote>),
-    Opus(Arc<Link>, Quality, Arc<Mutex<Option<Started>>>),
+    Opus(Arc<Link>, Quality, Arc<Packets>),
 }
 
 impl Dialled {
@@ -347,13 +375,9 @@ impl Dialled {
             Dialled::Original(remote) => {
                 Opened::Bytes(Box::new(Reader::new(remote.clone(), remote.len)))
             }
-            Dialled::Opus(link, quality, first) => {
-                let first = first.lock().unwrap_or_else(|e| e.into_inner()).take();
-                let live = match first {
-                    Some(started) => Live::new(link.clone(), *quality, started),
-                    None => Live::open(link.clone(), *quality, Duration::ZERO),
-                };
-                Opened::Decoded(Box::new(live?))
+            Dialled::Opus(link, quality, packets) => {
+                let live = Live::new(link.clone(), *quality, packets.clone())?;
+                Opened::Decoded(Box::new(live))
             }
         })
     }
@@ -365,15 +389,17 @@ async fn dial(
     pairing: &Pairing,
     copies: &[(String, i64)],
     tell: watch::Sender<Option<StreamState>>,
+    download: Option<Quality>,
 ) -> Result<Dialled, String> {
     let net = pairing
         .net()
         .ok_or("on a linked engine, but not connected to any now")?;
     let mut copies = copies.to_vec();
     copies.sort_by_key(|(key, _)| pairing.reach(key) == Reach::Unreachable);
-    let quality = |conn: &Connection| match net::lan(conn) {
-        true => Quality::Original,
-        false => pairing.stream_quality(),
+    let quality = |conn: &Connection| match (download, net::lan(conn)) {
+        (Some(quality), _) => quality,
+        (None, true) => Quality::Original,
+        (None, false) => pairing.stream_quality(),
     };
     let mut reasons = Vec::new();
     for (key, id) in copies {
@@ -381,7 +407,8 @@ async fn dial(
         let Some((_, addr)) = addr else { continue };
         let locate = locate(pairing.clone(), key.clone());
         let from = (pairing.linked_name(&key).unwrap_or_default(), tell.clone());
-        let connected = connect(&net, &key, &addr, id, locate, &quality, from);
+        let store = pairing.store();
+        let connected = connect(&store, &net, (&key, &addr), id, locate, &quality, from);
         match tokio::time::timeout(DIAL, connected).await {
             Ok(Ok(opened)) => return Ok(opened),
             Ok(Err(err)) => reasons.push(err),
@@ -392,6 +419,61 @@ async fn dial(
         "no linked engine with it is reachable ({})",
         reasons.join("; ")
     ))
+}
+
+/// Fetches the track the linked engines in `copies` hold whole into the
+/// [`Store`], kept, at `quality` (#245): its file there, and whether it came
+/// encoded (an Ogg Opus file with `tags`). One being fetched for playing is
+/// shared. Safe to repeat: ranges carry on from what is here; an encoded
+/// copy starts again.
+pub(crate) async fn fetch_whole(
+    pairing: &Pairing,
+    copies: &[(String, i64)],
+    quality: Quality,
+    tags: &[(String, String)],
+) -> Result<(PathBuf, bool), String> {
+    let store = pairing.store();
+    // Being fetched for playing (or another download): fetched once.
+    let dialled = match (quality, store.live(copies)) {
+        (Quality::Original, Some(remote)) => Dialled::Original(remote),
+        _ => match store.live_encoded(copies, quality) {
+            Some(packets) => Dialled::Opus(packets.link.clone(), quality, packets),
+            None => dial(pairing, copies, watch::channel(None).0, Some(quality)).await?,
+        },
+    };
+    match dialled {
+        Dialled::Original(remote) => {
+            remote.kept.store(true, Ordering::Relaxed);
+            remote.fetched().await?;
+            Ok((store.path(&remote.link.key, remote.link.id), false))
+        }
+        Dialled::Opus(link, _, packets) => {
+            let path = store.path(&link.key, link.id).with_extension("opus");
+            let (tags, written) = (tags.to_vec(), path.clone());
+            // As the packets come (waiting for them blocks).
+            tokio::task::spawn_blocking(move || {
+                let stored = |err: io::Error| match err.kind() {
+                    io::ErrorKind::StorageFull => "the disk is full".to_string(),
+                    _ => format!("can't store it here: {err}"),
+                };
+                let file = std::fs::File::create(&written).map_err(stored)?;
+                let file = io::BufWriter::new(file);
+                let (channels, pre_skip) = (packets.channels, packets.pre_skip);
+                let mut ogg =
+                    transcode::OggOpus::new(file, channels, pre_skip, &tags).map_err(stored)?;
+                let mut i = 0;
+                while let Some(packet) = packets.packet(i)? {
+                    ogg.packet(&packet.data, packet.frames).map_err(stored)?;
+                    i += 1;
+                }
+                ogg.finish().map_err(stored)?;
+                Ok::<_, String>(())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            Ok((path, true))
+        }
+    }
 }
 
 /// Where a linked engine can be dialled now: this engine's endpoint (it
@@ -413,9 +495,9 @@ fn locate(pairing: Pairing, key: String) -> Locate {
 /// the connection: Opus if the owner encodes it, else its first range and
 /// size. Tells how it comes as `from` (its name, and where to tell).
 async fn connect(
+    store: &Store,
     net: &Net,
-    key: &str,
-    addr: &net::PeerAddr,
+    (key, addr): (&str, &net::PeerAddr),
     id: i64,
     locate: Locate,
     quality: &(dyn Fn(&Connection) -> Quality + Sync),
@@ -440,24 +522,17 @@ async fn connect(
             None => Quality::Original,
         },
         streamed: tell,
+        store: store.clone(),
     };
     link.follow(&conn);
     if let Some(started) = started {
-        let first = Arc::new(Mutex::new(Some(started)));
-        return Ok(Dialled::Opus(Arc::new(link), quality, first));
+        let link = Arc::new(link);
+        let packets = Packets::fetch(link.clone(), started).map_err(|e| e.to_string())?;
+        return Ok(Dialled::Opus(link, quality, packets));
     }
     let (len, first) = fetch(&conn, id, 0, CHUNK as u32).await?;
-    let remote = Remote {
-        link,
-        len,
-        state: Mutex::new(Fetched {
-            chunks: HashMap::from([(0, Chunk::Here(first.into()))]),
-            wanted: 0..0,
-            fetches: 0,
-        }),
-        arrived: Condvar::new(),
-    };
-    Ok(Dialled::Original(Arc::new(remote)))
+    let remote = store.adopt(Arc::new(link), len, &first);
+    Ok(Dialled::Original(remote.map_err(|e| e.to_string())?))
 }
 
 /// A connection to the owner of track `id`, dialled again when it closes.
@@ -474,32 +549,198 @@ struct Link {
     from: String,
     sent: Quality,
     streamed: watch::Sender<Option<StreamState>>,
+    /// Where what it fetches goes.
+    store: Store,
 }
 
-/// A connection to the owner of track `id` and the ranges fetched or
-/// being fetched.
+/// Whole files of linked engines' tracks, fetched here (#282, #245): one
+/// per track, shared by every stream of it. A track's file goes once
+/// nothing plays it (the engine holds only the current and next tracks),
+/// unless it is kept for a download, which moves it out when it is whole.
+/// The bytes of each file, and a byte per chunk saying whether it is here,
+/// so an interrupted fetch resumes where it was.
+#[derive(Clone)]
+pub(crate) struct Store(Arc<Stored>);
+
+struct Stored {
+    dir: PathBuf,
+    open: Mutex<HashMap<(String, i64), Weak<Remote>>>,
+    /// The files of [`Packets`] being played.
+    live: Mutex<std::collections::HashSet<PathBuf>>,
+    /// Tracks encoded live from their start, by track, shared like `open`.
+    encoded: Mutex<HashMap<(String, i64), Weak<Packets>>>,
+    /// By engine: one track encoded for this one at a time, as encoding
+    /// faster than real time is a burst of work for it (it may be a phone).
+    encoding: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+}
+
+impl Store {
+    pub(crate) fn new(dir: PathBuf) -> Self {
+        Self(Arc::new(Stored {
+            dir,
+            open: Mutex::default(),
+            live: Mutex::default(),
+            encoded: Mutex::default(),
+            encoding: Mutex::default(),
+        }))
+    }
+
+    fn encoded(&self) -> std::sync::MutexGuard<'_, HashMap<(String, i64), Weak<Packets>>> {
+        self.0.encoded.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The first of `copies` encoded live at `quality` from its start now.
+    fn live_encoded(&self, copies: &[(String, i64)], quality: Quality) -> Option<Arc<Packets>> {
+        let encoded = self.encoded();
+        let live = |copy| encoded.get(copy).and_then(Weak::upgrade);
+        copies
+            .iter()
+            .filter_map(live)
+            .find(|packets| packets.link.sent == quality)
+    }
+
+    /// Engine `key`'s turn to encode a track for this one.
+    fn encoder(&self, key: &str) -> Arc<tokio::sync::Semaphore> {
+        let mut encoding = self.0.encoding.lock().unwrap_or_else(|e| e.into_inner());
+        let slot = encoding.entry(key.to_string());
+        slot.or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(1)))
+            .clone()
+    }
+
+    fn live_files(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<PathBuf>> {
+        self.0.live.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, i64), Weak<Remote>>> {
+        self.0.open.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Where linked engine `key`'s track `id` is fetched to.
+    fn path(&self, key: &str, id: i64) -> PathBuf {
+        self.0.dir.join(format!("{key}-{id}"))
+    }
+
+    /// Deletes what isn't being fetched for playing, nor in `keep` (the
+    /// downloads still to make), as left by an engine that stopped.
+    pub(crate) fn prune(&self, keep: &[(String, i64)]) {
+        let Ok(dir) = std::fs::read_dir(&self.0.dir) else {
+            return;
+        };
+        let open = self.lock();
+        let live = self.live_files();
+        for file in dir.flatten() {
+            let name = file.file_name();
+            let stem = name.to_string_lossy();
+            let stem = stem.split('.').next().unwrap_or_default();
+            let track = stem
+                .rsplit_once('-')
+                .and_then(|(key, id)| Some((key.to_string(), id.parse::<i64>().ok()?)));
+            let wanted = track.is_some_and(|t| {
+                keep.contains(&t) || open.get(&t).and_then(Weak::upgrade).is_some()
+            });
+            if !wanted && !live.contains(&file.path()) {
+                let _ = std::fs::remove_file(file.path());
+            }
+        }
+    }
+
+    /// The first of `copies` being fetched now.
+    fn live(&self, copies: &[(String, i64)]) -> Option<Arc<Remote>> {
+        let open = self.lock();
+        copies
+            .iter()
+            .find_map(|copy| open.get(copy).and_then(Weak::upgrade))
+    }
+
+    /// Track `id` of `link`'s engine, `len` bytes long and starting with
+    /// `first`: the one being fetched already, else one fetched to its file
+    /// here, carrying on from what that holds.
+    fn adopt(&self, link: Arc<Link>, len: u64, first: &[u8]) -> io::Result<Arc<Remote>> {
+        let key = (link.key.clone(), link.id);
+        let mut open = self.lock();
+        if let Some(remote) = open.get(&key).and_then(Weak::upgrade)
+            && remote.len == len
+        {
+            return Ok(remote);
+        }
+        std::fs::create_dir_all(&self.0.dir)?;
+        let path = self.path(&key.0, key.1);
+        let rw = || {
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true).write(true).create(true).truncate(false);
+            options
+        };
+        let data = rw().open(&path)?;
+        let mut marks = rw().open(path.with_extension("have"))?;
+        let chunks = len.div_ceil(CHUNK) as usize;
+        let mut have = Vec::with_capacity(chunks);
+        let resumed = data.metadata()?.len() == len
+            && marks.metadata()?.len() == chunks as u64
+            && marks.read_to_end(&mut have).is_ok_and(|n| n == chunks);
+        if !resumed {
+            // Of another size: another file, or none.
+            data.set_len(0)?;
+            data.set_len(len)?;
+            marks.set_len(0)?;
+            marks.set_len(chunks as u64)?;
+            have = vec![0; chunks];
+        }
+        let remote = Arc::new(Remote {
+            link,
+            len,
+            store: self.clone(),
+            files: Mutex::new((data, marks)),
+            kept: AtomicBool::new(false),
+            state: Mutex::new(Fetched {
+                have: have.into_iter().map(|b| b == 1).collect(),
+                chunks: HashMap::new(),
+                at: 0,
+                fetches: 0,
+            }),
+            arrived: Condvar::new(),
+        });
+        if chunks > 0 && !remote.state().have[0] {
+            remote.write(0, first).map_err(io::Error::other)?;
+            remote.state().have[0] = true;
+        }
+        open.insert(key, Arc::downgrade(&remote));
+        remote.fill(&mut remote.state());
+        Ok(remote)
+    }
+}
+
+/// A connection to the owner of track `id` and its file in the [`Store`],
+/// fetched whole: the chunk the reader is at first, then on to the end and
+/// round from the start, [`IN_FLIGHT`] at a time.
 struct Remote {
-    link: Link,
+    link: Arc<Link>,
     /// The file's size when it was opened.
     len: u64,
+    store: Store,
+    /// The file and its chunks' marks.
+    files: Mutex<(std::fs::File, std::fs::File)>,
+    /// Kept when nothing plays it (a download's).
+    kept: AtomicBool,
     state: Mutex<Fetched>,
     arrived: Condvar,
 }
 
 struct Fetched {
-    /// By index.
+    /// Which chunks are in the file.
+    have: Vec<bool>,
+    /// Chunks on their way or failed, by index.
     chunks: HashMap<u64, Chunk>,
-    /// The chunks to fetch, in order.
-    wanted: std::ops::Range<u64>,
+    /// The chunk the reader is at.
+    at: u64,
     /// Fetches started, numbering each [`Chunk::Coming`].
     fetches: u64,
 }
 
 enum Chunk {
     /// Being fetched by fetch number `n`; a later one replaces it.
-    Coming(u64),
-    Here(Arc<[u8]>),
-    /// Read as an error, and fetched again if read again.
+    Coming(u64, tokio::task::AbortHandle),
+    /// Read as an error, and fetched again if read again or once another
+    /// chunk arrives.
     Failed(String),
 }
 
@@ -591,93 +832,175 @@ impl Link {
 }
 
 impl Remote {
-    /// Chunk `i` ([`Link::retry`]).
-    async fn fetch(&self, i: u64) -> Result<(u64, Vec<u8>), String> {
-        let id = self.link.id;
-        let fetched =
-            |conn: Connection| async move { fetch(&conn, id, i * CHUNK, CHUNK as u32).await };
-        self.link.retry(fetched).await
-    }
-
     fn state(&self) -> std::sync::MutexGuard<'_, Fetched> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Wants chunks `at ..= at + ahead`, keeping those from `at - 1` on and
-    /// dropping the rest but the first and last, which every decoder probing
-    /// the file reads, and those still coming (they hold the link). Failed
-    /// ones wanted again are fetched again.
-    fn want(self: &Arc<Self>, at: u64, ahead: u64) {
-        let end = self.len.div_ceil(CHUNK);
-        let keep = at.saturating_sub(1)..=at + AHEAD;
+    /// Whether every chunk is here.
+    #[cfg(test)]
+    fn whole(&self) -> bool {
+        self.state().have.iter().all(|&h| h)
+    }
+
+    /// Once every chunk is here, fetching what failed again a few times.
+    async fn fetched(self: &Arc<Self>) -> Result<(), String> {
+        let mut tries = 0;
+        loop {
+            {
+                let mut state = self.state();
+                if state.have.iter().all(|&h| h) {
+                    return Ok(());
+                }
+                let coming = (state.chunks.values()).any(|c| matches!(c, Chunk::Coming(..)));
+                if !coming {
+                    let failed = state.chunks.values().find_map(|c| match c {
+                        Chunk::Failed(err) => Some(err.clone()),
+                        Chunk::Coming(..) => None,
+                    });
+                    if let Some(err) = failed {
+                        tries += 1;
+                        if tries > 3 {
+                            return Err(err);
+                        }
+                    }
+                    state.chunks.clear();
+                    self.fill(&mut state);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
+    /// The reader is at chunk `at`: it is fetched now, then the rest from
+    /// there. After a jump (a seek), chunks still coming that aren't needed
+    /// soon are dropped, as they would share the link with it; they are
+    /// fetched again later. A failed one read again is fetched again.
+    fn want(self: &Arc<Self>, at: u64, jumped: bool) {
         let mut state = self.state();
-        let wanted = at..(at + ahead + 1).min(end);
-        state.chunks.retain(|&i, chunk| match chunk {
-            Chunk::Coming(_) => true,
-            Chunk::Failed(_) if wanted.contains(&i) => false,
-            _ => keep.contains(&i) || i == 0 || i + 1 == end,
-        });
-        state.wanted = wanted;
+        let failed = matches!(state.chunks.get(&at), Some(Chunk::Failed(_)));
+        // Within the chunk it was at: what it started still stands.
+        if at == state.at && !jumped && !failed {
+            return;
+        }
+        state.at = at;
+        if failed {
+            state.chunks.remove(&at);
+        }
+        if jumped {
+            let soon = at..at + IN_FLIGHT as u64;
+            state.chunks.retain(|i, chunk| match chunk {
+                Chunk::Coming(_, task) if !soon.contains(i) => {
+                    task.abort();
+                    false
+                }
+                _ => true,
+            });
+        }
         self.fill(&mut state);
     }
 
-    /// Fetches the first wanted chunks not here, [`IN_FLIGHT`] at a time:
-    /// more at once would share the link and make the next one late. The
-    /// first, which the reader waits for, is always fetched.
+    /// Fetches the next chunks not here from where the reader is,
+    /// [`IN_FLIGHT`] at a time: more at once would share the link and make
+    /// the next one late. The one the reader waits for is always fetched.
+    /// Fetches hold the track only weakly, so they stop once nothing plays it.
     fn fill(self: &Arc<Self>, state: &mut Fetched) {
-        let coming = |state: &Fetched| {
-            let chunks = state.chunks.values();
-            chunks.filter(|c| matches!(c, Chunk::Coming(_))).count()
-        };
-        for i in state.wanted.clone() {
-            if i > state.wanted.start && coming(state) >= IN_FLIGHT {
+        let end = state.have.len() as u64;
+        let mut coming = (state.chunks.values())
+            .filter(|c| matches!(c, Chunk::Coming(..)))
+            .count();
+        for i in (state.at..end).chain(0..state.at) {
+            if i != state.at && coming >= IN_FLIGHT {
                 return;
             }
-            if state.chunks.contains_key(&i) {
+            if state.have[i as usize] || state.chunks.contains_key(&i) {
                 continue;
             }
             state.fetches += 1;
             let n = state.fetches;
-            state.chunks.insert(i, Chunk::Coming(n));
-            let remote = self.clone();
-            self.link.runtime.spawn(async move {
-                let fetched = remote.fetch(i).await;
-                let mut state = remote.state();
-                if let Some(chunk @ Chunk::Coming(_)) = state.chunks.get_mut(&i)
-                    && matches!(chunk, Chunk::Coming(m) if *m == n)
-                {
-                    *chunk = match fetched {
-                        // Bytes of another file would be spliced into this one.
-                        Ok((size, _)) if size != remote.len => {
-                            Chunk::Failed("the file changed on the linked engine".into())
-                        }
-                        Ok((_, bytes)) => Chunk::Here(bytes.into()),
-                        Err(err) => Chunk::Failed(err),
-                    };
+            let (link, track) = (self.link.clone(), Arc::downgrade(self));
+            let task = self.link.runtime.spawn(async move {
+                let id = link.id;
+                let fetched = |conn: Connection| async move {
+                    fetch(&conn, id, i * CHUNK, CHUNK as u32).await
+                };
+                let fetched = link.retry(fetched).await;
+                if let Some(remote) = track.upgrade() {
+                    remote.arrive(i, n, fetched);
                 }
-                remote.fill(&mut state);
-                remote.arrived.notify_all();
             });
+            state
+                .chunks
+                .insert(i, Chunk::Coming(n, task.abort_handle()));
+            coming += 1;
         }
     }
 
-    /// Chunk `i` once it is here. A lost link is an error, never a wait
-    /// longer than a dial and a [`STALL`] (and never an end of file, which
-    /// would end the track as if it were complete).
-    fn chunk(&self, i: u64) -> io::Result<Arc<[u8]>> {
+    /// Stores chunk `i` from fetch `n`, unless a later fetch replaced it.
+    fn arrive(self: &Arc<Self>, i: u64, n: u64, fetched: Result<(u64, Vec<u8>), String>) {
+        let mut state = self.state();
+        if !matches!(state.chunks.get(&i), Some(Chunk::Coming(m, _)) if *m == n) {
+            return;
+        }
+        let size = (self.len - i * CHUNK).min(CHUNK) as usize;
+        let stored = match fetched {
+            // Bytes of another file would be spliced into this one.
+            Ok((len, _)) if len != self.len => Err("the file changed on the linked engine".into()),
+            Ok((_, bytes)) if bytes.len() != size => {
+                Err("the linked engine sent a short range".into())
+            }
+            Ok((_, bytes)) => self.write(i, &bytes),
+            Err(err) => Err(err),
+        };
+        match stored {
+            Ok(()) => {
+                state.have[i as usize] = true;
+                // The link works: what failed is tried again.
+                state
+                    .chunks
+                    .retain(|&j, c| j != i && matches!(c, Chunk::Coming(..)));
+            }
+            Err(err) => {
+                state.chunks.insert(i, Chunk::Failed(err));
+            }
+        }
+        self.fill(&mut state);
+        self.arrived.notify_all();
+    }
+
+    /// Writes chunk `i` to the file, then marks it there.
+    fn write(&self, i: u64, bytes: &[u8]) -> Result<(), String> {
+        let mut files = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        let (data, marks) = &mut *files;
+        let written = data
+            .seek(SeekFrom::Start(i * CHUNK))
+            .and_then(|_| data.write_all(bytes))
+            .and_then(|_| marks.seek(SeekFrom::Start(i)))
+            .and_then(|_| marks.write_all(&[1]));
+        written.map_err(|err| match err.kind() {
+            io::ErrorKind::StorageFull => "the disk is full".into(),
+            _ => format!("can't store it here: {err}"),
+        })
+    }
+
+    /// Waits for chunk `i`. A lost link is an error, never a wait longer
+    /// than a dial and a [`STALL`] (and never an end of file, which would
+    /// end the track as if it were complete).
+    fn ready(&self, i: u64) -> io::Result<()> {
         let deadline = Instant::now() + DIAL + STALL + Duration::from_secs(1);
         let mut state = self.state();
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
+            if state.have[i as usize] {
+                return Ok(());
+            }
             match state.chunks.get(&i) {
-                Some(Chunk::Here(bytes)) => return Ok(bytes.clone()),
                 Some(Chunk::Failed(err)) => {
                     return Err(io::Error::new(
                         io::ErrorKind::ConnectionAborted,
                         err.clone(),
                     ));
                 }
-                Some(Chunk::Coming(_)) if !left.is_zero() => {
+                Some(Chunk::Coming(..)) if !left.is_zero() => {
                     state = self
                         .arrived
                         .wait_timeout(state, left)
@@ -688,10 +1011,40 @@ impl Remote {
             }
         }
     }
+
+    /// Reads from `pos` into `buf`, as far as the end of its chunk, once
+    /// that is here.
+    fn read_at(&self, pos: u64, buf: &mut [u8]) -> io::Result<usize> {
+        let i = pos / CHUNK;
+        self.ready(i)?;
+        let end = ((i + 1) * CHUNK).min(self.len);
+        let n = buf.len().min((end - pos) as usize);
+        let mut files = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        files.0.seek(SeekFrom::Start(pos))?;
+        files.0.read_exact(&mut buf[..n])?;
+        Ok(n)
+    }
 }
 
-/// Reads a linked engine's track as a file: from the chunks of its
-/// [`Remote`], fetching ahead while read straight through.
+impl Drop for Remote {
+    /// Deletes the file, unless it is kept or the track was opened again
+    /// since (it carries on with what is here).
+    fn drop(&mut self) {
+        if self.kept.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut open = self.store.lock();
+        let key = (self.link.key.clone(), self.link.id);
+        if open.get(&key).and_then(Weak::upgrade).is_none() {
+            open.remove(&key);
+            let path = self.store.path(&key.0, key.1);
+            let _ = std::fs::remove_file(path.with_extension("have"));
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Reads a linked engine's track as a file: from its [`Remote`]'s file.
 struct Reader {
     remote: Arc<Remote>,
     len: u64,
@@ -717,30 +1070,17 @@ impl Read for Reader {
             return Ok(0);
         }
         let at = self.pos / CHUNK;
-        // A jump (a seek probing the file) fetches only what it reads.
-        let ahead = if at == self.last || at == self.last + 1 {
-            AHEAD
-        } else {
-            0
-        };
-        self.last = at;
-        self.remote.want(at, ahead);
-        let chunk = self.remote.chunk(at)?;
-        let from = (self.pos - at * CHUNK) as usize;
-        let Some(bytes) = chunk.get(from..).filter(|b| !b.is_empty()) else {
-            return Err(io::Error::other("the linked engine sent a short range"));
-        };
-        let n = bytes.len().min(buf.len());
-        buf[..n].copy_from_slice(&bytes[..n]);
+        // Every decoder probing the file reads its first and last chunks:
+        // not a seek, so what it reads straight through after goes on.
+        let probe = at == 0 || at + 1 == self.len.div_ceil(CHUNK);
+        let jumped = !probe && at != self.last && at != self.last + 1;
+        if !probe {
+            self.last = at;
+        }
+        self.remote.want(at, jumped);
+        let n = self.remote.read_at(self.pos, buf)?;
         self.pos += n as u64;
         Ok(n)
-    }
-}
-
-impl Drop for Reader {
-    /// Stops reading ahead for it (another reader of the track may want on).
-    fn drop(&mut self) {
-        self.remote.state().wanted = 0..0;
     }
 }
 
@@ -835,16 +1175,225 @@ async fn packet(recv: &mut RecvStream) -> Result<Option<(u16, Vec<u8>)>, String>
         .unwrap_or_else(|_| Err("the linked engine stopped sending".into()))
 }
 
-/// A linked engine's track, encoded to Opus there as it is decoded here. A
-/// seek asks for it again from there.
+/// A linked engine's track encoded live, fetched whole (#282): a task takes
+/// its packets as fast as the owner encodes them, into a file of the
+/// [`Store`] and an index, and decoders read them from there, so playback
+/// rides out a lost link once they are here and a seek into them asks for
+/// nothing. Deleted once nothing plays it.
+struct Packets {
+    link: Arc<Link>,
+    channels: u8,
+    pre_skip: u16,
+    /// Where the packets start in the track.
+    from: Duration,
+    /// What they were asked on.
+    conn: Connection,
+    path: PathBuf,
+    file: Mutex<std::fs::File>,
+    got: Mutex<Got>,
+    arrived: Condvar,
+}
+
+#[derive(Default)]
+struct Got {
+    /// Each packet's place in the file, its length and the frames before
+    /// it (pre-skip included).
+    index: Vec<(u64, u16, u64)>,
+    /// Frames through the last packet.
+    frames: u64,
+    /// The end, or why they stopped coming.
+    end: Option<Result<(), String>>,
+    /// Coming: its turn to be encoded came.
+    started: bool,
+}
+
+/// One packet.
+struct Packet {
+    data: Vec<u8>,
+    /// Frames of audio in it ([`transcode::Packet::frames`]).
+    frames: u16,
+}
+
+impl Packets {
+    /// Takes the packets of `started` into a new file of `store`.
+    fn fetch(link: Arc<Link>, started: Started) -> io::Result<Arc<Self>> {
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = MADE.fetch_add(1, Ordering::Relaxed);
+        let store = &link.store;
+        std::fs::create_dir_all(&store.0.dir)?;
+        let path = store
+            .path(&link.key, link.id)
+            .with_extension(format!("{n}.live"));
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+        store.live_files().insert(path.clone());
+        let Started {
+            channels,
+            pre_skip,
+            from,
+            mut recv,
+            conn,
+        } = started;
+        let packets = Arc::new(Self {
+            link: link.clone(),
+            channels,
+            pre_skip,
+            from,
+            conn,
+            path,
+            file: Mutex::new(file),
+            got: Mutex::default(),
+            arrived: Condvar::new(),
+        });
+        let held = Arc::downgrade(&packets);
+        if from.is_zero() {
+            store
+                .encoded()
+                .insert((link.key.clone(), link.id), held.clone());
+        }
+        // A seek's packets come at once: the track is the one playing.
+        let turn = from.is_zero().then(|| store.encoder(&link.key));
+        link.runtime.spawn(async move {
+            let _turn = match turn {
+                Some(turn) => Some(turn.acquire_owned().await),
+                None => None,
+            };
+            match held.upgrade() {
+                Some(packets) => packets.got().started = true,
+                None => return,
+            }
+            loop {
+                let next = packet(&mut recv).await;
+                let Some(packets) = held.upgrade() else {
+                    return;
+                };
+                let end = match next {
+                    Ok(Some((frames, data))) => match packets.store(frames, &data) {
+                        Ok(()) => continue,
+                        Err(err) => Err(err),
+                    },
+                    Ok(None) => Ok(()),
+                    Err(err) => Err(err),
+                };
+                packets.got().end = Some(end);
+                packets.arrived.notify_all();
+                return;
+            }
+        });
+        Ok(packets)
+    }
+
+    fn got(&self) -> std::sync::MutexGuard<'_, Got> {
+        self.got.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn store(&self, frames: u16, data: &[u8]) -> Result<(), String> {
+        let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
+        let at = file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+        file.write_all(data).map_err(|err| match err.kind() {
+            io::ErrorKind::StorageFull => "the disk is full".to_string(),
+            _ => format!("can't store it here: {err}"),
+        })?;
+        drop(file);
+        let mut got = self.got();
+        let before = got.frames;
+        got.index.push((at, data.len() as u16, before));
+        got.frames += u64::from(frames);
+        drop(got);
+        self.arrived.notify_all();
+        Ok(())
+    }
+
+    /// Packet `i` once it is here; `None` after the last. Packets that
+    /// stopped coming are an error, as a lost link is to [`Remote::ready`].
+    fn packet(&self, i: usize) -> Result<Option<Packet>, String> {
+        let wait = DIAL + STALL + Duration::from_secs(1);
+        let mut deadline = Instant::now() + wait;
+        let mut got = self.got();
+        loop {
+            // Waiting for its turn isn't a lost link.
+            if !got.started {
+                deadline = Instant::now() + wait;
+            }
+            if let Some(&(at, len, before)) = got.index.get(i) {
+                let frames = got.index.get(i + 1).map_or(got.frames, |next| next.2) - before;
+                drop(got);
+                let mut data = vec![0; len.into()];
+                let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
+                file.seek(SeekFrom::Start(at))
+                    .and_then(|_| file.read_exact(&mut data))
+                    .map_err(|e| e.to_string())?;
+                return Ok(Some(Packet {
+                    data,
+                    frames: frames as u16,
+                }));
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            match &got.end {
+                Some(Ok(())) => return Ok(None),
+                Some(Err(err)) => return Err(err.clone()),
+                None if left.is_zero() => return Err("the linked engine stopped sending".into()),
+                None => {
+                    got = (self.arrived.wait_timeout(got, left))
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0
+                }
+            }
+        }
+    }
+
+    /// The frames before packet `i`, if it is here.
+    fn start(&self, i: usize) -> Option<u64> {
+        self.got().index.get(i).map(|p| p.2)
+    }
+
+    /// The packet holding frame `frame` (pre-skip included) if it is here,
+    /// and the frames before it.
+    fn find(&self, frame: u64) -> Option<(usize, u64)> {
+        let got = self.got();
+        if frame >= got.frames {
+            return None;
+        }
+        let i = got.index.partition_point(|&(_, _, before)| before <= frame) - 1;
+        Some((i, got.index[i].2))
+    }
+}
+
+impl Drop for Packets {
+    fn drop(&mut self) {
+        let store = &self.link.store;
+        let mut encoded = store.encoded();
+        let key = (self.link.key.clone(), self.link.id);
+        if encoded.get(&key).is_some_and(|p| p.upgrade().is_none()) {
+            encoded.remove(&key);
+        }
+        drop(encoded);
+        store.live_files().remove(&self.path);
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Packets decoded again before a seek's: the Opus decoder needs 80 ms to
+/// settle.
+const PREROLL: usize = 4;
+
+/// A linked engine's track, encoded to Opus there as it is decoded here,
+/// from its [`Packets`]. A seek into those here decodes from there; one
+/// past them asks for it again from that point.
 struct Live {
     link: Arc<Link>,
     quality: Quality,
-    started: Started,
+    packets: Arc<Packets>,
+    /// The packet decoded next.
+    next: usize,
     decoder: opus::Decoder,
-    /// Frames still to drop from the start.
+    /// Frames still to drop before the audio given out.
     skip: usize,
-    /// Frames of audio given out since [`Started::from`].
+    /// Frames of audio given out since [`Packets::from`].
     frames: u64,
     buffer: Vec<f32>,
 }
@@ -856,33 +1405,60 @@ impl Live {
         let asked = |conn: Connection| async move { ask(&conn, id, from, quality).await };
         let started = link.runtime.block_on(link.retry(asked));
         match started.map_err(io::Error::other)? {
-            Some(started) => Self::new(link, quality, started),
+            Some(started) => {
+                let packets = Packets::fetch(link.clone(), started)?;
+                Self::new(link, quality, packets)
+            }
             // Bytes of another file would follow on from this one's.
             None => Err(io::Error::other("the file changed on the linked engine")),
         }
     }
 
-    fn new(link: Arc<Link>, quality: Quality, started: Started) -> io::Result<Self> {
-        let layout = match started.channels {
-            1 => opus::Channels::Mono,
-            2 => opus::Channels::Stereo,
-            n => return Err(io::Error::other(format!("{n}-channel Opus"))),
-        };
-        let decoder = opus::Decoder::new(transcode::RATE, layout).map_err(io::Error::other)?;
+    fn new(link: Arc<Link>, quality: Quality, packets: Arc<Packets>) -> io::Result<Self> {
         Ok(Self {
             link,
             quality,
-            skip: started.pre_skip.into(),
-            buffer: vec![0.0; transcode::FRAME * usize::from(started.channels)],
-            started,
-            decoder,
+            skip: packets.pre_skip.into(),
+            buffer: vec![0.0; transcode::FRAME * usize::from(packets.channels)],
+            decoder: Self::decoder(packets.channels)?,
+            packets,
+            next: 0,
             frames: 0,
         })
     }
 
+    fn decoder(channels: u8) -> io::Result<opus::Decoder> {
+        let layout = match channels {
+            1 => opus::Channels::Mono,
+            2 => opus::Channels::Stereo,
+            n => return Err(io::Error::other(format!("{n}-channel Opus"))),
+        };
+        opus::Decoder::new(transcode::RATE, layout).map_err(io::Error::other)
+    }
+
     fn position(&self) -> Duration {
         let rate = f64::from(transcode::RATE);
-        self.started.from + Duration::from_secs_f64(self.frames as f64 / rate)
+        self.packets.from + Duration::from_secs_f64(self.frames as f64 / rate)
+    }
+
+    /// Decodes from the packet before `to` that is here, if it is: where
+    /// that leaves it.
+    fn seek_here(&mut self, to: Duration) -> Option<Duration> {
+        let packets = &self.packets;
+        let rate = f64::from(transcode::RATE);
+        let pre_skip = u64::from(packets.pre_skip);
+        let audio = (to.checked_sub(packets.from)?.as_secs_f64() * rate) as u64;
+        let (at, start) = packets.find(audio + pre_skip)?;
+        let begin = at.saturating_sub(PREROLL);
+        let begun = packets.start(begin)?;
+        let decoder = Self::decoder(packets.channels).ok()?;
+        // Out from the start of that packet (never in the pre-skip).
+        let out = start.max(pre_skip);
+        self.decoder = decoder;
+        self.next = begin;
+        self.skip = (out - begun) as usize;
+        self.frames = out - pre_skip;
+        Some(self.position())
     }
 }
 
@@ -892,25 +1468,25 @@ impl Decoder for Live {
     }
 
     fn channels(&self) -> usize {
-        self.started.channels.into()
+        self.packets.channels.into()
     }
 
     fn decode(&mut self, out: &mut Vec<f32>) -> Result<bool, String> {
-        let runtime = self.link.runtime.clone();
-        let packet = match runtime.block_on(packet(&mut self.started.recv)) {
+        let packet = match self.packets.packet(self.next) {
             // Its connection closed (the owner restarted or dropped it): on
             // from here over a new one.
-            Err(_) if self.started.conn.close_reason().is_some() => {
+            Err(_) if self.packets.conn.close_reason().is_some() => {
                 let at = self.position();
                 *self =
                     Self::open(self.link.clone(), self.quality, at).map_err(|e| e.to_string())?;
-                runtime.block_on(packet(&mut self.started.recv))?
+                self.packets.packet(self.next)?
             }
             packet => packet?,
         };
-        let Some((frames, data)) = packet else {
+        let Some(Packet { data, frames }) = packet else {
             return Ok(false);
         };
+        self.next += 1;
         let decoded = self
             .decoder
             .decode_float(&data, &mut self.buffer, false)
@@ -925,18 +1501,21 @@ impl Decoder for Live {
     }
 
     fn seek(&mut self, to: Duration) -> Result<Duration, String> {
+        if let Some(reached) = self.seek_here(to) {
+            return Ok(reached);
+        }
         *self = Self::open(self.link.clone(), self.quality, to).map_err(|e| e.to_string())?;
-        Ok(self.started.from)
+        Ok(self.packets.from)
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr};
 
     /// `seconds` of 16-bit stereo noise at 44.1 kHz (CD bitrate, 1411 kb/s).
-    fn wav(seconds: u32) -> Vec<u8> {
+    pub(crate) fn wav(seconds: u32) -> Vec<u8> {
         let mut state = 1u32;
         let data: Vec<u8> = (0..seconds * 44_100 * 4)
             .map(|_| {
@@ -963,8 +1542,19 @@ mod tests {
         wav
     }
 
+    /// A store of its own.
+    fn test_store() -> Store {
+        static MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = MADE.fetch_add(1, Ordering::Relaxed);
+        let dir = format!("motif-store-{n}-{}", std::process::id());
+        Store::new(std::env::temp_dir().join(dir))
+    }
+
     /// A library holding `files` (name, bytes), and its folder.
-    async fn library(name: &str, files: &[(&str, Vec<u8>)]) -> (Library, std::path::PathBuf) {
+    pub(crate) async fn library(
+        name: &str,
+        files: &[(&str, Vec<u8>)],
+    ) -> (Library, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("motif-files-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let music = dir.join("music");
@@ -990,7 +1580,7 @@ mod tests {
     }
 
     /// The owner's ids for its tracks, oldest first.
-    fn ids(library: &Library) -> Vec<i64> {
+    pub(crate) fn ids(library: &Library) -> Vec<i64> {
         let page = library.catalog_page(&Default::default(), 100).unwrap();
         page.changes.iter().map(|c| c.id).collect()
     }
@@ -1028,7 +1618,7 @@ mod tests {
         tokio::spawn(async move {
             while let Some((alpn, conn)) = serving.accept().await {
                 assert_eq!(alpn, Alpn::Files);
-                tokio::spawn(serve(library.clone(), conn, linked.clone(), pace));
+                tokio::spawn(serve(library.clone(), conn, linked.clone(), pace.clone()));
             }
         });
         (owner, reader)
@@ -1079,7 +1669,13 @@ mod tests {
     async fn a_file_changed_on_its_owner_fails_rather_than_mixing() {
         let (library, dir) = library("changed", &[("a.wav", wav(5))]).await;
         let id = ids(&library)[0];
-        let (owner, reader) = pair(library, None).await;
+        // Slow, so the rest of it is still to come after the change.
+        let pace = Pace {
+            rate: 1 << 30,
+            latency: Duration::from_millis(500),
+            ..Default::default()
+        };
+        let (owner, reader) = pair(library, Some(pace)).await;
         let stream = open(&owner, &reader, id).await.unwrap();
         std::fs::write(dir.join("music/a.wav"), wav(6)).unwrap();
         let (_, read) = blocking(stream, |r| read_at(r, 10 * CHUNK, 10)).await;
@@ -1100,7 +1696,17 @@ mod tests {
 
     /// [`open`], redialling where `locate` says.
     async fn open_with(owner: &Net, locate: Locate, id: i64) -> Result<Reader, String> {
-        match dialled(owner, locate, id, Quality::Original).await? {
+        open_in(&test_store(), owner, locate, id).await
+    }
+
+    /// [`open_with`], fetched into `store`.
+    async fn open_in(
+        store: &Store,
+        owner: &Net,
+        locate: Locate,
+        id: i64,
+    ) -> Result<Reader, String> {
+        match dialled_in(store, owner, locate, id, Quality::Original).await? {
             Dialled::Original(remote) => Ok(Reader::new(remote.clone(), remote.len)),
             Dialled::Opus(..) => panic!("encoded on the LAN"),
         }
@@ -1113,9 +1719,241 @@ mod tests {
         id: i64,
         quality: Quality,
     ) -> Result<Dialled, String> {
+        dialled_in(&test_store(), owner, locate, id, quality).await
+    }
+
+    async fn dialled_in(
+        store: &Store,
+        owner: &Net,
+        locate: Locate,
+        id: i64,
+        quality: Quality,
+    ) -> Result<Dialled, String> {
         let (net, at) = locate()?;
         let from = ("Owner".into(), watch::channel(None).0);
-        connect(&net, &owner.key(), &at, id, locate, &|_| quality, from).await
+        connect(
+            store,
+            &net,
+            (&owner.key(), &at),
+            id,
+            locate,
+            &|_| quality,
+            from,
+        )
+        .await
+    }
+
+    /// Where `reader` dials `owner`.
+    fn locate_at(owner: &Net, reader: &Net) -> Locate {
+        let (net, at) = (reader.clone(), loopback(owner));
+        Arc::new(move || Ok((net.clone(), at.clone())))
+    }
+
+    async fn whole(remote: &Arc<Remote>) {
+        let remote = remote.clone();
+        until("fetched whole", move || remote.whole()).await;
+    }
+
+    /// The files in `store` (without their marks).
+    fn stored(store: &Store) -> usize {
+        let Ok(dir) = std::fs::read_dir(&store.0.dir) else {
+            return 0;
+        };
+        dir.filter(|f| {
+            let path = f.as_ref().unwrap().path();
+            path.extension().is_none()
+        })
+        .count()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_plays_to_its_end_through_an_outage_once_its_bytes_are_here() {
+        // 3.5 MB: more than the old 2 MiB read-ahead.
+        let file = wav(20);
+        let (library, dir) = library("outage", &[("a.wav", file.clone())]).await;
+        let id = ids(&library)[0];
+        let (owner, reader) = pair(library, None).await;
+        let stream = open(&owner, &reader, id).await.unwrap();
+        whole(&stream.remote).await;
+        owner.close().await;
+        let (_, all) = blocking(stream, |r| {
+            let mut all = Vec::new();
+            r.read_to_end(&mut all).map(|_| all)
+        })
+        .await;
+        assert!(all.unwrap() == file, "read differs from the file");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_next_track_is_whole_before_the_current_one_ends() {
+        let files = [("1.wav", wav(4)), ("2.wav", wav(4))];
+        let (library, dir) = library("next", &files).await;
+        let (first, then) = (id_of(&library, "1.wav"), id_of(&library, "2.wav"));
+        // 1 MB/s: under four times the two tracks' bitrate.
+        let pace = Pace {
+            rate: 1_000_000,
+            latency: Duration::from_millis(20),
+            ..Default::default()
+        };
+        let (owner, reader) = pair(library, Some(pace)).await;
+        let current = open(&owner, &reader, first).await.unwrap();
+        let next = open(&owner, &reader, then).await.unwrap();
+        // Read as it plays: 4 s of CD audio.
+        let (_, ended) = blocking(current, move |r| {
+            let mut buf = vec![0; 44_100 * 4 / 10];
+            loop {
+                match r.read(&mut buf)? {
+                    0 => return io::Result::Ok(next.remote.whole()),
+                    _ => std::thread::sleep(Duration::from_millis(100)),
+                }
+            }
+        })
+        .await;
+        assert!(
+            ended.unwrap(),
+            "the next track wasn't whole when this one ended"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_seek_into_what_is_here_asks_for_nothing() {
+        let file = wav(10);
+        let (library, dir) = library("here", &[("a.wav", file.clone())]).await;
+        let id = ids(&library)[0];
+        let pace = Pace {
+            rate: 1 << 30,
+            ..Default::default()
+        };
+        let served = pace.served.clone();
+        let (owner, reader) = pair(library, Some(pace)).await;
+        let stream = open(&owner, &reader, id).await.unwrap();
+        whole(&stream.remote).await;
+        let asked = served.lock().unwrap().len();
+        let (_, read) = blocking(stream, |r| {
+            let mut bytes = Vec::new();
+            for at in [20 * CHUNK, 0, 15 * CHUNK + 7] {
+                bytes.push(read_at(r, at, 1000)?);
+            }
+            io::Result::Ok(bytes)
+        })
+        .await;
+        let read = read.unwrap();
+        assert!(read[2] == file[15 * CHUNK as usize + 7..][..1000]);
+        assert_eq!(served.lock().unwrap().len(), asked, "asked the owner again");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_seek_past_what_is_here_is_fetched_before_any_read_ahead() {
+        let file = wav(20);
+        let (library, dir) = library("past", &[("a.wav", file.clone())]).await;
+        let id = ids(&library)[0];
+        // Every range answers late, so reads ahead are still coming at the seek.
+        let latency = Duration::from_secs(2);
+        let pace = Pace {
+            rate: 1 << 30,
+            latency,
+            ..Default::default()
+        };
+        let served = pace.served.clone();
+        let (owner, reader) = pair(library, Some(pace)).await;
+        let stream = open(&owner, &reader, id).await.unwrap();
+        let (_, read) = blocking(stream, move |r| {
+            read_at(r, 0, 10)?;
+            let seeking = Instant::now();
+            let read = read_at(r, 40 * CHUNK, 10)?;
+            io::Result::Ok((read, seeking.elapsed()))
+        })
+        .await;
+        let (read, took) = read.unwrap();
+        assert_eq!(read, file[40 * CHUNK as usize..][..10]);
+        // Not behind the reads ahead from the start.
+        assert!(took < latency + Duration::from_secs(1), "took {took:?}");
+        let served = served.lock().unwrap().clone();
+        // Asked at once, so they may arrive in any order.
+        let after = served.iter().find(|&&at| at >= 5 * CHUNK);
+        let soon = 40 * CHUNK..(40 + IN_FLIGHT as u64) * CHUNK;
+        assert!(after.is_some_and(|at| soon.contains(at)), "{served:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_store_holds_only_the_tracks_open_and_those_kept() {
+        let files = [("1.wav", wav(2)), ("2.wav", wav(2)), ("3.wav", wav(2))];
+        let (library, dir) = library("held", &files).await;
+        let ids = ids(&library);
+        let (owner, reader) = pair(library, None).await;
+        let store = test_store();
+        let mut open = Vec::new();
+        for &id in &ids {
+            open.push(
+                open_in(&store, &owner, locate_at(&owner, &reader), id)
+                    .await
+                    .unwrap(),
+            );
+        }
+        assert_eq!(stored(&store), 3);
+        // The current track ended: the next one and the one after it stay.
+        drop(open.remove(0));
+        assert_eq!(stored(&store), 2);
+        // A download's stays when nothing plays it.
+        open[0].remote.kept.store(true, Ordering::Relaxed);
+        open.clear();
+        assert_eq!(stored(&store), 1);
+        let _ = std::fs::remove_dir_all(&store.0.dir);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_interrupted_fetch_resumes_and_is_safe_to_repeat() {
+        let file = wav(10);
+        let (library, dir) = library("resume", &[("a.wav", file.clone())]).await;
+        let id = ids(&library)[0];
+        // About 3 s for the whole file.
+        let pace = Pace {
+            rate: 600_000,
+            ..Default::default()
+        };
+        let served = pace.served.clone();
+        let (owner, reader) = pair(library, Some(pace)).await;
+        let store = test_store();
+        let stream = open_in(&store, &owner, locate_at(&owner, &reader), id)
+            .await
+            .unwrap();
+        let chunks = file.len().div_ceil(CHUNK as usize);
+        let remote = stream.remote.clone();
+        let here = move || remote.state().have.iter().filter(|&&h| h).count();
+        until("some of it here", || here() >= 10).await;
+        assert!(here() < chunks, "fetched whole already");
+        // Stopped, kept (as a download is), then opened again.
+        stream.remote.kept.store(true, Ordering::Relaxed);
+        drop((stream, here));
+        let again = open_in(&store, &owner, locate_at(&owner, &reader), id)
+            .await
+            .unwrap();
+        // Opened twice, fetched once.
+        let twice = open_in(&store, &owner, locate_at(&owner, &reader), id)
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&again.remote, &twice.remote));
+        whole(&again.remote).await;
+        // Each chunk once, but those on their way when it stopped and the
+        // first, which says the size on opening again.
+        let asked = served.lock().unwrap().len();
+        assert!(
+            asked <= chunks + IN_FLIGHT + 2,
+            "{asked} ranges for {chunks}"
+        );
+        let (_, all) = blocking(again, |r| {
+            let mut all = Vec::new();
+            r.read_to_end(&mut all).map(|_| all)
+        })
+        .await;
+        assert!(all.unwrap() == file, "read differs from the file");
+        let _ = std::fs::remove_dir_all(&store.0.dir);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1208,6 +2046,7 @@ mod tests {
         let pace = Pace {
             rate: 1 << 30,
             latency: Duration::from_millis(500),
+            ..Default::default()
         };
         let (owner, reader) = pair(library, Some(pace)).await;
         let stream = open(&owner, &reader, id).await.unwrap();
@@ -1246,6 +2085,7 @@ mod tests {
         let pace = Pace {
             rate: 200_000,
             latency: Duration::ZERO,
+            ..Default::default()
         };
         let (owner, reader) = pair(library, Some(pace)).await;
         let stream = open(&owner, &reader, id).await.unwrap();
@@ -1281,7 +2121,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    async fn until(what: &str, done: impl Fn() -> bool) {
+    pub(crate) async fn until(what: &str, done: impl Fn() -> bool) {
         tokio::time::timeout(Duration::from_secs(20), async {
             while !done() {
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1292,7 +2132,7 @@ mod tests {
     }
 
     /// What `library` lists, as queue references.
-    fn tracks(library: &Library) -> Vec<protocol::TrackRef> {
+    pub(crate) fn tracks(library: &Library) -> Vec<protocol::TrackRef> {
         let query = protocol::LibraryQuery::Tracks {
             search: None,
             sort: vec![],
@@ -1495,6 +2335,129 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn off_the_lan_a_track_plays_and_seeks_through_a_drop_mid_track_once_its_packets_are_here()
+     {
+        let (library, dir) = library("live", &[("a.flac", tone("flac", &[]))]).await;
+        let id = ids(&library)[0];
+        let (owner, reader) = pair(library, None).await;
+        let store = test_store();
+        let opened = dialled_in(
+            &store,
+            &owner,
+            locate_at(&owner, &reader),
+            id,
+            Quality::Opus256,
+        );
+        let Ok(dialled @ Dialled::Opus(..)) = opened.await else {
+            panic!("not encoded");
+        };
+        let Dialled::Opus(_, _, packets) = &dialled else {
+            unreachable!()
+        };
+        let here = packets.clone();
+        until("all here", move || matches!(here.got().end, Some(Ok(())))).await;
+        let file = packets.path.clone();
+        let runtime = Handle::current();
+        let decoded = tokio::task::spawn_blocking(move || {
+            let Ok(Opened::Decoded(mut decoder)) = dialled.open() else {
+                panic!("not decoded");
+            };
+            let mut samples = Vec::new();
+            while samples.len() < 48_000 * 2 {
+                decoder.decode(&mut samples)?;
+            }
+            // A second in, the link drops for good.
+            runtime.block_on(owner.close());
+            while decoder.decode(&mut samples)? {}
+            let frames = samples.len() / decoder.channels();
+            // Back into what is here: nothing to ask for, and nobody to ask.
+            let reached = decoder.seek(Duration::from_millis(1500))?;
+            samples.clear();
+            while decoder.decode(&mut samples)? {}
+            let after = samples.len() / decoder.channels();
+            Ok::<_, String>((frames, reached, after))
+        })
+        .await
+        .unwrap();
+        let (frames, reached, after) = decoded.unwrap();
+        assert!(frames.abs_diff(3 * 48_000) <= 2, "{frames} frames");
+        let near = reached.abs_diff(Duration::from_millis(1500)) <= Duration::from_millis(20);
+        assert!(near, "reached {reached:?}");
+        let left = (Duration::from_secs(3) - reached).as_secs_f64() * 48_000.0;
+        assert!(
+            (after as f64 - left).abs() <= 2.0,
+            "{after} frames after the seek"
+        );
+        // Gone with the stream.
+        assert!(!file.exists(), "{} kept", file.display());
+        let _ = std::fs::remove_dir_all(&store.0.dir);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Opus 256 of linked engine `owner`'s track `id`, fetched into `store`.
+    async fn encoded(store: &Store, owner: &Net, reader: &Net, id: i64) -> (Dialled, Arc<Packets>) {
+        let opened = dialled_in(store, owner, locate_at(owner, reader), id, Quality::Opus256);
+        let dialled = opened.await.unwrap();
+        let Dialled::Opus(_, _, packets) = &dialled else {
+            panic!("not encoded");
+        };
+        let packets = packets.clone();
+        (dialled, packets)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_engine_encodes_one_track_at_a_time_for_another() {
+        // 23 s each, so encoding takes a while.
+        let long = || tone("flac", &["-af", "apad=pad_dur=20"]);
+        let files = [("1.flac", long()), ("2.flac", long())];
+        let (library, dir) = library("turns", &files).await;
+        let (first, then) = (id_of(&library, "1.flac"), id_of(&library, "2.flac"));
+        let (owner, reader) = pair(library, None).await;
+        let store = test_store();
+        // The current track and the next, opened at once.
+        let (_current, current) = encoded(&store, &owner, &reader, first).await;
+        let (_next, next) = encoded(&store, &owner, &reader, then).await;
+        while current.got().end.is_none() {
+            assert!(!next.got().started, "both encoded at once");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let done = next.clone();
+        until("the next encoded", move || {
+            matches!(done.got().end, Some(Ok(())))
+        })
+        .await;
+        let _ = std::fs::remove_dir_all(&store.0.dir);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_streamed_off_the_lan_downloads_without_being_fetched_again() {
+        let (library, dir) = library("reuse", &[("a.flac", tone("flac", &[]))]).await;
+        let id = ids(&library)[0];
+        let (owner, reader) = pair(library, None).await;
+        // Not connected to any engine: one dial would fail.
+        let pairing = Pairing::in_memory();
+        let store = pairing.store();
+        let (_playing, packets) = encoded(&store, &owner, &reader, id).await;
+        let copies = [(owner.key(), id)];
+        let tags = [("TITLE".to_string(), "Tone".to_string())];
+        let (path, encoded) = fetch_whole(&pairing, &copies, Quality::Opus256, &tags)
+            .await
+            .unwrap();
+        assert!(encoded);
+        let source = path.clone().into();
+        let mut decoder =
+            engine::audio::decoder::open(&source, &engine::audio::decoder::all()).unwrap();
+        let mut samples = Vec::new();
+        while decoder.decode(&mut samples).unwrap() {}
+        let frames = samples.len() / decoder.channels();
+        assert!(frames.abs_diff(3 * 48_000) <= 2, "{frames} frames");
+        drop(packets);
+        let _ = std::fs::remove_dir_all(&store.0.dir);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn an_encoded_copy_carries_its_sources_audio_hash() {
         let (library, dir) = library("hash", &[("a.flac", tone("flac", &[]))]).await;
         let id = ids(&library)[0];
@@ -1637,6 +2600,7 @@ mod tests {
             let pace = Pace {
                 rate: kbps * 1000 / 8,
                 latency: Duration::from_millis(latency),
+                ..Default::default()
             };
             let (owner, reader) = pair(library.clone(), Some(pace)).await;
             let (key, addr, runtime) = (owner.key(), loopback(&owner), Handle::current());
@@ -1646,9 +2610,9 @@ mod tests {
                     let (net, at) = (reader.clone(), addr.clone());
                     let locate: Locate = Arc::new(move || Ok((net.clone(), at.clone())));
                     let connected = runtime.block_on(connect(
+                        &test_store(),
                         &reader,
-                        &key,
-                        &addr,
+                        (&key, &addr),
                         id,
                         locate,
                         &|_| Quality::Original,

@@ -12,6 +12,7 @@
 
 mod art;
 mod catalog;
+mod downloads;
 mod files;
 mod lan;
 mod links;
@@ -113,6 +114,9 @@ pub async fn bind(
     let (pairing, library) = (config.pairing.clone(), config.library.clone());
     let app = app(live, config);
     let (tunnels, tunnelled) = tunnel::serve(app.clone());
+    if let Some(library) = &library {
+        tokio::spawn(downloads::run(library.clone(), pairing.clone()));
+    }
     let links = links::run(pairing, addr.port(), library, Some(tunnels));
     let app = app.into_make_service_with_connect_info::<SocketAddr>();
     Ok((addr, async move {
@@ -456,7 +460,8 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | LibraryQuery::Waveform { .. }
             | LibraryQuery::Lyrics { .. }
             | LibraryQuery::Playlists
-            | LibraryQuery::PlaylistTracks { .. } => None,
+            | LibraryQuery::PlaylistTracks { .. }
+            | LibraryQuery::Downloaded => None,
             LibraryQuery::Play { .. }
             | LibraryQuery::PlayAlbum { .. }
             | LibraryQuery::PlayFolder { .. }
@@ -473,7 +478,9 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | LibraryQuery::DeletePlaylist { .. }
             | LibraryQuery::AddToPlaylist { .. }
             | LibraryQuery::RemoveFromPlaylist { .. }
-            | LibraryQuery::MovePlaylistItem { .. } => Some(Scope::Library),
+            | LibraryQuery::MovePlaylistItem { .. }
+            | LibraryQuery::SetDownloaded { .. }
+            | LibraryQuery::SetDownloadFolder { .. } => Some(Scope::Library),
         },
         ClientMessage::Subscribe { .. } => None,
         ClientMessage::SetIntegrations { .. } => Some(Scope::Settings),

@@ -404,7 +404,12 @@ fn hash_next(shared: &Shared, conn: &Connection) -> bool {
         .ok()
         .flatten();
     let Some((id, path)) = next else { return false };
-    let result = match hash::audio_hash(Path::new(&path)) {
+    // A downloaded copy shares its source's audio, whatever it was encoded as.
+    let hashed = match crate::downloads::source_hash(conn, &path) {
+        Some(hash) => Ok(hash),
+        None => hash::audio_hash(Path::new(&path)),
+    };
+    let result = match hashed {
         Ok(hash) => conn
             .execute(
                 "UPDATE tracks SET audio_hash = ?1 WHERE id = ?2",

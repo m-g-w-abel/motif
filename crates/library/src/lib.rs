@@ -11,6 +11,7 @@
 mod ratings;
 pub mod catalog;
 mod db;
+pub mod downloads;
 mod hash;
 mod history;
 mod loudness;
@@ -126,11 +127,13 @@ impl Library {
         std::thread::Builder::new()
             .name("library-scan".into())
             .spawn(move || scan::run(thread_shared, scanner_conn, requests, notify_tx))?;
-        Ok(Self {
+        let library = Self {
             conn: Arc::new(Mutex::new(conn)),
             shared,
             scanner,
-        })
+        };
+        library.set_download_status(0, None);
+        Ok(library)
     }
 
     /// Holds (or lets go of) background work: audio hashing and thumbnails.
@@ -391,6 +394,20 @@ impl Library {
                     offset: 0,
                     tracks,
                 }
+            }
+            LibraryQuery::Downloaded => {
+                drop(conn);
+                self.downloaded()?
+            }
+            LibraryQuery::SetDownloaded { member, downloaded } => {
+                drop(conn);
+                self.set_downloaded(&member, downloaded)?;
+                QueryResult::Done
+            }
+            LibraryQuery::SetDownloadFolder { path } => {
+                drop(conn);
+                self.set_download_folder(&path)?;
+                QueryResult::Done
             }
             LibraryQuery::Playlists => QueryResult::Playlists {
                 playlists: playlists::list(&conn)?,

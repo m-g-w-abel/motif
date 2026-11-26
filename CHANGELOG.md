@@ -5,6 +5,16 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
+- **Downloads for offline listening**: each device has a Downloaded group.
+  Playlists (their edits follow), albums, artists (their later albums too)
+  and songs added to it download from your other devices to Music/Motif, as
+  Opus 256 kbps by default, and play from there; taking them out deletes the
+  copies nothing else in the group needs. Only the engine side is in so far;
+  the screens come next.
+- **Streams ride out a dropped connection**: a song streamed from a linked
+  device, and the next one, are fetched whole to a cache on disk, so a short
+  network drop no longer stops playback and seeking within what has arrived
+  is instant. Cached songs are deleted once they're neither playing nor next.
 - **Control your desktop from anywhere**: a phone (or another desktop) whose
   engine is linked keeps controlling it away from home, over the same
   encrypted link, with the same permissions as at home. The connection shows

@@ -48,6 +48,7 @@ const QUERY_SCOPES: Record<LibraryQuery['type'], Scope | null> = {
   lyrics: null,
   playlists: null,
   playlist_tracks: null,
+  downloaded: null,
   play: 'playback',
   play_album: 'playback',
   play_folder: 'playback',
@@ -65,6 +66,8 @@ const QUERY_SCOPES: Record<LibraryQuery['type'], Scope | null> = {
   add_to_playlist: 'library',
   remove_from_playlist: 'library',
   move_playlist_item: 'library',
+  set_downloaded: 'library',
+  set_download_folder: 'library',
 };
 
 export const queryScope = (query: LibraryQuery): Scope | null => QUERY_SCOPES[query.type];

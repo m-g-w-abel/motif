@@ -110,15 +110,23 @@ control isn't an add-on: it's the normal code path.
   not on this device carry a mark, dim while no device holding them is
   reachable, and one filter limits every list to this device.
 - Songs held only by a linked engine play by streaming from it: the
-  original on the LAN, as byte-range reads over iroh with ordered
-  read-ahead, so decoders seek in it as in a file and the next track still
-  starts gaplessly. Away from home, lossless and high-bitrate files come as
+  original on the LAN, as byte-range reads over iroh, so decoders seek in it
+  as in a file and the next track still starts gaplessly. The current and
+  next tracks are fetched whole into an on-disk cache (the range the decoder
+  needs first, stale read-ahead dropped on a seek), so playback rides out a
+  dropped link and a seek into what's fetched is a local read. Away from home, lossless and high-bitrate files come as
   Opus 256 (128 on a metered phone network), encoded live from the point
   played at over 100× real time; lossy files at or below that come as they
   are. All settable, Original included. Now Playing's file info shows what
   arrives (Opus marked transcoded), the engine and, off the LAN, whether
   direct or relayed, updated as that changes. A song whose device can't be
   reached stops playback with Retry (or is skipped, counted, if set).
+- A **Downloaded** group per device: playlists (following their edits),
+  albums, artists (later albums too) and single songs from linked engines
+  are downloaded to Music/Motif at the download quality (Opus 256 by
+  default, written as Ogg Opus with its tags), scanned in as the same track
+  as the source (by audio hash) so they're never streamed, and deleted when
+  no member needs them. Interrupted downloads resume from the chunks on disk.
 - Away from home, the app controls a linked engine over the same link: it
   tries the LAN first, then tunnels the same WebSocket protocol over an
   iroh stream through a loopback proxy, with the same token and scopes
