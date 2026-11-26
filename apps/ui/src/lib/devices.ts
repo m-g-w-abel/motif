@@ -1,9 +1,10 @@
 import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { PairingState } from './protocol/PairingState';
+import type { TrackRef } from './protocol/TrackRef';
 
 /** Whether a track's audio is on linked engines, not this one: a row of their catalog (`remote:<key>:<id>`). */
-export function elsewhere(track: LibraryTrack): boolean {
-  return track.track.id.startsWith('remote:');
+export function elsewhere({ track }: { track: TrackRef }): boolean {
+  return track.id.startsWith('remote:');
 }
 
 /**

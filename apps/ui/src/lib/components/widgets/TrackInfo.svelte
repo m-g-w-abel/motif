@@ -38,12 +38,15 @@
       details,
       details?.codec ?? (track ? trackFormat(track) : ''),
       playing ? engine.player?.streamed : null,
-      playing && !!details && elsewhere(details),
+      playing && !!track && elsewhere({ track }),
     ),
   );
   const format = $derived(shown.format);
-  /** A song from elsewhere whose stream isn't known yet: its badge keeps its place, unseen, so nothing moves when it shows. */
-  const pending = $derived(playing && !!details && elsewhere(details) && !engine.player?.streamed);
+  /**
+   * The badge keeps its place, unseen, so nothing moves when it shows: while the playing song's details are looked up
+   * (rather than a shorter guess from its file name), and for a song from elsewhere until it's known how it streams.
+   */
+  const pending = $derived(playing && (details === undefined || (!!track && elsewhere({ track }) && !engine.player?.streamed)));
   const transcoded = $derived(playing && !!engine.player?.streamed && engine.player.streamed.sent !== 'original');
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(
@@ -89,7 +92,7 @@
     {#if track}
       <p class="hero-album" data-enter="fade">
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
-        {#if format || pending}<span class="format" class:pending><span class="rates">{rates}</span>{format || '\u00a0'}</span>{/if}
+        {#if format || pending}<span class="format" class:pending>{#if pending}{'\u00a0'}{:else}<span class="rates">{rates}</span>{format}{/if}</span>{/if}
       </p>
       {#if shown.device || pending}<p class="device" class:pending data-enter="fade"><Icon name="cloud" size={12} /> {shown.device}</p>{/if}
       {#if playing && details && engine.can('library')}
@@ -216,8 +219,10 @@
     transition: opacity 260ms;
   }
 
+  /* Hidden at once, shown with the fade. */
   .pending {
     opacity: 0;
+    transition: none;
   }
 
   .marks {
