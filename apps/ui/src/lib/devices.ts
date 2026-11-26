@@ -58,7 +58,7 @@ export interface DeviceRow {
   /** In this app's switcher, so this app can control it. */
   saved: SavedEngine | null;
   linked: boolean;
-  /** How it is reached now: null where this can't tell (an engine only this app knows). */
+  /** How it is reached now, from the link to it; null where there is none (not linked, or an engine only this app knows). */
   reach: Reach | null;
 }
 
@@ -75,7 +75,7 @@ export function deviceRows(engines: SavedEngine[], devices: PairedDevice[], link
     const row = rows.get(key) ?? { key, name: device.name, browser: !device.public_key, device: null, saved: null, linked: false, reach: null };
     row.device = device;
     row.linked = !!device.public_key && device.scopes.includes('sync');
-    row.reach = links.find((l) => l.device === device.id)?.reach ?? 'unreachable';
+    row.reach = links.find((l) => l.device === device.id)?.reach ?? null;
     rows.set(key, row);
   }
   return [...rows.values()];

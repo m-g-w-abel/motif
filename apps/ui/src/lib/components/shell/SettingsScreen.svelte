@@ -32,7 +32,7 @@
   import { engines } from '../../engine.svelte';
   import { GROUP_INFO, phoneGroups, searchSettings } from '../../settingsSearch';
   import { SETTINGS_GROUPS } from '../../settingsView.svelte';
-  import { switchTo } from '../../engines';
+  import { LOCAL_ID, switchTo } from '../../engines';
   import { deviceRows } from '../../devices';
   import WindowButtons from './WindowButtons.svelte';
 
@@ -341,7 +341,7 @@
                 </select>
               {/if}
               {#if saved}<button class="button" onclick={() => engines.update((list) => switchTo(list, saved.id))}>Switch to</button>{/if}
-              <button class="button" onclick={() => (removing = row.key)}>Remove</button>
+              {#if device || saved?.id !== LOCAL_ID}<button class="button" onclick={() => (removing = row.key)}>Remove</button>{/if}
               </span>
               {#if removing === row.key}
                 <p class="status confirm">
@@ -365,15 +365,17 @@
                 {#if row.linked}<span class="badge syncs" title="Shares its library and synced data with this device">⇄ linked</span>{/if}
                 {#if row.reach}
                   <span class:online={row.reach !== 'unreachable'} title="Over the encrypted link between the engines">{REACH[row.reach]}</span>
-                {:else}
-                  <span>Status unknown</span>
                 {/if}
                 {#if connections.length}
                   <span class="online">● Connected now</span>
                   {#each connections as c (c.id)}
                     <button class="link" title="Close this connection; the device stays paired" onclick={() => engine.pair({ type: 'disconnect', connection: c.id })}>Disconnect {c.address.replace(/:\d+$/, '')}</button>
                   {/each}
-                {:else if device?.last_seen_ms}Last seen {engineTime(device.last_seen_ms)}{/if}
+                {:else if !row.reach}
+                  {#if !device}<span>Status unknown</span>
+                  {:else if device.last_seen_ms}<span>Last seen {engineTime(device.last_seen_ms)}</span>
+                  {:else}<span>Never connected</span>{/if}
+                {/if}
               </p>
             </div>
           {:else}

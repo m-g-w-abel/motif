@@ -80,7 +80,7 @@ describe('deviceRows', () => {
 
   it('lists a browser client by its device, marked as one', () => {
     const [row] = deviceRows([], [dev('d2', null, ['playback'])], []);
-    expect(row).toMatchObject({ key: 'd2', browser: true, linked: false, saved: null, reach: 'unreachable' });
+    expect(row).toMatchObject({ key: 'd2', browser: true, linked: false, saved: null, reach: null });
   });
 
   it('lists an engine you control that doesn’t know you, with no reach to tell', () => {
@@ -92,5 +92,10 @@ describe('deviceRows', () => {
   it('lists a device that controls you that you don’t control', () => {
     const [row] = deviceRows([], [dev('d4', 'k4', ['playback'])], [{ device: 'd4', reach: 'direct' }]);
     expect(row).toMatchObject({ key: 'k4', saved: null, linked: false, reach: 'direct' });
+  });
+
+  it('takes reach only from links: a paired device with none isn’t offline', () => {
+    const [row] = deviceRows([], [dev('d5', 'k5', ['playback'])], []);
+    expect(row.reach).toBeNull();
   });
 });
