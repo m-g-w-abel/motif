@@ -394,7 +394,8 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | Command::SetShuffle { .. }
             | Command::SetContext { .. }
             | Command::UpdateContext { .. }
-            | Command::PlayItem { .. } => Scope::Playback,
+            | Command::PlayItem { .. }
+            | Command::Retry => Scope::Playback,
             Command::Enqueue { .. }
             | Command::EnqueueNext { .. }
             | Command::RemoveItem { .. }
@@ -403,7 +404,8 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             Command::SetDecoders { .. }
             | Command::SetOutput { .. }
             | Command::ListOutputs
-            | Command::SetReplayGain { .. } => Scope::Settings,
+            | Command::SetReplayGain { .. }
+            | Command::SetSkipUnreachable { .. } => Scope::Settings,
         }),
         ClientMessage::Query { query, .. } => match query {
             LibraryQuery::Status

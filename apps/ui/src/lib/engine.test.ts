@@ -20,6 +20,8 @@ describe('PlaybackPosition', () => {
       replay_gain: { mode: 'auto', preamp_db: 0, prevent_clipping: true, untagged_db: 0 },
       gain_db: null,
       streamed: null,
+      unreachable: null,
+      skip_unreachable: false,
     };
     const engine = { player, clockOffset, current: null } as unknown as EngineClient;
     const position = new PlaybackPosition(engine);

@@ -6,6 +6,7 @@ import type { QueueItem } from "./QueueItem";
 import type { RepeatMode } from "./RepeatMode";
 import type { ReplayGainSettings } from "./ReplayGainSettings";
 import type { Streamed } from "./Streamed";
+import type { Unreachable } from "./Unreachable";
 
 /**
  * Snapshot of the transport. The queue and context entries come separately
@@ -54,4 +55,13 @@ gain_db: number | null,
  * How the current track comes from a linked engine, while it streams
  * from one (`None` for this device's files).
  */
-streamed: Streamed | null, };
+streamed: Streamed | null, 
+/**
+ * A device that couldn't be reached, while it matters: playback stopped
+ * on its song, or songs were skipped past it.
+ */
+unreachable: Unreachable | null, 
+/**
+ * Skip songs whose device can't be reached rather than stop on them.
+ */
+skip_unreachable: boolean, };

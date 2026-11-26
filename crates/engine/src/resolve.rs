@@ -26,12 +26,21 @@ pub enum Source {
     /// Audio from elsewhere (a linked engine): bytes read as from a file, or
     /// audio decoded already. `name` tells streams apart; `open` starts it at
     /// the beginning and is called on the decode thread, so it may block on
-    /// the network. `streamed` says how it comes once opened.
+    /// the network. `streamed` says how it comes once opened, or that its
+    /// device couldn't be reached.
     Stream {
         name: String,
         open: Opener,
-        streamed: watch::Receiver<Option<Streamed>>,
+        streamed: watch::Receiver<Option<StreamState>>,
     },
+}
+
+/// What a [`Source::Stream`] says of itself.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamState {
+    Streams(Streamed),
+    /// Named: the device holding it.
+    Unreachable(String),
 }
 
 /// Opens a [`Source::Stream`].

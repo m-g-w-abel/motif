@@ -25,6 +25,7 @@ const SETTINGS: { group: SettingsGroup; label: string }[] = [
   { group: 'library', label: 'Music folders' },
   { group: 'playback', label: 'Output' },
   { group: 'playback', label: 'ReplayGain' },
+  { group: 'playback', label: 'Skip songs that can\'t be reached' },
   { group: 'playback', label: 'Decoders' },
   { group: 'keyboard', label: 'Vim keys (navigation only)' },
   { group: 'integrations', label: 'Lyrics from LRCLIB' },

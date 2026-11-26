@@ -11,7 +11,7 @@ use protocol::{PlaybackStatus, ReplayGain};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    Playable, Player, Resolver, Source,
+    Playable, Player, Resolver, Source, StreamState,
     audio::{Audio, AudioEvent, decoder::Plugin},
 };
 
@@ -91,7 +91,7 @@ impl Output {
             }
             _ => None,
         };
-        let Some((item, path, gain)) = wanted else {
+        let Some((item, mut path, gain)) = wanted else {
             if let Some(audio) = &mut self.audio {
                 if self.loaded.take().is_some() {
                     audio.stop();
@@ -123,6 +123,14 @@ impl Output {
         let Some(audio) = &mut self.audio else { return };
 
         if self.loaded.map(|(_, i, _)| i) != Some(item) {
+            // Skipped to the preloaded track: its stream, connected and knowing how it comes.
+            if let Some(next) = self
+                .preloaded
+                .take_if(|next| next.item == item && next.path == path)
+            {
+                path = next.path.clone();
+                player.preloaded(item, Playable::File(next.path, next.tags));
+            }
             let token = audio.load(item, path, player.position(now), gain);
             self.loaded = Some((token, item, gain));
             self.preloaded = None;
@@ -262,6 +270,17 @@ impl Output {
     pub fn handle(&mut self, event: AudioEvent, player: &mut Player, now: Instant) {
         match event {
             AudioEvent::Failed { item, reason } => {
+                // The current track's stream or the preload's, if it says its device is gone.
+                let current = (player.current_item().map(|i| i.id) == Some(item))
+                    .then(|| player.playable())
+                    .flatten();
+                let preloaded = self.preloaded.as_ref().filter(|next| next.item == item);
+                let unreachable = current
+                    .and_then(|playable| match playable {
+                        Playable::File(source, _) => unreachable(source),
+                        Playable::Simulated => None,
+                    })
+                    .or_else(|| preloaded.and_then(|next| unreachable(&next.path)));
                 if self.loaded.is_some_and(|(_, i, _)| i == item) {
                     self.loaded = None;
                 }
@@ -272,7 +291,10 @@ impl Output {
                 {
                     self.preloaded = None;
                 }
-                player.fail(item, reason, now);
+                match unreachable {
+                    Some(from) => player.unreachable(item, from, now),
+                    None => player.fail(item, reason, now),
+                }
             }
             AudioEvent::DeviceLost(reason) => {
                 tracing::warn!(%reason, "audio output lost");
@@ -283,6 +305,17 @@ impl Output {
                 let _ = player.apply(protocol::Command::Pause, now);
             }
         }
+    }
+}
+
+/// The device a stream's source says it couldn't reach.
+fn unreachable(source: &Source) -> Option<String> {
+    match source {
+        Source::Stream { streamed, .. } => match &*streamed.borrow() {
+            Some(StreamState::Unreachable(from)) => Some(from.clone()),
+            _ => None,
+        },
+        Source::File(_) => None,
     }
 }
 

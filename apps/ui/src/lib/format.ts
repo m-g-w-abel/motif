@@ -1,5 +1,6 @@
 import type { Streamed } from './protocol/Streamed';
 import type { TrackRef } from './protocol/TrackRef';
+import type { Unreachable } from './protocol/Unreachable';
 
 export function formatTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -43,6 +44,11 @@ export function playedFormat(
     format,
     device,
   };
+}
+
+/** The toast for songs skipped because their device couldn't be reached. */
+export function skippedLabel({ from, skipped }: Unreachable): string {
+  return `${from} can't be reached — skipped ${skipped} song${skipped === 1 ? '' : 's'}`;
 }
 
 /** A stable two-colour gradient per album, used until real artwork exists. */

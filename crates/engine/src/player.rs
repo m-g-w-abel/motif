@@ -5,11 +5,11 @@ use std::{
 
 use protocol::{
     Command, ContextKind, OutputDevice, PlayContext, PlaybackStatus, PlayerState, QueueItem,
-    RepeatMode, ReplayGain, ReplayGainMode, ReplayGainSettings, TrackRef,
+    RepeatMode, ReplayGain, ReplayGainMode, ReplayGainSettings, TrackRef, Unreachable,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{EngineError, Playable, Resolver, audio::decoder};
+use crate::{EngineError, Playable, Resolver, StreamState, audio::decoder};
 
 /// "Previous" restarts the current track instead when past this point.
 const RESTART_THRESHOLD: Duration = Duration::from_secs(3);
@@ -108,6 +108,9 @@ pub struct Player {
     output: Option<String>,
     outputs: Vec<OutputDevice>,
     replay_gain: ReplayGainSettings,
+    /// A device that couldn't be reached, while it matters.
+    unreachable: Option<Unreachable>,
+    skip_unreachable: bool,
 }
 
 impl Default for Player {
@@ -136,18 +139,31 @@ impl Default for Player {
             output: None,
             outputs: Vec::new(),
             replay_gain: ReplayGainSettings::default(),
+            unreachable: None,
+            skip_unreachable: false,
         }
     }
 }
 
 impl Player {
     pub fn apply(&mut self, command: Command, now: Instant) -> Result<(), EngineError> {
+        if matches!(
+            command,
+            Command::Stop
+                | Command::Next
+                | Command::Previous
+                | Command::PlayItem { .. }
+                | Command::SetContext { .. }
+        ) {
+            self.unreachable = None;
+        }
         match command {
-            Command::Play => self.play(now),
+            // A client without a Retry button (remote, MPD) retries by playing.
+            Command::Play | Command::Retry => self.retry(now),
             Command::Pause => self.pause(now),
             Command::TogglePlayback => match self.status {
                 PlaybackStatus::Playing => self.pause(now),
-                _ => self.play(now),
+                _ => self.retry(now),
             },
             Command::Stop => self.stop(),
             Command::Next => self.advance(now, false),
@@ -235,6 +251,7 @@ impl Player {
             Command::SetOutput { device } => self.output = device,
             Command::ListOutputs => self.outputs = crate::audio::outputs(),
             Command::SetReplayGain { settings } => self.replay_gain = settings,
+            Command::SetSkipUnreachable { skip } => self.skip_unreachable = skip,
         }
         Ok(())
     }
@@ -285,7 +302,12 @@ impl Player {
                 Some(Playable::File(_, tags)) => self.gain_db(tags, false),
                 _ => None,
             },
-            streamed: self.streamed().and_then(|s| s.borrow().clone()),
+            streamed: match self.streamed().map(|s| s.borrow().clone()) {
+                Some(Some(StreamState::Streams(streamed))) => Some(streamed),
+                _ => None,
+            },
+            unreachable: self.unreachable.clone(),
+            skip_unreachable: self.skip_unreachable,
         }
     }
 
@@ -460,6 +482,61 @@ impl Player {
         true
     }
 
+    /// The output had `item` open already (its preload) when it became
+    /// current by a skip: it plays that, which knows how it streams, rather
+    /// than what the player resolved afresh. Ignored unless `item` is current.
+    pub fn preloaded(&mut self, item: u64, playable: Playable) {
+        if let Some((resolved, current)) = &mut self.resolved
+            && *resolved == item
+        {
+            *current = playable;
+        }
+    }
+
+    /// `item`'s device couldn't be reached (a linked engine's song).
+    /// Marked; if current, playback stops on it, or with
+    /// [`PlayerState::skip_unreachable`] moves on to the next (counted), as
+    /// long as one is left that might play.
+    pub fn unreachable(&mut self, item: u64, from: String, now: Instant) {
+        let Some(entry) = self.entries_mut().find(|i| i.id == item) else {
+            return;
+        };
+        entry.error = Some(format!("{from} can't be reached"));
+        if self.current_item().map(|i| i.id) != Some(item) {
+            return;
+        }
+        let skipped = match &self.unreachable {
+            Some(was) if was.from == from => was.skipped,
+            _ => 0,
+        };
+        let skip = self.skip_unreachable
+            && self.step(false).is_some()
+            && !self.entries_mut().all(|i| i.error.is_some());
+        self.unreachable = Some(Unreachable {
+            from,
+            skipped: skipped + u32::from(skip),
+            stopped: !skip,
+        });
+        match skip {
+            true => self.advance(now, false),
+            false => self.stop(),
+        }
+    }
+
+    /// Plays: the entry stopped on because its device couldn't be reached
+    /// is opened afresh (it may be back).
+    fn retry(&mut self, now: Instant) {
+        if let Some(Unreachable { stopped: true, .. }) = self.unreachable.take() {
+            if let Some(id) = self.current_item().map(|i| i.id)
+                && let Some(entry) = self.entries_mut().find(|i| i.id == id)
+            {
+                entry.error = None;
+            }
+            self.resolved = None;
+        }
+        self.play(now);
+    }
+
     /// `item` resolved but couldn't be played (unreadable, unsupported, no
     /// output device). It is marked and, if current, skipped.
     pub fn fail(&mut self, item: u64, reason: String, now: Instant) {
@@ -498,7 +575,7 @@ impl Player {
 
     /// What the current entry resolved to, once [`Self::resolve_current`] has run.
     /// Says how the current track streams, if it streams.
-    pub fn streamed(&self) -> Option<&tokio::sync::watch::Receiver<Option<protocol::Streamed>>> {
+    pub fn streamed(&self) -> Option<&tokio::sync::watch::Receiver<Option<StreamState>>> {
         match self.playable()? {
             Playable::File(crate::Source::Stream { streamed, .. }, _) => Some(streamed),
             _ => None,
@@ -1830,7 +1907,7 @@ mod tests {
         use protocol::{Quality, Route, Streamed};
         let t0 = Instant::now();
         let (tell, streamed) = tokio::sync::watch::channel(None);
-        struct Linked(tokio::sync::watch::Receiver<Option<Streamed>>);
+        struct Linked(tokio::sync::watch::Receiver<Option<StreamState>>);
         impl Resolver for Linked {
             fn resolve(&self, _: &TrackRef) -> Result<Playable, String> {
                 let open: crate::Opener = std::sync::Arc::new(|| Err(std::io::Error::other("")));
@@ -1852,13 +1929,13 @@ mod tests {
             sent: Quality::Original,
             route: Route::Lan,
         };
-        tell.send_replace(Some(lan.clone()));
+        tell.send_replace(Some(StreamState::Streams(lan.clone())));
         assert_eq!(p.snapshot(t0, 0).streamed, Some(lan.clone()));
         let relayed = Streamed {
             route: Route::Relayed,
             ..lan
         };
-        tell.send_replace(Some(relayed.clone()));
+        tell.send_replace(Some(StreamState::Streams(relayed.clone())));
         assert_eq!(p.snapshot(t0, 0).streamed, Some(relayed));
     }
 
@@ -1874,7 +1951,7 @@ mod tests {
         }
         fn stream(said: Option<Streamed>) -> crate::Source {
             let open: crate::Opener = std::sync::Arc::new(|| Err(std::io::Error::other("")));
-            let streamed = tokio::sync::watch::channel(said).1;
+            let streamed = tokio::sync::watch::channel(said.map(StreamState::Streams)).1;
             let name = "remote".into();
             crate::Source::Stream {
                 name,
@@ -1895,7 +1972,96 @@ mod tests {
         let preloaded = Playable::File(stream(Some(said.clone())), ReplayGain::default());
         assert!(p.moved_to(b, preloaded, t0));
         p.resolve_current(&Unopened, t0);
+        assert_eq!(p.snapshot(t0, 0).streamed, Some(said.clone()));
+
+        // Skipped to by hand: the player resolves it afresh, then the output
+        // hands over the stream it preloaded.
+        let mut p = playing(&["a", "b"], t0);
+        p.resolve_current(&Unopened, t0);
+        let b = p.upcoming().unwrap().id;
+        let preloaded = || Playable::File(stream(Some(said.clone())), ReplayGain::default());
+        p.preloaded(b, preloaded());
+        assert_eq!(p.snapshot(t0, 0).streamed, None, "b isn't playing yet");
+        p.apply(Command::Next, t0).unwrap();
+        p.resolve_current(&Unopened, t0);
+        p.preloaded(b, preloaded());
         assert_eq!(p.snapshot(t0, 0).streamed, Some(said));
+    }
+
+    fn unreachable(skipped: u32, stopped: bool) -> Option<protocol::Unreachable> {
+        let from = "Desktop".into();
+        Some(protocol::Unreachable {
+            from,
+            skipped,
+            stopped,
+        })
+    }
+
+    fn current_id(p: &Player) -> u64 {
+        p.current_item().unwrap().id
+    }
+
+    #[test]
+    fn a_song_whose_device_cant_be_reached_stops_playback_on_it() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        p.unreachable(current_id(&p), "Desktop".into(), t0);
+        let state = p.snapshot(t0, 0);
+        assert_eq!(state.status, PlaybackStatus::Stopped);
+        assert_eq!(name(p.current_item()), Some("a"), "stays on it");
+        assert_eq!(state.unreachable, unreachable(0, true));
+        let error = p.current_item().unwrap().error.as_deref();
+        assert_eq!(error, Some("Desktop can't be reached"));
+    }
+
+    #[test]
+    fn retry_plays_the_song_stopped_on_again_and_is_safe_to_repeat() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        p.resolve_current(&crate::LocalFiles, t0);
+        p.unreachable(current_id(&p), "Desktop".into(), t0);
+        p.apply(Command::Retry, t0).unwrap();
+        assert_eq!(p.status(), PlaybackStatus::Playing);
+        assert_eq!(name(p.current_item()), Some("a"));
+        assert_eq!(p.snapshot(t0, 0).unreachable, None);
+        assert_eq!(p.current_item().unwrap().error, None);
+        assert_eq!(p.playable(), None, "opened afresh, not the failed stream");
+        p.apply(Command::Retry, t0).unwrap();
+        assert_eq!(
+            p.status(),
+            PlaybackStatus::Playing,
+            "again: nothing to retry"
+        );
+        assert_eq!(name(p.current_item()), Some("a"));
+        // Play is a retry too (a remote or MPD client has no Retry button).
+        p.unreachable(current_id(&p), "Desktop".into(), t0);
+        p.apply(Command::Play, t0).unwrap();
+        assert_eq!(p.snapshot(t0, 0).unreachable, None);
+        assert_eq!(p.status(), PlaybackStatus::Playing);
+    }
+
+    #[test]
+    fn with_skipping_on_songs_that_cant_be_reached_are_skipped_and_counted() {
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b", "c"], t0);
+        p.apply(Command::SetSkipUnreachable { skip: true }, t0)
+            .unwrap();
+        assert!(p.snapshot(t0, 0).skip_unreachable);
+        p.unreachable(current_id(&p), "Desktop".into(), t0);
+        assert_eq!(name(p.current_item()), Some("b"));
+        assert_eq!(p.status(), PlaybackStatus::Playing);
+        assert_eq!(p.snapshot(t0, 0).unreachable, unreachable(1, false));
+        p.unreachable(current_id(&p), "Desktop".into(), t0);
+        assert_eq!(name(p.current_item()), Some("c"));
+        assert_eq!(p.snapshot(t0, 0).unreachable, unreachable(2, false));
+        // Nothing playable left: it stops on the last, as without skipping.
+        p.unreachable(current_id(&p), "Desktop".into(), t0);
+        assert_eq!(name(p.current_item()), Some("c"));
+        assert_eq!(p.status(), PlaybackStatus::Stopped);
+        assert_eq!(p.snapshot(t0, 0).unreachable, unreachable(2, true));
+        // Moving on by hand clears it.
+        p.apply(Command::Previous, t0).unwrap();
+        assert_eq!(p.snapshot(t0, 0).unreachable, None);
     }
 
     /// Untagged files, measured some time later, recording requests.

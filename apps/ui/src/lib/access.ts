@@ -18,6 +18,7 @@ export const COMMAND_SCOPES: Record<Command['type'], Scope> = {
   set_context: 'playback',
   update_context: 'playback',
   play_item: 'playback',
+  retry: 'playback',
   enqueue: 'queue',
   enqueue_next: 'queue',
   remove_item: 'queue',
@@ -27,6 +28,7 @@ export const COMMAND_SCOPES: Record<Command['type'], Scope> = {
   set_output: 'settings',
   list_outputs: 'settings',
   set_replay_gain: 'settings',
+  set_skip_unreachable: 'settings',
 };
 
 /** The scope each library query needs; `null` for reads, which every client may do. */

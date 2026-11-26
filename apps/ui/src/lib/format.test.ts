@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { playedFormat } from './format';
+import { playedFormat, skippedLabel } from './format';
 
 const flac = { codec: 'FLAC', sample_rate: 44100, bitrate: 1600 };
 
@@ -33,5 +33,12 @@ describe('playedFormat', () => {
   it('shows a local file as it is, with no device', () => {
     expect(playedFormat(flac, 'FLAC', null)).toEqual({ rate: '44.1 kHz', bitrate: '1600 kbps', format: 'FLAC', device: '' });
     expect(playedFormat(null, 'MP3', undefined)).toEqual({ rate: '', bitrate: '', format: 'MP3', device: '' });
+  });
+});
+
+describe('skippedLabel', () => {
+  it('names the device and counts the songs skipped', () => {
+    expect(skippedLabel({ from: 'Desktop', skipped: 1, stopped: false })).toBe("Desktop can't be reached — skipped 1 song");
+    expect(skippedLabel({ from: 'Desktop', skipped: 3, stopped: true })).toBe("Desktop can't be reached — skipped 3 songs");
   });
 });

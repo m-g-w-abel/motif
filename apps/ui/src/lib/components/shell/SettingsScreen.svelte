@@ -593,6 +593,23 @@
               </label>
             </div>
           {/if}
+
+          <div class="row">
+            <span class="label">Skip songs that can't be reached</span>
+            <div class="segmented" role="radiogroup" aria-label="Skip songs that can't be reached">
+              {#each [[false, 'Off'], [true, 'On']] as const as [value, text] (text)}
+                <button
+                  role="radio"
+                  aria-checked={player.skip_unreachable === value}
+                  class:active={player.skip_unreachable === value}
+                  onclick={() => engine.run({ type: 'set_skip_unreachable', skip: value })}
+                >
+                  {text}
+                </button>
+              {/each}
+            </div>
+            <p class="status">Off: playback stops on a song whose device can't be reached, with Retry in place of Play.</p>
+          </div>
         {/if}
 
         {#if decoders.length}

@@ -22,7 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use engine::{ByteSource, Opened, Source, audio::decoder::Decoder};
+use engine::{ByteSource, Opened, Source, StreamState, audio::decoder::Decoder};
 use library::{
     Library,
     transcode::{self, Encode},
@@ -313,6 +313,10 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
                 _ => {
                     let dialled = dial(&pairing, &copies, tell.clone());
                     let dialled = runtime.block_on(dialled);
+                    if dialled.is_err() {
+                        let from = pairing.linked_name(&copies[0].0).unwrap_or_default();
+                        tell.send_replace(Some(StreamState::Unreachable(from)));
+                    }
                     let (dialled, _) = open.insert((dialled, Instant::now()));
                     dialled.clone().map_err(io::Error::other)?
                 }
@@ -360,7 +364,7 @@ impl Dialled {
 async fn dial(
     pairing: &Pairing,
     copies: &[(String, i64)],
-    tell: watch::Sender<Option<Streamed>>,
+    tell: watch::Sender<Option<StreamState>>,
 ) -> Result<Dialled, String> {
     let net = pairing
         .net()
@@ -415,7 +419,7 @@ async fn connect(
     id: i64,
     locate: Locate,
     quality: &(dyn Fn(&Connection) -> Quality + Sync),
-    (from, tell): (String, watch::Sender<Option<Streamed>>),
+    (from, tell): (String, watch::Sender<Option<StreamState>>),
 ) -> Result<Dialled, String> {
     let conn = net.connect(key, addr, Alpn::Files).await?;
     let quality = quality(&conn);
@@ -469,7 +473,7 @@ struct Link {
     /// The owner's name, what it sends and where to say so.
     from: String,
     sent: Quality,
-    streamed: watch::Sender<Option<Streamed>>,
+    streamed: watch::Sender<Option<StreamState>>,
 }
 
 /// A connection to the owner of track `id` and the ranges fetched or
@@ -508,11 +512,11 @@ impl Link {
     fn follow(&self, conn: &Connection) {
         let (from, sent) = (self.from.clone(), self.sent);
         let streamed = move |route| {
-            Some(Streamed {
+            Some(StreamState::Streams(Streamed {
                 from: from.clone(),
                 sent,
                 route,
-            })
+            }))
         };
         self.streamed.send_replace(streamed(net::route(conn)));
         let (conn, tell) = (conn.clone(), self.streamed.clone());
@@ -577,6 +581,9 @@ impl Link {
             }
             Err(err) => {
                 *failed = Some((err.clone(), Instant::now()));
+                let from = self.from.clone();
+                self.streamed
+                    .send_replace(Some(StreamState::Unreachable(from)));
                 Err(err)
             }
         }
@@ -1356,7 +1363,7 @@ mod tests {
             sent: Quality::Original,
             route: protocol::Route::Lan,
         };
-        assert_eq!(*streamed.borrow(), Some(lan));
+        assert_eq!(*streamed.borrow(), Some(StreamState::Streams(lan)));
         assert!(reached.abs_diff(Duration::from_millis(1500)) < Duration::from_millis(100));
 
         // Unlinked, it no longer resolves.
@@ -1367,6 +1374,29 @@ mod tests {
         for dir in [dir_a, dir_b] {
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_whose_engine_cant_be_reached_says_so() {
+        let pairing = Pairing::in_memory();
+        let (owner, reader) = (endpoint(1).await, endpoint(2).await);
+        let key = owner.key();
+        // Gone: nothing answers where it was.
+        let at = format!("127.0.0.1:{}", owner.port().unwrap());
+        owner.close().await;
+        pairing.link("Desktop", &key, &[at]).unwrap();
+        pairing.set_net(Some(&reader));
+        let source = source(pairing, vec![(key, 1)], Handle::current());
+        let Source::Stream { open, streamed, .. } = &source else {
+            panic!("not a stream");
+        };
+        let open = open.clone();
+        let opened = tokio::task::spawn_blocking(move || open().map(|_| ()))
+            .await
+            .unwrap();
+        assert!(opened.is_err());
+        let said = streamed.borrow().clone();
+        assert_eq!(said, Some(StreamState::Unreachable("Desktop".into())));
     }
 
     /// Three seconds of a stereo tone in the format ffmpeg's `args` make,
@@ -1418,7 +1448,10 @@ mod tests {
             panic!("the FLAC not encoded");
         };
         let streamed = dialled.link().streamed.borrow().clone();
-        assert_eq!(streamed.map(|s| s.sent), Some(Quality::Opus256));
+        let Some(StreamState::Streams(streamed)) = streamed else {
+            panic!("{streamed:?}");
+        };
+        assert_eq!(streamed.sent, Quality::Opus256);
         let decoded = tokio::task::spawn_blocking(move || {
             let Ok(Opened::Decoded(mut decoder)) = dialled.open() else {
                 panic!("not decoded");

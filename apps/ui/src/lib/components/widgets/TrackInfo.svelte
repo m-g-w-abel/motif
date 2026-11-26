@@ -63,6 +63,9 @@
   );
   /** While the playing song's details are looked up (a frame or so), the badge keeps what it showed rather than a shorter guess. */
   const loading = $derived(playing && details === undefined);
+  /** Where a stream comes from, or why it stopped: its device couldn't be reached. */
+  const unreachable = $derived(playing ? engine.player?.unreachable : null);
+  const device = $derived(unreachable?.stopped ? `${unreachable.from} can't be reached` : shown.device);
   let held = { rates: '', format: '' };
   const badge = $derived.by(() => (waiting || loading ? held : (held = { rates, format })));
   /** Kept in place, unseen: nothing to show yet. */
@@ -106,7 +109,7 @@
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
         {#if badge.format || unseen}<span class="format" class:unseen class:fades={remote}>{#if unseen}{'\u00a0'}{:else}<span class="rates">{badge.rates}</span>{badge.format}{/if}</span>{/if}
       </p>
-      {#if shown.device}<p class="device" data-enter="fade" in:fade={{ duration: waited ? DURATION : 0 }}><Icon name="cloud" size={12} /> {shown.device}</p>{/if}
+      {#if device}<p class="device" data-enter="fade" in:fade={{ duration: waited ? DURATION : 0 }}><Icon name="cloud" size={12} /> {device}</p>{/if}
       {#if playing && details && engine.can('library')}
         <div class="marks" data-enter="fade">
           {#if settings.current.ratings === 'stars'}

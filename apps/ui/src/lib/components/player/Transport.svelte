@@ -7,6 +7,8 @@
 
   const { engine } = getApp();
   const playing = $derived(engine.player?.status === 'playing');
+  /** Stopped on a song whose device couldn't be reached: play becomes Retry. */
+  const retry = $derived(!!engine.player?.unreachable?.stopped);
 </script>
 
 <!-- Hidden on devices that may only look (View only). -->
@@ -21,11 +23,12 @@
     class="icon-button play"
     data-move="play:now"
     data-fit="even"
-    aria-label={playing ? 'Pause' : 'Play'}
+    aria-label={retry ? 'Retry' : playing ? 'Pause' : 'Play'}
+    title={retry ? 'Retry' : undefined}
     disabled={!engine.current && !engine.queue.length && !engine.context.items.length}
-    onclick={() => engine.run({ type: 'toggle_playback' })}
+    onclick={() => engine.run({ type: retry ? 'retry' : 'toggle_playback' })}
   >
-    <Icon name={playing ? 'pause' : 'play'} size={size * 1.35} />
+    <Icon name={retry ? 'retry' : playing ? 'pause' : 'play'} size={size * (retry ? 1.1 : 1.35)} />
   </button>
   {#if !compact}
     <button class="icon-button" aria-label="Next" onclick={() => engine.run({ type: 'next' })}>

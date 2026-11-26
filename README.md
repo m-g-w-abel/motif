@@ -115,7 +115,8 @@ control isn't an add-on: it's the normal code path.
   played at over 100× real time; lossy files at or below that come as they
   are. All settable, Original included. Now Playing's file info shows what
   arrives (Opus marked transcoded), the engine and, off the LAN, whether
-  direct or relayed, updated as that changes.
+  direct or relayed, updated as that changes. A song whose device can't be
+  reached stops playback with Retry (or is skipped, counted, if set).
 - An **MPD server**, so existing MPD clients can drive Motif.
 - Scrobbling to Last.fm, ListenBrainz and Libre.fm, with an offline queue.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now

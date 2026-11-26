@@ -22,7 +22,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 use output::Output;
 
 pub use player::{Playback, Player};
-pub use resolve::{ByteSource, LocalFiles, Opened, Opener, Playable, Resolver, Source};
+pub use resolve::{
+    ByteSource, LocalFiles, Opened, Opener, Playable, Resolver, Source, StreamState,
+};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum EngineError {

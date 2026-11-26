@@ -161,6 +161,14 @@ pub enum Command {
     SetReplayGain {
         settings: ReplayGainSettings,
     },
+    /// Whether a song whose device can't be reached is skipped
+    /// ([`PlayerState::skip_unreachable`]).
+    SetSkipUnreachable {
+        skip: bool,
+    },
+    /// Plays the entry stopped on because its device couldn't be reached
+    /// ([`Unreachable::stopped`]) again; does nothing otherwise.
+    Retry,
 }
 
 /// Which ReplayGain value levels each track.
@@ -426,6 +434,24 @@ pub struct PlayerState {
     /// How the current track comes from a linked engine, while it streams
     /// from one (`None` for this device's files).
     pub streamed: Option<Streamed>,
+    /// A device that couldn't be reached, while it matters: playback stopped
+    /// on its song, or songs were skipped past it.
+    pub unreachable: Option<Unreachable>,
+    /// Skip songs whose device can't be reached rather than stop on them.
+    pub skip_unreachable: bool,
+}
+
+/// Songs a device held that couldn't be played because it couldn't be reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Unreachable {
+    /// The device's name.
+    pub from: String,
+    /// Songs skipped past ([`PlayerState::skip_unreachable`]).
+    pub skipped: u32,
+    /// Playback stopped on the current entry, its song; [`Command::Retry`]
+    /// plays it again.
+    pub stopped: bool,
 }
 
 impl Default for PlayerState {
@@ -446,6 +472,8 @@ impl Default for PlayerState {
             replay_gain: ReplayGainSettings::default(),
             gain_db: None,
             streamed: None,
+            unreachable: None,
+            skip_unreachable: false,
         }
     }
 }
