@@ -2,6 +2,7 @@
   import { getApp } from '../../context';
   import { formatTime } from '../../format';
   import Slider from '../Slider.svelte';
+  import { HOLD_MS, settle, type SentSeek } from '../../seekHold';
 
   /** `strip`: an edge-to-edge bar with no times, for the player bar. */
   let { variant = 'full' }: { variant?: 'full' | 'strip' } = $props();
@@ -17,13 +18,25 @@
 
   /** Where the pointer is while dragging, shown in the times. */
   let scrubbing = $state<number | null>(null);
-  const shown = $derived(scrubbing ?? position.ms);
+  /** Where the last seek went, shown until the engine reports it there. */
+  let sent = $state<SentSeek | null>(null);
+  $effect(() => {
+    if (sent) sent = settle(sent, position.ms, Date.now());
+  });
+  // Gives up on a seek that never lands even if nothing else changes meanwhile.
+  $effect(() => {
+    if (!sent) return;
+    const timer = setTimeout(() => (sent = settle(sent, position.ms, Date.now())), HOLD_MS + 1);
+    return () => clearTimeout(timer);
+  });
+  const at = $derived(sent?.ms ?? position.ms);
+  const shown = $derived(scrubbing ?? at);
 </script>
 
 <div class="seek {variant}">
   {#if variant === 'full'}<span class="time">{formatTime(shown)}</span>{/if}
   <Slider
-    value={position.ms}
+    value={at}
     max={duration || 1}
     label="Seek"
     valueText="{formatTime(shown)} of {formatTime(duration)}"
@@ -36,7 +49,8 @@
     oninput={(v) => (scrubbing = v)}
     onchange={(v) => {
       scrubbing = null;
-      engine.run({ type: 'seek', position_ms: Math.round(v) });
+      sent = { ms: Math.round(v), at: Date.now() };
+      engine.run({ type: 'seek', position_ms: sent.ms });
     }}
   />
   {#if variant === 'full'}<span class="time">{duration ? formatTime(duration) : '-:--'}</span>{/if}
