@@ -25,6 +25,11 @@ describe('playedFormat', () => {
     expect(internet.bitrate).toBe('128 kbps');
   });
 
+  it("shows nothing for a song from elsewhere until it's known how it streams", () => {
+    expect(playedFormat(flac, 'FLAC', null, true)).toEqual({ rate: '', bitrate: '', format: '', device: '' });
+    expect(playedFormat(flac, 'FLAC', { from: 'Desktop', sent: 'original', route: 'lan' }, true).format).toBe('FLAC');
+  });
+
   it('shows a local file as it is, with no device', () => {
     expect(playedFormat(flac, 'FLAC', null)).toEqual({ rate: '44.1 kHz', bitrate: '1600 kbps', format: 'FLAC', device: '' });
     expect(playedFormat(null, 'MP3', undefined)).toEqual({ rate: '', bitrate: '', format: 'MP3', device: '' });

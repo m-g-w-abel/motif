@@ -22,12 +22,17 @@ export function trackFormat(track: TrackRef): string {
   return match ? match[1].toUpperCase() : '';
 }
 
-/** What is playing, as the file info shows it: a transcoded stream as the Opus that arrives, a streamed one with its device (and route off the LAN). */
+/**
+ * What is playing, as the file info shows it: a transcoded stream as the Opus that arrives, a streamed one with its
+ * device (and route off the LAN). A song `elsewhere` (on linked engines) shows nothing until it's known how it streams.
+ */
 export function playedFormat(
   file: { codec?: string | null; sample_rate?: number | null; bitrate?: number | null } | null | undefined,
   format: string,
   streamed: Streamed | null | undefined,
+  elsewhere = false,
 ): { rate: string; bitrate: string; format: string; device: string } {
+  if (elsewhere && !streamed) return { rate: '', bitrate: '', format: '', device: '' };
   const device = streamed ? `${streamed.from}${streamed.route === 'lan' ? '' : ` · ${streamed.route}`}` : '';
   if (streamed && streamed.sent !== 'original') {
     return { rate: '48 kHz', bitrate: `${streamed.sent.replace('opus', '')} kbps`, format: 'OPUS (transcoded)', device };

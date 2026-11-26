@@ -2,7 +2,10 @@
   import type { Snippet } from 'svelte';
   import { getApp, getViewState } from '../../context';
   import { formatTime, playedFormat, trackFormat, trackTitle } from '../../format';
+  import { fade } from 'svelte/transition';
+  import { elsewhere } from '../../devices';
   import { marquee } from '../../marquee';
+  import { DURATION } from '../../motion/transition';
   import type { InfoStyle } from '../../layout/model';
   import Heart from '../Heart.svelte';
   import Icon from '../Icon.svelte';
@@ -31,9 +34,14 @@
   /** Hero names that don't fit one line (phones) scroll once per track while the sheet is open. */
   // Held where it is while the sheet moves (its change starts from the text as drawn), put back once it is closed.
   const scrolling = $derived(style === 'hero' && playing && track ? (sheet.rest ? track.id : sheet.moving ? false : null) : null);
-  /** What arrives (Opus if it is transcoded), and a stream's device. */
+  /** What arrives (Opus if it is transcoded), and a stream's device; a song from elsewhere fades in once that is known. */
   const shown = $derived(
-    playedFormat(details, details?.codec ?? (track ? trackFormat(track) : ''), playing ? engine.player?.streamed : null),
+    playedFormat(
+      details,
+      details?.codec ?? (track ? trackFormat(track) : ''),
+      playing ? engine.player?.streamed : null,
+      playing && !!details && elsewhere(details),
+    ),
   );
   const format = $derived(shown.format);
   const transcoded = $derived(playing && !!engine.player?.streamed && engine.player.streamed.sent !== 'original');
@@ -81,9 +89,9 @@
     {#if track}
       <p class="hero-album" data-enter="fade">
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
-        {#if format}<span class="format"><span class="rates">{rates}</span>{format}</span>{/if}
+        {#if format}<span class="format" in:fade={{ duration: DURATION }}><span class="rates">{rates}</span>{format}</span>{/if}
       </p>
-      {#if shown.device}<p class="device" data-enter="fade"><Icon name="cloud" size={12} /> {shown.device}</p>{/if}
+      {#if shown.device}<p class="device" data-enter="fade" in:fade={{ duration: DURATION }}><Icon name="cloud" size={12} /> {shown.device}</p>{/if}
       {#if playing && details && engine.can('library')}
         <div class="marks" data-enter="fade">
           {#if settings.current.ratings === 'stars'}
