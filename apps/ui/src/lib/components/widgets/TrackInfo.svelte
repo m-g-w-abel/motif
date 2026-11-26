@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { fade } from 'svelte/transition';
   import { getApp, getViewState } from '../../context';
   import { formatTime, playedFormat, trackFormat, trackTitle } from '../../format';
   import { elsewhere } from '../../devices';
   import { marquee } from '../../marquee';
+  import { DURATION } from '../../motion/transition';
   import type { InfoStyle } from '../../layout/model';
   import Heart from '../Heart.svelte';
   import Icon from '../Icon.svelte';
@@ -42,11 +44,15 @@
     ),
   );
   const format = $derived(shown.format);
-  /**
-   * The badge keeps its place, unseen, so nothing moves when it shows: while the playing song's details are looked up
-   * (rather than a shorter guess from its file name), and for a song from elsewhere until it's known how it streams.
-   */
-  const pending = $derived(playing && (details === undefined || (!!track && elsewhere({ track }) && !engine.player?.streamed)));
+  const remote = $derived(playing && !!track && elsewhere({ track }));
+  /** A song from elsewhere until it's known how it streams (can take a second): its badge keeps its place, unseen, then fades in. */
+  const waiting = $derived(remote && !engine.player?.streamed);
+  /** Whether this song was waited for, so its device line fades in; one known at the change (preloaded) shows at once. */
+  let waitedOn: string | undefined;
+  const waited = $derived.by(() => {
+    if (waiting) waitedOn = track?.id;
+    return waitedOn === track?.id;
+  });
   const transcoded = $derived(playing && !!engine.player?.streamed && engine.player.streamed.sent !== 'original');
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(
@@ -55,6 +61,12 @@
       .map((v) => `${v} · `)
       .join(''),
   );
+  /** While the playing song's details are looked up (a frame or so), the badge keeps what it showed rather than a shorter guess. */
+  const loading = $derived(playing && details === undefined);
+  let held = { rates: '', format: '' };
+  const badge = $derived.by(() => (waiting || loading ? held : (held = { rates, format })));
+  /** Kept in place, unseen: nothing to show yet. */
+  const unseen = $derived(waiting || (loading && !badge.format));
 
   const rows = $derived<[string, string][]>(
     track
@@ -92,9 +104,9 @@
     {#if track}
       <p class="hero-album" data-enter="fade">
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
-        {#if format || pending}<span class="format" class:pending>{#if pending}{'\u00a0'}{:else}<span class="rates">{rates}</span>{format}{/if}</span>{/if}
+        {#if badge.format || unseen}<span class="format" class:unseen class:fades={remote}>{#if unseen}{'\u00a0'}{:else}<span class="rates">{badge.rates}</span>{badge.format}{/if}</span>{/if}
       </p>
-      {#if shown.device || pending}<p class="device" class:pending data-enter="fade"><Icon name="cloud" size={12} /> {shown.device}</p>{/if}
+      {#if shown.device}<p class="device" data-enter="fade" in:fade={{ duration: waited ? DURATION : 0 }}><Icon name="cloud" size={12} /> {shown.device}</p>{/if}
       {#if playing && details && engine.can('library')}
         <div class="marks" data-enter="fade">
           {#if settings.current.ratings === 'stars'}
@@ -213,14 +225,13 @@
     vertical-align: -1px;
   }
 
-  /* Kept in place, unseen, until a stream from elsewhere says what arrives; then faded in. */
-  .format,
-  .device {
+  /* A stream from elsewhere's badge fades in once it says what arrives. */
+  .fades {
     transition: opacity 260ms;
   }
 
-  /* Hidden at once, shown with the fade. */
-  .pending {
+  /* Hidden at once. */
+  .unseen {
     opacity: 0;
     transition: none;
   }
