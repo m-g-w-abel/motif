@@ -780,6 +780,48 @@ pub enum LibraryQuery {
         item: String,
         before: Option<String>,
     },
+    /// What this device's Downloaded group holds.
+    Downloaded,
+    /// Adds to or removes from the Downloaded group: linked engines' tracks
+    /// it takes in are downloaded here, and copies no member needs any more
+    /// deleted. Safe to repeat.
+    SetDownloaded {
+        member: Downloadable,
+        downloaded: bool,
+    },
+    /// Where downloads are saved (a library folder; Music/Motif by default).
+    SetDownloadFolder {
+        path: String,
+    },
+}
+
+/// Something in this device's Downloaded group (#245). The group is this
+/// device's own: it isn't synced.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum Downloadable {
+    /// Following its edits.
+    Playlist { id: String },
+    /// By album key, as [`LibraryQuery::PlayAlbum`] names it.
+    Album { album: String },
+    /// Every album of an album artist (or artist, for tracks without one),
+    /// later ones too.
+    Artist { name: String },
+    /// One library track, by path.
+    Track { path: String },
+}
+
+/// How downloading the Downloaded group is going.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DownloadStatus {
+    /// Where downloads are saved.
+    pub folder: String,
+    /// Tracks still to download.
+    pub waiting: u32,
+    /// Why the last one failed (the disk is full, its engine is unreachable).
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -788,6 +830,9 @@ pub enum LibraryQuery {
 pub enum QueryResult {
     Status {
         status: LibraryStatus,
+    },
+    Downloaded {
+        members: Vec<Downloadable>,
     },
     Tracks {
         total: u32,
@@ -917,6 +962,8 @@ pub struct LibraryStatus {
     #[ts(type = "number")]
     pub ratings: u64,
     pub error: Option<String>,
+    #[serde(default)]
+    pub downloads: DownloadStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

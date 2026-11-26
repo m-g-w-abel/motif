@@ -2,7 +2,14 @@
 //! to encode ([`plan`]) and the encoder ([`Encode`]), which turns a file from
 //! any point into Opus packets, for a live stream or a whole file alike.
 
-use std::{path::Path, time::Duration};
+use std::{
+    io::{self, Write},
+    path::Path,
+    time::Duration,
+};
+
+use symphonia::core::checksum::Crc32;
+use symphonia::core::io::Monitor as _;
 
 use engine::audio::{
     decoder::{self, Decoder},
@@ -138,6 +145,115 @@ impl Encode {
     }
 }
 
+/// Writes Opus packets as an Ogg Opus file (RFC 7845), for downloads:
+/// pages of about a second each.
+pub struct OggOpus<W: Write> {
+    out: W,
+    serial: u32,
+    /// The number of the page written next.
+    sequence: u32,
+    /// Frames (at 48 kHz, pre-skip included) through the packets so far.
+    granule: u64,
+    /// The packets of the page being made, and its lacing values.
+    page: Vec<u8>,
+    lacing: Vec<u8>,
+}
+
+/// Packets per page: a second of Opus.
+const PAGE_PACKETS: usize = 50;
+
+impl<W: Write> OggOpus<W> {
+    /// Starts the file with its headers: `tags` are Vorbis comments
+    /// (name, value).
+    pub fn new(out: W, channels: u8, pre_skip: u16, tags: &[(String, String)]) -> io::Result<Self> {
+        let mut head = b"OpusHead".to_vec();
+        head.extend_from_slice(&[1, channels]);
+        head.extend_from_slice(&pre_skip.to_le_bytes());
+        head.extend_from_slice(&RATE.to_le_bytes());
+        // No output gain, mono or stereo.
+        head.extend_from_slice(&[0, 0, 0]);
+        // Each field after its length: the vendor, then the comments.
+        let fields = std::iter::once("Motif".to_string())
+            .chain(tags.iter().map(|(name, value)| format!("{name}={value}")));
+        let mut comments = b"OpusTags".to_vec();
+        for (n, field) in fields.enumerate() {
+            if n == 1 {
+                comments.extend_from_slice(&(tags.len() as u32).to_le_bytes());
+            }
+            comments.extend_from_slice(&(field.len() as u32).to_le_bytes());
+            comments.extend_from_slice(field.as_bytes());
+        }
+        if tags.is_empty() {
+            comments.extend_from_slice(&0u32.to_le_bytes());
+        }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        let mut ogg = Self {
+            out,
+            serial: now.map_or(1, |d| d.subsec_nanos()),
+            sequence: 0,
+            granule: 0,
+            page: Vec::new(),
+            lacing: Vec::new(),
+        };
+        // Each header on a page of its own, the first starting the stream.
+        ogg.add(&head)?;
+        ogg.flush(0x02)?;
+        ogg.add(&comments)?;
+        ogg.flush(0)?;
+        Ok(ogg)
+    }
+
+    /// Adds a packet with `frames` of audio.
+    pub fn packet(&mut self, data: &[u8], frames: u16) -> io::Result<()> {
+        if self.lacing.len() + data.len() / 255 + 1 > 255 || self.lacing.len() >= PAGE_PACKETS * 2 {
+            self.flush(0)?;
+        }
+        self.add(data)?;
+        self.granule += u64::from(frames);
+        Ok(())
+    }
+
+    /// Ends the file: its last page says so.
+    pub fn finish(mut self) -> io::Result<W> {
+        self.flush(0x04)?;
+        self.out.flush()?;
+        Ok(self.out)
+    }
+
+    fn add(&mut self, data: &[u8]) -> io::Result<()> {
+        if data.len() / 255 + 1 > 255 - self.lacing.len() {
+            return Err(io::Error::other("an Ogg packet too big for one page"));
+        }
+        self.lacing
+            .extend(std::iter::repeat_n(255, data.len() / 255));
+        self.lacing.push((data.len() % 255) as u8);
+        self.page.extend_from_slice(data);
+        Ok(())
+    }
+
+    /// Writes the page being made, with `flags` (0x02 first, 0x04 last).
+    fn flush(&mut self, flags: u8) -> io::Result<()> {
+        let mut page = b"OggS".to_vec();
+        page.extend_from_slice(&[0, flags]);
+        // Headers end at granule 0.
+        page.extend_from_slice(&self.granule.to_le_bytes());
+        page.extend_from_slice(&self.serial.to_le_bytes());
+        page.extend_from_slice(&self.sequence.to_le_bytes());
+        page.extend_from_slice(&[0; 4]);
+        page.push(self.lacing.len() as u8);
+        page.extend_from_slice(&self.lacing);
+        page.extend_from_slice(&self.page);
+        let mut crc = Crc32::new(0);
+        crc.process_buf_bytes(&page);
+        page[22..26].copy_from_slice(&crc.crc().to_le_bytes());
+        self.out.write_all(&page)?;
+        self.sequence += 1;
+        self.page.clear();
+        self.lacing.clear();
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +361,30 @@ mod tests {
             (frames - left.as_secs_f64() * 48_000.0).abs() < 2.0,
             "{frames} frames"
         );
+    }
+
+    #[test]
+    fn an_ogg_opus_file_plays_as_long_as_its_source_with_its_tags() {
+        let dir = temp("ogg");
+        let path = dir.join("tone.wav");
+        tone(&path, 3);
+        let mut encode = Encode::open(&path, Duration::ZERO, 256).unwrap();
+        let tags = [("TITLE".to_string(), "Tone".to_string())];
+        let mut ogg = OggOpus::new(Vec::new(), 2, encode.pre_skip(), &tags).unwrap();
+        while let Some(packet) = encode.packet().unwrap() {
+            ogg.packet(&packet.data, packet.frames).unwrap();
+        }
+        let copy = dir.join("tone.opus");
+        std::fs::write(&copy, ogg.finish().unwrap()).unwrap();
+        let mut decoder = decoder::open(&copy.clone().into(), &decoder::all()).unwrap();
+        let mut samples = Vec::new();
+        while decoder.decode(&mut samples).unwrap() {}
+        let frames = samples.len() / decoder.channels();
+        let read = crate::tags::read(&copy);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(decoder.sample_rate(), RATE);
+        assert!(frames.abs_diff(3 * 48_000) <= 2, "{frames} frames");
+        assert_eq!(read.title.as_deref(), Some("Tone"));
     }
 
     #[test]

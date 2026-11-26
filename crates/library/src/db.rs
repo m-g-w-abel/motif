@@ -99,6 +99,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     conn.execute_batch(crate::ratings::SCHEMA)?;
     conn.execute_batch(crate::sync::SCHEMA)?;
     conn.execute_batch(crate::catalog::SCHEMA)?;
+    conn.execute_batch(crate::downloads::SCHEMA)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
