@@ -47,6 +47,9 @@ export function pageMark(tracks: (LibraryTrack | undefined)[], pairing: PairingS
     : { title: `Some songs are on ${names}`, away: false };
 }
 
+/** How a linked engine is reached now, in words. */
+export const REACH_LABELS: Record<Reach, string> = { direct: 'Online · direct', relayed: 'Online · relayed', unreachable: 'Offline' };
+
 /** One other device in Settings → Devices: what this app controls and what controls the engine in control, joined by engine key. */
 export interface DeviceRow {
   /** The engine key; the paired device's id for a client with none (a browser). */

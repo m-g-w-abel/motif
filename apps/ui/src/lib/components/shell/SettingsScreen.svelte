@@ -5,7 +5,6 @@
   import type { Quality } from '../../protocol/Quality';
   import type { QualityFor } from '../../protocol/QualityFor';
   import type { Scope } from '../../protocol/Scope';
-  import type { Reach } from '../../protocol/Reach';
   import AddEngineDialog from '../pairing/AddEngineDialog.svelte';
   import PairDialog from '../pairing/PairDialog.svelte';
   import { addFolder, androidStorage } from '../../folders';
@@ -33,7 +32,7 @@
   import { GROUP_INFO, phoneGroups, searchSettings } from '../../settingsSearch';
   import { SETTINGS_GROUPS } from '../../settingsView.svelte';
   import { LOCAL_ID, switchTo } from '../../engines';
-  import { deviceRows } from '../../devices';
+  import { deviceRows, REACH_LABELS } from '../../devices';
   import WindowButtons from './WindowButtons.svelte';
 
   // `page`: phones show the list and each group as screens of their own, each fixed to its page; desktop's follows the group.
@@ -196,7 +195,6 @@
   let listenBrainzToken = $state('');
   let mpdPassword = $state('');
   let relayUrl = $state('');
-  const REACH: Record<Reach, string> = { direct: 'Online · direct', relayed: 'Online · relayed', unreachable: 'Offline' };
   /** Every other device, not the engine in control (it heads the list). */
   const rows = $derived(
     deviceRows(
@@ -364,7 +362,7 @@
                 {#if saved}<span class="badge">you control it</span>{/if}
                 {#if row.linked}<span class="badge syncs" title="Shares its library and synced data with this device">⇄ linked</span>{/if}
                 {#if row.reach}
-                  <span class:online={row.reach !== 'unreachable'} title="Over the encrypted link between the engines">{REACH[row.reach]}</span>
+                  <span class:online={row.reach !== 'unreachable'} title="Over the encrypted link between the engines">{REACH_LABELS[row.reach]}</span>
                 {/if}
                 {#if connections.length}
                   <span class="online">● Connected now</span>
