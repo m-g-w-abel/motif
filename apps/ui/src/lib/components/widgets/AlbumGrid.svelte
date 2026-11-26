@@ -169,9 +169,9 @@
     view.browse.pickedAlbums = new Map();
     view.browse.focusAlbum = null;
   }
-  /** The albums an action on `album` applies to: the selection, in grid order, if the album is part of it. */
   /** A card as a member of the Downloaded group. */
   const memberOf = (key: string): Downloadable => (items === 'playlists' ? { kind: 'playlist', id: key } : { kind: 'album', album: key });
+  /** The albums an action on `album` applies to: the selection, in grid order, if the album is part of it. */
   const keysFor = (album: Card) => (inSelection(picked, album.key) ? ordered(picked) : [album.key]);
   function playAll(album: Card) {
     if (!inSelection(picked, album.key)) return play(album);
