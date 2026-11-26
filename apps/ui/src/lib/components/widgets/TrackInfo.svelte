@@ -44,6 +44,8 @@
     ),
   );
   const format = $derived(shown.format);
+  /** A song from elsewhere whose stream isn't known yet: its badge keeps its place, unseen, so nothing moves when it shows. */
+  const pending = $derived(playing && !!details && elsewhere(details) && !engine.player?.streamed);
   const transcoded = $derived(playing && !!engine.player?.streamed && engine.player.streamed.sent !== 'original');
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(
@@ -89,7 +91,7 @@
     {#if track}
       <p class="hero-album" data-enter="fade">
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
-        {#if format}<span class="format" in:fade={{ duration: DURATION }}><span class="rates">{rates}</span>{format}</span>{/if}
+        {#if format || pending}<span class="format" class:pending><span class="rates">{rates}</span>{format || '\u00a0'}</span>{/if}
       </p>
       {#if shown.device}<p class="device" data-enter="fade" in:fade={{ duration: DURATION }}><Icon name="cloud" size={12} /> {shown.device}</p>{/if}
       {#if playing && details && engine.can('library')}
@@ -139,6 +141,7 @@
 
   /* Hero: large text for the now-playing screen. */
   .hero {
+    position: relative;
     height: auto;
     overflow: visible;
     padding: 0;
@@ -191,8 +194,12 @@
     color: var(--text-muted);
   }
 
-  /* Where a stream comes from, under the file info; a long name ends in an ellipsis. */
+  /* Where a stream comes from, just under the file info in the gap the now-playing screen keeps below it, so it moves nothing; a long name ends in an ellipsis. */
   .device {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
     margin: var(--space-1) 0 0;
     overflow: hidden;
     font-size: 0.85em;
@@ -205,6 +212,10 @@
     vertical-align: -1px;
   }
 
+  .format.pending {
+    opacity: 0;
+  }
+
   .marks {
     display: flex;
     align-items: center;
@@ -213,6 +224,7 @@
   }
 
   .format {
+    transition: opacity 260ms;
     padding: 0 5px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
