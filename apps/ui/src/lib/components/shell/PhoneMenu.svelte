@@ -3,6 +3,7 @@
   import { canDiscover } from '../../discover';
   import { engines, VIA_LABELS } from '../../engine.svelte';
   import { switchTo } from '../../engines';
+  import { deviceRows, REACH_LABELS } from '../../devices';
   import { HELP_URL, openUrl } from '../../openUrl';
   import type { MenuItem } from '../../contextMenu.svelte';
   import { pickActions, runPick, type PickAction, type Picking } from '../../picking';
@@ -17,6 +18,16 @@
   const { engine, library, playlists, settings: prefs, settingsView, views } = getApp();
   const statusLabel = { connecting: 'connecting…', open: 'connected', closed: 'disconnected' };
   const label = $derived(statusLabel[engine.status] + (engine.via ? ` · ${VIA_LABELS[engine.via]}` : ''));
+  /** How each other engine in the switcher is reached, as Settings → Devices shows it (null: can't tell). */
+  const reach = $derived(
+    new Map(
+      deviceRows(
+        engines.list.engines.filter((e) => e.id !== engines.list.current),
+        engine.pairing?.devices ?? [],
+        engine.pairing?.net.links ?? [],
+      ).map((row) => [row.key, row.reach]),
+    ),
+  );
 
   // One of the select bar's menus, which keeps showing what it showed while it closes.
   let kept: { mode: 'select' | 'playlist'; picking: Picking } | null = null;
@@ -118,14 +129,15 @@
     {#if views.menu === 'engines'}
       {#each engines.list.engines as saved (saved.id)}
         {@const current = saved.id === engines.list.current}
+        {@const seen = current ? null : reach.get(saved.id)}
         <button
           class="item"
           aria-current={current}
           onclick={() => (current ? (views.menu = 'main') : engines.update((list) => switchTo(list, saved.id)))}
         >
-          <span class="connection {current ? engine.status : ''}"><span class="dot"></span></span>
+          <span class="connection {current ? engine.status : seen ? (seen === 'unreachable' ? 'closed' : 'open') : ''}"><span class="dot"></span></span>
           <span class="name">{saved.name}</span>
-          {#if current}<small>in control</small>{/if}
+          {#if current}<small>in control</small>{:else if seen}<small>{REACH_LABELS[seen]}</small>{/if}
         </button>
       {/each}
       <button class="item" onclick={pair}><Icon name="plus" size={20} />Pair a device</button>
