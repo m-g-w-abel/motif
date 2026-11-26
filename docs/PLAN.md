@@ -930,7 +930,13 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   ms before (Opus needs that to settle) with no request; one before or past
   them asks again from there, as before. Either way playback rides out a
   lost link once the bytes are here, and only fails on reaching bytes that
-  aren't.
+  aren't. An engine encodes one track at a time for another (encoding
+  faster than real time is a burst of work, and it may be a phone): the next
+  track's packets wait for the current one's to be in (a few seconds), and
+  waiting for that turn isn't a lost link. A seek's packets don't wait. A
+  track encoded for playing that becomes a download (or the other way
+  round), at the same quality, is fetched and encoded once: the download
+  writes the Ogg Opus file from the packets already coming.
 - **Downloaded group** (`library::downloads`): members (playlist, album key,
   album artist, track by path and audio hash) are matched against the
   library every time, so playlist edits and an artist's later albums
