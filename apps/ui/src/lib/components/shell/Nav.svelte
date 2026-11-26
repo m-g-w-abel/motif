@@ -7,13 +7,15 @@
   import Scrollbar from '../Scrollbar.svelte';
   import { canDecorate } from '../../windowChrome';
   import { contextMenu } from '../../contextMenu.svelte';
-  import { engines } from '../../engine.svelte';
+  import { engines, VIA_LABELS } from '../../engine.svelte';
   import { switchTo } from '../../engines';
   import { HELP_URL, openUrl } from '../../openUrl';
 
   const { engine, library, settings, settingsView, views } = getApp();
   let scroller = $state<HTMLElement>();
   const statusLabel = { connecting: 'Connecting…', open: 'Connected', closed: 'Disconnected' };
+  // In the tooltip only: the footer has no room beside the engine's name.
+  const label = $derived(statusLabel[engine.status] + (engine.via ? ` · ${VIA_LABELS[engine.via]}` : ''));
 
   function openSwitcher(e: MouseEvent) {
     const button = e.currentTarget as HTMLElement;
@@ -87,8 +89,8 @@
     {#if engines.list.engines.length > 1}
       <button
         class="connection switcher {engine.status}"
-        aria-label="{engines.current.name}, {statusLabel[engine.status]}. Switch engine"
-        title="{engines.current.name}: {statusLabel[engine.status]}"
+        aria-label="{engines.current.name}, {label}. Switch engine"
+        title="{engines.current.name}: {label}"
         onclick={openSwitcher}
       >
         <span class="dot"></span><span class="engine">{engines.current.name}</span><Icon name="chevron-up" size={12} />

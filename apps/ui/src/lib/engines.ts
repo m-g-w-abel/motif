@@ -54,6 +54,12 @@ export function setToken(list: EngineList, id: string, token: string | null): En
   return { ...list, engines: list.engines.map((e) => (e.id === id ? { ...e, token } : e)) };
 }
 
+/** Names an engine by what it calls itself (`Hello.engine_name`), which wins over whatever it was saved under; the same list if nothing changed. */
+export function setName(list: EngineList, id: string, name: string): EngineList {
+  if (!list.engines.some((e) => e.id === id && e.name !== name)) return list;
+  return { ...list, engines: list.engines.map((e) => (e.id === id ? { ...e, name } : e)) };
+}
+
 export function switchTo(list: EngineList, id: string): EngineList {
   return list.engines.some((e) => e.id === id) ? { ...list, current: id } : list;
 }
@@ -64,8 +70,13 @@ export function removeEngine(list: EngineList, id: string): EngineList {
   return { engines: list.engines.filter((e) => e.id !== id), current: list.current === id ? LOCAL_ID : list.current };
 }
 
-/** Where to connect on the `attempt`th try; `own` is this device's engine. */
-export function socketUrl(engine: SavedEngine, attempt: number, own: string): string {
+/** Where a connection goes: this device's own engine, an address on the LAN, or the tunnel over iroh (through this app's engine). */
+export type Route = { kind: 'own' } | { kind: 'lan'; address: string } | { kind: 'tunnel' };
+
+/** Where to connect on the `attempt`th try: each LAN address in turn, then the tunnel where this app has an engine to `tunnel` through. */
+export function routeAt(engine: SavedEngine, attempt: number, tunnel: boolean): Route {
   const { addresses } = engine;
-  return addresses.length ? `ws://${addresses[attempt % addresses.length]}/ws` : own;
+  if (!addresses.length) return { kind: 'own' };
+  const at = attempt % (addresses.length + (tunnel ? 1 : 0));
+  return at < addresses.length ? { kind: 'lan', address: addresses[at] } : { kind: 'tunnel' };
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getApp } from '../../context';
   import { canDiscover } from '../../discover';
-  import { engines } from '../../engine.svelte';
+  import { engines, VIA_LABELS } from '../../engine.svelte';
   import { switchTo } from '../../engines';
   import { HELP_URL, openUrl } from '../../openUrl';
   import type { MenuItem } from '../../contextMenu.svelte';
@@ -16,6 +16,7 @@
   // and its Add to playlist with the playlists to add to (`Playlists.choices`).
   const { engine, library, playlists, settings: prefs, settingsView, views } = getApp();
   const statusLabel = { connecting: 'connecting…', open: 'connected', closed: 'disconnected' };
+  const label = $derived(statusLabel[engine.status] + (engine.via ? ` · ${VIA_LABELS[engine.via]}` : ''));
 
   // One of the select bar's menus, which keeps showing what it showed while it closes.
   let kept: { mode: 'select' | 'playlist'; picking: Picking } | null = null;
@@ -110,7 +111,7 @@
       aria-expanded={views.menu === 'engines'}
       onclick={() => (views.menu = views.menu === 'engines' ? 'main' : 'engines')}
     >
-      <span class="dot"></span>{engine.unpaired ? 'not paired' : statusLabel[engine.status]}
+      <span class="dot"></span>{engine.unpaired ? 'not paired' : label}
       <span class="chip">{engines.current.name}</span>
     </button>
 

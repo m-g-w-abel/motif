@@ -29,15 +29,17 @@ pub enum Alpn {
     Sync,
     Catalog,
     Files,
+    Art,
 }
 
 impl Alpn {
-    pub const ALL: [Alpn; 5] = [
+    pub const ALL: [Alpn; 6] = [
         Alpn::Link,
         Alpn::Remote,
         Alpn::Sync,
         Alpn::Catalog,
         Alpn::Files,
+        Alpn::Art,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -47,6 +49,7 @@ impl Alpn {
             Alpn::Sync => b"motif/sync/1",
             Alpn::Catalog => b"motif/catalog/1",
             Alpn::Files => b"motif/files/1",
+            Alpn::Art => b"motif/art/1",
         }
     }
 
@@ -286,9 +289,12 @@ pub async fn follow_reach(conn: &Connection, mut f: impl FnMut(Reach)) {
     }
 }
 
-/// Tells the peer on a [`Alpn::Link`] connection where we are, and hears
-/// where it is.
-pub async fn hello(conn: &Connection, mine: &PeerAddr) -> Result<PeerAddr, String> {
+/// Tells the peer on a [`Alpn::Link`] connection where we are (a
+/// [`PeerAddr`], perhaps with more), and hears where it is.
+pub async fn hello<T>(conn: &Connection, mine: &T) -> Result<T, String>
+where
+    T: Serialize + serde::de::DeserializeOwned,
+{
     let tell = async {
         let mut send = conn.open_uni().await.map_err(|e| e.to_string())?;
         let json = serde_json::to_vec(mine).map_err(|e| e.to_string())?;

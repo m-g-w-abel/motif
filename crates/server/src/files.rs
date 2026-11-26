@@ -1322,11 +1322,21 @@ mod tests {
         library_a.set_device(a.engine_key()).unwrap();
         library_b.set_device(b.engine_key()).unwrap();
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(crate::links::run(b.clone(), 0, Some(library_b.clone())));
+        tokio::spawn(crate::links::run(
+            b.clone(),
+            0,
+            Some(library_b.clone()),
+            None,
+        ));
         until("B bound", || b.iroh_port().is_some()).await;
         let at_b = format!("127.0.0.1:{}", b.iroh_port().unwrap());
         a.link("B", b.engine_key(), &[at_b]).unwrap();
-        tokio::spawn(crate::links::run(a.clone(), 0, Some(library_a.clone())));
+        tokio::spawn(crate::links::run(
+            a.clone(),
+            0,
+            Some(library_a.clone()),
+            None,
+        ));
         until("A's catalog on B", || tracks(&library_b).len() == 1).await;
         let track = tracks(&library_b).remove(0);
         assert!(track.id.starts_with("remote:"), "{}", track.id);
@@ -1358,8 +1368,9 @@ mod tests {
         .unwrap();
         // On the LAN (loopback here), the original: a WAV at its own rate.
         assert_eq!(frames, 3 * 44_100);
+        // Named as the owner calls itself, which the link takes on meeting it.
         let lan = protocol::Streamed {
-            from: "A".into(),
+            from: a.engine_name(),
             sent: Quality::Original,
             route: protocol::Route::Lan,
         };

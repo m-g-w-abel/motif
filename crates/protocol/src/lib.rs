@@ -55,6 +55,9 @@ pub enum ServerMessage {
     Hello {
         protocol_version: u32,
         engine_version: String,
+        /// What the engine is called ([`PairingState::name`]), which
+        /// clients show it as.
+        engine_name: String,
         /// Engine wall clock (Unix ms), so clients can convert
         /// [`PlayerState::sampled_at_ms`] to their own clock.
         #[ts(type = "number")]
@@ -1146,6 +1149,10 @@ pub enum PairingCommand {
         of: QualityFor,
         quality: Quality,
     },
+    /// What this engine is called ([`PairingState::name`]).
+    SetName {
+        name: String,
+    },
     /// The sending device's own engine key (ed25519, hex; the desktop app's
     /// or the phone's), linking the two engines: pairings from before links
     /// send it on connecting. Needs [`Scope::Sync`]; safe to repeat.
@@ -1159,6 +1166,9 @@ pub enum PairingCommand {
 pub struct PairingState {
     /// The engine's public key (ed25519, hex), its identity.
     pub engine_key: String,
+    /// What other devices call it: its computer's or phone's name until
+    /// renamed.
+    pub name: String,
     pub code: Option<PairingCode>,
     pub auto_approve: Option<Preset>,
     /// Devices that redeemed a code and wait for approval.
@@ -1429,6 +1439,7 @@ pub struct Paired {
     pub device: String,
     pub token: String,
     pub engine_key: String,
+    pub engine_name: String,
 }
 
 #[cfg(test)]

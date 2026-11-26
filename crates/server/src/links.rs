@@ -1,6 +1,7 @@
 //! The iroh endpoint ([`net`]) while this engine has linked engines: it keeps
 //! a [`net::Alpn::Link`] connection to each one it can reach, where they swap
-//! addresses for each other's address book ([`Pairing::met`]), and shows how
+//! addresses for each other's address book and their names
+//! ([`Pairing::met`]), and shows how
 //! each is reached ([`Pairing::set_reach`]). While the LAN switch is on it
 //! also browses `_motif._tcp` over mDNS, whose adverts carry the iroh port,
 //! so engines whose addresses changed find each other again without relays.
@@ -8,7 +9,8 @@
 //! syncs playlists, plays and marks ([`net::Alpn::Sync`], sync.rs) and
 //! swaps catalogs ([`net::Alpn::Catalog`], catalog.rs) when they meet and
 //! after each change here; unlinking drops that engine's catalog. It serves
-//! this engine's tracks to them ([`net::Alpn::Files`], files.rs).
+//! this engine's tracks to them ([`net::Alpn::Files`], files.rs), and their
+//! apps control it from away ([`net::Alpn::Remote`], tunnel.rs).
 //! Connections for other purposes are refused until the features that use
 //! them exist.
 
@@ -22,9 +24,9 @@ use library::Library;
 use mdns_sd::{ResolvedService, ServiceDaemon, ServiceEvent};
 use net::{Alpn, Connection, Net};
 use protocol::{LibraryStatus, Reach};
-use tokio::task::JoinSet;
+use tokio::{sync::mpsc, task::JoinSet};
 
-use crate::{Pairing, catalog, files, sync};
+use crate::{Pairing, art, catalog, files, sync, tunnel};
 
 // shortcut: a fixed retry; back off if unreachable engines cost battery.
 const RETRY: Duration = Duration::from_secs(60);
@@ -41,7 +43,12 @@ const AGAIN: Duration = Duration::from_secs(5);
 /// Runs the endpoint on UDP `port` (another if taken), which LAN addresses
 /// of this engine share with its HTTP server ([`Pairing::link`]), syncing
 /// `library` if there is one. Never ends.
-pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
+pub(crate) async fn run(
+    pairing: Pairing,
+    port: u16,
+    library: Option<Library>,
+    tunnels: Option<mpsc::Sender<(tunnel::Stream, String)>>,
+) {
     if let Some(library) = &library {
         tokio::spawn(drop_unlinked_catalogs(pairing.clone(), library.clone()));
     }
@@ -82,7 +89,7 @@ pub(crate) async fn run(pairing: Pairing, port: u16, library: Option<Library>) {
         };
         tokio::select! {
             // The endpoint closed under us: start again.
-            () = keep_links(&net, &pairing, library.as_ref()) => {}
+            () = keep_links(&net, &pairing, library.as_ref(), tunnels.as_ref()) => {}
             () = changed => {}
         }
         net.close().await;
@@ -130,7 +137,12 @@ struct Links {
     accepted: Vec<Connection>,
 }
 
-async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
+async fn keep_links(
+    net: &Net,
+    pairing: &Pairing,
+    library: Option<&Library>,
+    tunnels: Option<&mpsc::Sender<(tunnel::Stream, String)>>,
+) {
     let links = Arc::new(Mutex::new(Links::default()));
     // Dropped with this future, which ends every connection's task.
     let mut tasks = JoinSet::new();
@@ -169,6 +181,17 @@ async fn keep_links(net: &Net, pairing: &Pairing, library: Option<&Library>) {
                         let gate = pairing.clone();
                         let linked: net::Linked = Arc::new(move |key| gate.is_linked(key));
                         tasks.spawn(files::serve(library.clone(), conn, linked, None));
+                    }
+                    (Alpn::Remote, _) => match tunnels {
+                        Some(tunnels) => {
+                            tasks.spawn(tunnel::accept(conn, tunnels.clone()));
+                        }
+                        None => conn.close(2u32.into(), b"not yet"),
+                    },
+                    (Alpn::Art, Some(library)) => {
+                        let gate = pairing.clone();
+                        let linked: net::Linked = Arc::new(move |key| gate.is_linked(key));
+                        tasks.spawn(art::serve(library.clone(), conn, linked));
                     }
                     _ => conn.close(2u32.into(), b"not yet"),
                 }
@@ -328,8 +351,12 @@ async fn keep(
         };
         shared.live.insert(key.clone(), live);
     }
-    match net::hello(&conn, &net.addr()).await {
-        Ok(addr) => pairing.met(&key, addr),
+    let mine = Hello {
+        addr: net.addr(),
+        name: Some(pairing.engine_name()),
+    };
+    match net::hello(&conn, &mine).await {
+        Ok(Hello { addr, name }) => pairing.met(&key, addr, name.as_deref()),
         Err(err) => tracing::debug!(%key, %err, "iroh: no hello"),
     }
     tokio::select! {
@@ -350,6 +377,16 @@ async fn keep(
     if net::refused(&conn) {
         unlinked_by(&pairing, &key);
     }
+}
+
+/// What linked engines tell each other on meeting.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Hello {
+    #[serde(flatten)]
+    addr: net::PeerAddr,
+    /// Missing from engines before names.
+    #[serde(default)]
+    name: Option<String>,
 }
 
 /// The engine with `key` said it isn't linked with this one (it forgot this
@@ -557,11 +594,11 @@ mod tests {
             })
             .unwrap();
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(b.clone(), 0, Some(library_b.clone())));
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone()), None));
         let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        tokio::spawn(run(a.clone(), 0, Some(library_a.clone())));
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone()), None));
         until("made before", &library_b, |l| playlists(l) == ["Before"]).await;
         // A change on the end that was dialled goes the other way.
         library_b
@@ -609,6 +646,205 @@ mod tests {
         }
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_linked_engines_cover_and_waveform_are_fetched_once_and_kept() {
+        let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
+        for p in [&a, &b] {
+            p.command(protocol::PairingCommand::SetInternet { allowed: false })
+                .unwrap();
+        }
+        let ((library_a, dir_a), (library_b, dir_b)) = (library("art-a"), library("art-b"));
+        library_a.set_device(a.engine_key()).unwrap();
+        library_b.set_device(b.engine_key()).unwrap();
+        // A folder with a non-ASCII name (#266) holding a track and its cover.
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../library/tests/fixtures/Artist B/Second Album");
+        let music = dir_a.join("music/フリクリ OST 2");
+        std::fs::create_dir_all(&music).unwrap();
+        for file in ["01 Beginning.mp3", "cover.png"] {
+            std::fs::copy(fixtures.join(file), music.join(file)).unwrap();
+        }
+        library_a
+            .query(protocol::LibraryQuery::AddRoot {
+                path: dir_a.join("music").to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        b.link("A", a.engine_key(), &[]).unwrap();
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone()), None));
+        let b_port = bound(&b).await;
+        a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
+            .unwrap();
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone()), None));
+        let shown = |l: &Library| {
+            let protocol::QueryResult::Tracks { tracks, .. } = l
+                .query(protocol::LibraryQuery::Tracks {
+                    search: None,
+                    sort: vec![],
+                    filter: Default::default(),
+                    offset: 0,
+                    limit: 10,
+                })
+                .unwrap()
+            else {
+                panic!()
+            };
+            tracks.into_iter().next()
+        };
+        until("catalog", &library_b, |l| {
+            shown(l).is_some_and(|t| t.art.is_some())
+        })
+        .await;
+        let track = shown(&library_b).unwrap();
+        let key = track.art.unwrap();
+        assert!(library_b.art_image(&key, None).is_err(), "not fetched yet");
+
+        let remote = art::Remote::new();
+        remote.cover(&b, &library_b, &key).await.unwrap();
+        assert_eq!(library_b.art_image(&key, None).unwrap().1, "image/png");
+        assert!(library_b.art_image(&key, Some(32)).is_ok());
+        // Kept: asked for again with the owner gone, it is not needed.
+        let device = a.subscribe().borrow().devices[0].id.clone();
+        a.command(protocol::PairingCommand::Revoke { device })
+            .unwrap();
+        wait_for(&b, |s| s.devices.is_empty()).await;
+        assert!(library_b.art_image(&key, None).is_ok());
+        // Not a key, nor a linked engine's: refused without asking anyone.
+        assert!(remote.cover(&b, &library_b, "../x").await.is_ok());
+        assert!(library_b.art_image("../x", None).is_err());
+        for dir in [dir_a, dir_b] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// Covers of an engine that can't be reached fail at once, without each
+    /// request dialling it for [`art`]'s whole timeout (#266).
+    async fn covers_of_an_unreachable_engine(name: &str, reach: Option<Reach>, within: Duration) {
+        let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
+        b.command(protocol::PairingCommand::SetInternet { allowed: false })
+            .unwrap();
+        // Its own folder: the two tests using this run at once.
+        let (library_b, dir_b) = library(name);
+        library_b.set_device(b.engine_key()).unwrap();
+        // Linked, but whatever holds its address never answers.
+        let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        b.link(
+            "A",
+            a.engine_key(),
+            &[silent.local_addr().unwrap().to_string()],
+        )
+        .unwrap();
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone()), None));
+        bound(&b).await;
+        if let Some(reach) = reach {
+            b.set_reach(a.engine_key(), reach);
+        }
+        let keys: Vec<String> = (0..20).map(|i| format!("{i:032x}")).collect();
+        let changes = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| library::catalog::Change {
+                version: i as u64 + 1,
+                id: i as i64,
+                track: Some(library::catalog::CatalogTrack {
+                    art: Some(key.clone()),
+                    ..Default::default()
+                }),
+            })
+            .collect();
+        library_b
+            .merge_catalog(
+                a.engine_key(),
+                library::catalog::Page {
+                    epoch: "e".into(),
+                    from: 0,
+                    changes,
+                },
+            )
+            .unwrap();
+        let remote = Arc::new(art::Remote::new());
+        let asked = keys.into_iter().map(|key| {
+            let (remote, b, library) = (remote.clone(), b.clone(), library_b.clone());
+            tokio::spawn(async move { remote.cover(&b, &library, &key).await })
+        });
+        let answers = tokio::time::timeout(within, futures_util::future::join_all(asked))
+            .await
+            .expect("requests for an unreachable engine's covers waited on dialling it");
+        assert!(answers.into_iter().all(|a| a.unwrap().is_err()));
+        drop(silent);
+        let _ = std::fs::remove_dir_all(dir_b);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn covers_of_an_engine_known_to_be_unreachable_are_not_dialled() {
+        covers_of_an_unreachable_engine("art-off", None, Duration::from_secs(2)).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn covers_of_an_engine_that_fails_to_answer_share_one_failed_dial() {
+        // Reached a moment ago, as far as anyone knows: one dial finds out.
+        covers_of_an_unreachable_engine("art-silent", Some(Reach::Direct), Duration::from_secs(9))
+            .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_linked_engines_waveform_comes_from_its_owner() {
+        let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
+        for p in [&a, &b] {
+            p.command(protocol::PairingCommand::SetInternet { allowed: false })
+                .unwrap();
+        }
+        let ((library_a, dir_a), (library_b, dir_b)) = (library("wave-a"), library("wave-b"));
+        library_a.set_device(a.engine_key()).unwrap();
+        library_b.set_device(b.engine_key()).unwrap();
+        let music = dir_a.join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        std::fs::write(music.join("tone.wav"), wav()).unwrap();
+        library_a
+            .query(protocol::LibraryQuery::AddRoot {
+                path: music.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        b.link("A", a.engine_key(), &[]).unwrap();
+        tokio::spawn(run(b.clone(), 0, Some(library_b.clone()), None));
+        let b_port = bound(&b).await;
+        a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
+            .unwrap();
+        tokio::spawn(run(a.clone(), 0, Some(library_a.clone()), None));
+        let first = |l: &Library| {
+            let protocol::QueryResult::Tracks { tracks, .. } = l
+                .query(protocol::LibraryQuery::Tracks {
+                    search: None,
+                    sort: vec![],
+                    filter: Default::default(),
+                    offset: 0,
+                    limit: 10,
+                })
+                .unwrap()
+            else {
+                panic!()
+            };
+            tracks.into_iter().next()
+        };
+        until("catalog", &library_b, |l| first(l).is_some()).await;
+        let path = first(&library_b).unwrap().track.id;
+        let remote = art::Remote::new();
+        let levels = remote
+            .waveform(&b, &library_b, &path)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!levels.is_empty());
+        assert!(
+            remote
+                .waveform(&b, &library_b, "/local.flac")
+                .await
+                .is_none()
+        );
+        for dir in [dir_a, dir_b] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
     #[tokio::test]
     async fn linked_engines_meet_and_learn_each_others_address() {
         let (a, b) = (Pairing::in_memory(), Pairing::in_memory());
@@ -616,18 +852,26 @@ mod tests {
             p.command(protocol::PairingCommand::SetInternet { allowed: false })
                 .unwrap();
         }
+        b.command(protocol::PairingCommand::SetName {
+            name: "Desk".into(),
+        })
+        .unwrap();
         // A met B on the LAN; B knows nothing of A yet.
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(b.clone(), 0, None));
+        tokio::spawn(run(b.clone(), 0, None, None));
         let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        tokio::spawn(run(a.clone(), 0, None));
+        tokio::spawn(run(a.clone(), 0, None, None));
         let direct = |s: &PairingState| s.net.links.iter().all(|l| l.reach == Reach::Direct);
         wait_for(&a, direct).await;
         wait_for(&b, direct).await;
         let (_, told) = &b.linked()[0];
         assert!(!told.direct.is_empty(), "B learned where A is");
+        // And each other's names, which they were linked under.
+        wait_for(&a, |s| s.devices[0].name == "Desk").await;
+        let a_name = a.engine_name();
+        wait_for(&b, |s| s.devices[0].name == a_name).await;
 
         // Unlinking closes the link, and the other end forgets it too.
         let device = b.subscribe().borrow().devices[0].id.clone();
@@ -646,7 +890,7 @@ mod tests {
             .unwrap();
         let (library_b, dir_b) = library("sessions");
         b.link("A", a.engine_key(), &[]).unwrap();
-        tokio::spawn(run(b.clone(), 0, Some(library_b)));
+        tokio::spawn(run(b.clone(), 0, Some(library_b), None));
         let b_port = bound(&b).await;
         // A's side by hand: a sync session B accepts and waits on.
         let net_a = Net::bind(a.secret(), 0, &net::Relays::Off, Arc::new(|_| true))
@@ -681,11 +925,11 @@ mod tests {
         let device = b.subscribe().borrow().devices[0].id.clone();
         b.command(protocol::PairingCommand::Revoke { device })
             .unwrap();
-        tokio::spawn(run(b.clone(), 0, None));
+        tokio::spawn(run(b.clone(), 0, None, None));
         let b_port = bound(&b).await;
         a.link("B", b.engine_key(), &[format!("127.0.0.1:{b_port}")])
             .unwrap();
-        tokio::spawn(run(a.clone(), 0, None));
+        tokio::spawn(run(a.clone(), 0, None, None));
         wait_for(&a, |s| s.devices.is_empty()).await;
         // Told: B's endpoint, with nobody left, stops.
         until_port_gone(&b).await;

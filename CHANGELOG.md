@@ -5,6 +5,13 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
+- **Control your desktop from anywhere**: a phone (or another desktop) whose
+  engine is linked keeps controlling it away from home, over the same
+  encrypted link, with the same permissions as at home. The connection shows
+  whether it goes over the LAN, the internet or a relay.
+- **Covers and seek bar waveforms of your other devices' songs**: a song that is
+  only on a linked device shows its real cover and waveform, fetched from that
+  device the first time and kept here.
 - **Songs on your other devices show up in your library**: a linked device's
   songs mix in with yours (the same song on both shows once), marked with a
   cloud and dimmed while that device can't be reached. The sort menu's "Only
@@ -22,6 +29,9 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
   downloads, Original included. Now Playing shows which device a song
   streams from and what arrives, and away from home whether it comes over
   the internet or a relay.
+- **Scrobbles from every device**: a device with a scrobbling account also
+  sends the plays synced from your devices without one (up to 14 days old),
+  each play once.
 - **Playlists, history and ratings sync**: linked devices share playlists
   (names, songs, order), what you played (so Recently Played and play counts
   cover every device) and favourites and ratings. Changes made apart merge
