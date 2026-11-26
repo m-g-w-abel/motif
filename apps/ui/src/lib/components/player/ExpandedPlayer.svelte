@@ -649,6 +649,10 @@
       justify-content: center;
     }
 
+    .details :global(.hero .device) {
+      text-align: center;
+    }
+
     .details :global(.hero .format) {
       padding: 2px var(--space-3);
       border: 0;
@@ -733,7 +737,7 @@
     }
 
     [data-step='half'] :is(.album-title, .more),
-    [data-step='half'] .details :global(.hero-album) {
+    [data-step='half'] .details :global(:is(.hero-album, .hero .device)) {
       display: none;
     }
 

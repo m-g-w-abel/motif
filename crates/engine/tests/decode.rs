@@ -9,7 +9,7 @@ use std::{
 };
 
 use engine::{
-    ByteSource, Source,
+    ByteSource, Opened, Source,
     audio::decoder::{self, Decoder, Plugin},
 };
 
@@ -156,7 +156,8 @@ fn stream(file: &str) -> Source {
     .unwrap();
     Source::Stream {
         name: file.into(),
-        open: Arc::new(move || Ok(Box::new(Held(Cursor::new(bytes.clone()))))),
+        open: Arc::new(move || Ok(Opened::Bytes(Box::new(Held(Cursor::new(bytes.clone())))))),
+        streamed: tokio::sync::watch::channel(None).1,
     }
 }
 

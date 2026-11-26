@@ -17,6 +17,8 @@ struct Saved {
     output: Option<String>,
     #[serde(default)]
     replay_gain: ReplayGainSettings,
+    #[serde(default)]
+    skip_unreachable: bool,
 }
 
 impl Saved {
@@ -27,6 +29,7 @@ impl Saved {
             repeat: state.repeat,
             output: state.output.clone(),
             replay_gain: state.replay_gain,
+            skip_unreachable: state.skip_unreachable,
         }
     }
 }
@@ -50,6 +53,9 @@ pub async fn keep(engine: Engine, file: PathBuf) {
             },
             Command::SetReplayGain {
                 settings: saved.replay_gain,
+            },
+            Command::SetSkipUnreachable {
+                skip: saved.skip_unreachable,
             },
         ]
         .into_iter()

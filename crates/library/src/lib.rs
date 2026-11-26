@@ -19,6 +19,7 @@ mod playlists;
 mod scan;
 pub mod sync;
 mod tags;
+pub mod transcode;
 mod waveform;
 
 use std::{

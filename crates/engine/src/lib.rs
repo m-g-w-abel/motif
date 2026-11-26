@@ -22,7 +22,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 use output::Output;
 
 pub use player::{Playback, Player};
-pub use resolve::{ByteSource, LocalFiles, Opener, Playable, Resolver, Source};
+pub use resolve::{
+    ByteSource, LocalFiles, Opened, Opener, Playable, Resolver, Source, StreamState,
+};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum EngineError {
@@ -94,6 +96,8 @@ impl Engine {
             let mut bands_tick = tokio::time::interval(BANDS_TICK);
             bands_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut tapping = false;
+            // The current track's, while it streams: its route changes mid-track.
+            let mut streamed: Option<watch::Receiver<_>> = None;
             loop {
                 let now = Instant::now();
                 let changed = tokio::select! {
@@ -139,6 +143,12 @@ impl Engine {
                         }
                         player.tick(now) | output.poll(&mut player, now) | measured
                     }
+                    heard = async { streamed.as_mut()?.changed().await.ok() }, if streamed.is_some() => {
+                        if heard.is_none() {
+                            streamed = None;
+                        }
+                        heard.is_some()
+                    }
                     _ = bands_tick.tick(), if tapping => {
                         if let Some(bands) = output.bands() {
                             bands_tx.send_replace(bands);
@@ -183,6 +193,15 @@ impl Engine {
                         }
                         modified
                     });
+                    match player.streamed() {
+                        Some(now) if !streamed.as_ref().is_some_and(|s| s.same_channel(now)) => {
+                            let mut now = now.clone();
+                            now.mark_unchanged();
+                            streamed = Some(now);
+                        }
+                        Some(_) => {}
+                        None => streamed = None,
+                    }
                     state_tx.send_replace(snapshot(&player));
                 }
             }

@@ -1,4 +1,6 @@
+import type { Streamed } from './protocol/Streamed';
 import type { TrackRef } from './protocol/TrackRef';
+import type { Unreachable } from './protocol/Unreachable';
 
 export function formatTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -19,6 +21,34 @@ export function trackTitle(track: TrackRef): string {
 export function trackFormat(track: TrackRef): string {
   const match = /\.([a-z0-9]+)$/i.exec(track.id);
   return match ? match[1].toUpperCase() : '';
+}
+
+/**
+ * What is playing, as the file info shows it: a transcoded stream as the Opus that arrives, a streamed one with its
+ * device (and route off the LAN). A song `elsewhere` (on linked engines) shows nothing until it's known how it streams.
+ */
+export function playedFormat(
+  file: { codec?: string | null; sample_rate?: number | null; bitrate?: number | null } | null | undefined,
+  format: string,
+  streamed: Streamed | null | undefined,
+  elsewhere = false,
+): { rate: string; bitrate: string; format: string; device: string } {
+  if (elsewhere && !streamed) return { rate: '', bitrate: '', format: '', device: '' };
+  const device = streamed ? `${streamed.from}${streamed.route === 'lan' ? '' : ` · ${streamed.route}`}` : '';
+  if (streamed && streamed.sent !== 'original') {
+    return { rate: '48 kHz', bitrate: `${streamed.sent.replace('opus', '')} kbps`, format: 'OPUS (transcoded)', device };
+  }
+  return {
+    rate: file?.sample_rate ? `${file.sample_rate / 1000} kHz` : '',
+    bitrate: file?.bitrate ? `${file.bitrate} kbps` : '',
+    format,
+    device,
+  };
+}
+
+/** The toast for songs skipped because their device couldn't be reached. */
+export function skippedLabel({ from, skipped }: Unreachable): string {
+  return `${from} can't be reached — skipped ${skipped} song${skipped === 1 ? '' : 's'}`;
 }
 
 /** A stable two-colour gradient per album, used until real artwork exists. */

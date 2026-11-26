@@ -4,7 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use protocol::{ReplayGain, TrackRef};
+use protocol::{ReplayGain, Streamed, TrackRef};
+use tokio::sync::watch;
+
+use crate::audio::decoder::Decoder;
 
 /// Something this device can play.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,17 +23,36 @@ pub enum Playable {
 #[derive(Clone)]
 pub enum Source {
     File(PathBuf),
-    /// Bytes from elsewhere (a linked engine), read as from a file. `name`
-    /// tells streams apart; `open` starts a reader at the beginning and is
-    /// called on the decode thread, so it may block on the network.
+    /// Audio from elsewhere (a linked engine): bytes read as from a file, or
+    /// audio decoded already. `name` tells streams apart; `open` starts it at
+    /// the beginning and is called on the decode thread, so it may block on
+    /// the network. `streamed` says how it comes once opened, or that its
+    /// device couldn't be reached.
     Stream {
         name: String,
         open: Opener,
+        streamed: watch::Receiver<Option<StreamState>>,
     },
 }
 
+/// What a [`Source::Stream`] says of itself.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamState {
+    Streams(Streamed),
+    /// Named: the device holding it.
+    Unreachable(String),
+}
+
 /// Opens a [`Source::Stream`].
-pub type Opener = Arc<dyn Fn() -> io::Result<Box<dyn ByteSource>> + Send + Sync>;
+pub type Opener = Arc<dyn Fn() -> io::Result<Opened> + Send + Sync>;
+
+/// A [`Source::Stream`], opened.
+pub enum Opened {
+    /// For the decoders to read.
+    Bytes(Box<dyn ByteSource>),
+    /// Decoded at its end (encoded there as it is read).
+    Decoded(Box<dyn Decoder>),
+}
 
 /// A seekable reader of a stream's bytes.
 pub trait ByteSource: Read + Seek + Send + Sync {

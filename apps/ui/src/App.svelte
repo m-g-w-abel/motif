@@ -22,6 +22,7 @@
   import { PlayerSheet } from './lib/sheet.svelte';
   import CopyButton from './lib/components/CopyButton.svelte';
   import { toasts } from './lib/toast.svelte';
+  import { skippedLabel } from './lib/format';
   import { routeVolumeKeys } from './lib/volumeKeys';
   import { remoteMedia, routeRemoteButtons, showRemoteMedia } from './lib/remoteMedia';
   import { android } from './lib/android';
@@ -128,6 +129,19 @@
   // per track (and cached per art id), never while idle. It asks for the
   // 256px size the album grid already loaded, so it is usually a cache hit.
   // Starts in the last cover's colours, so a restart doesn't flash the theme's.
+  // Songs skipped because their device couldn't be reached: one toast, replaced as the count grows (an error's lasts until the next skip).
+  let skippedToast: number | undefined;
+  let skipped = 0;
+  $effect(() => {
+    const unreachable = engine.player?.unreachable;
+    const now = unreachable?.skipped ?? 0;
+    if (unreachable && now > skipped) {
+      if (skippedToast) toasts.dismiss(skippedToast);
+      skippedToast = toasts.show(skippedLabel(unreachable), 'error');
+    }
+    skipped = now;
+  });
+
   let artPixels = $state<Uint8ClampedArray | null>(lastArtPixels());
   $effect(() => rememberArtPixels(artPixels));
   const pixelCache = new Map<string, Uint8ClampedArray | null>();

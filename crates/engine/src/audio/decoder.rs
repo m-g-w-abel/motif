@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use crate::Source;
+use crate::{Opened, Source};
 use symphonia::core::{
     codecs::{
         CodecParameters,
@@ -69,9 +69,14 @@ pub fn all() -> Vec<&'static Plugin> {
     plugins
 }
 
-/// Opens `source` with the first plugin in `plugins` that can. The error lists
-/// why each one couldn't.
+/// Opens `source` with the first plugin in `plugins` that can, unless it
+/// comes decoded. The error lists why each one couldn't.
 pub fn open(source: &Source, plugins: &[&Plugin]) -> Result<Box<dyn Decoder>, String> {
+    if let Source::Stream { open, .. } = source
+        && let Opened::Decoded(decoder) = open().map_err(|e| e.to_string())?
+    {
+        return Ok(decoder);
+    }
     let mut reasons = Vec::new();
     for plugin in plugins {
         match (plugin.open)(source) {

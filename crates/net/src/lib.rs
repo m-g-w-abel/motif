@@ -10,12 +10,12 @@ use std::{
 };
 
 use iroh::endpoint::{ConnectError, ConnectionError};
-pub use iroh::endpoint::{Connection, RecvStream, SendStream};
+pub use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey, TransportAddr,
     endpoint::{AfterHandshakeOutcome, BindOpts, EndpointHooks, presets},
 };
-use protocol::Reach;
+use protocol::{Reach, Route};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -232,6 +232,46 @@ pub fn reach(conn: &Connection) -> Reach {
     }
 }
 
+/// Whether `conn` reaches its peer on the LAN: it has a direct path to a
+/// private address. Not only the selected one: just after the handshake
+/// (which ran over it) none may be selected yet.
+pub fn lan(conn: &Connection) -> bool {
+    conn.paths()
+        .iter()
+        .any(|p| matches!(p.remote_addr(), TransportAddr::Ip(a) if on_lan(a.ip())))
+}
+
+/// How `conn` runs now: on the LAN if it can, as [`lan`] says.
+pub fn route(conn: &Connection) -> Route {
+    match reach(conn) {
+        Reach::Relayed => Route::Relayed,
+        _ if lan(conn) => Route::Lan,
+        _ => Route::Internet,
+    }
+}
+
+/// Calls `f` with `conn`'s route, and again when it changes but at most
+/// once per `every`, until it closes.
+pub async fn follow_route(conn: &Connection, every: std::time::Duration, mut f: impl FnMut(Route)) {
+    let mut events = conn.path_events();
+    let mut last = None;
+    loop {
+        let now = route(conn);
+        if last != Some(now) {
+            f(now);
+            last = Some(now);
+        }
+        tokio::select! {
+            event = n0_future::StreamExt::next(&mut events) => if event.is_none() { break },
+            _ = conn.closed() => break,
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(every) => {}
+            _ = conn.closed() => break,
+        }
+    }
+}
+
 /// Calls `f` with `conn`'s reach whenever it changes, until it closes.
 pub async fn follow_reach(conn: &Connection, mut f: impl FnMut(Reach)) {
     let mut events = conn.path_events();
@@ -419,6 +459,7 @@ mod tests {
         assert_eq!(heard_by_a.unwrap(), at_b);
         assert_eq!(heard_by_b.unwrap(), at_a);
         assert_eq!(reach(&dialled), Reach::Direct);
+        assert!(lan(&dialled));
     }
 
     /// A select loop races accepting with other events: an event firing

@@ -164,6 +164,14 @@ pub enum Command {
     SetReplayGain {
         settings: ReplayGainSettings,
     },
+    /// Whether a song whose device can't be reached is skipped
+    /// ([`PlayerState::skip_unreachable`]).
+    SetSkipUnreachable {
+        skip: bool,
+    },
+    /// Plays the entry stopped on because its device couldn't be reached
+    /// ([`Unreachable::stopped`]) again; does nothing otherwise.
+    Retry,
 }
 
 /// Which ReplayGain value levels each track.
@@ -426,6 +434,27 @@ pub struct PlayerState {
     /// The ReplayGain adjustment applied to the current track, in dB
     /// (`None` when off or nothing is loaded).
     pub gain_db: Option<f32>,
+    /// How the current track comes from a linked engine, while it streams
+    /// from one (`None` for this device's files).
+    pub streamed: Option<Streamed>,
+    /// A device that couldn't be reached, while it matters: playback stopped
+    /// on its song, or songs were skipped past it.
+    pub unreachable: Option<Unreachable>,
+    /// Skip songs whose device can't be reached rather than stop on them.
+    pub skip_unreachable: bool,
+}
+
+/// Songs a device held that couldn't be played because it couldn't be reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Unreachable {
+    /// The device's name.
+    pub from: String,
+    /// Songs skipped past ([`PlayerState::skip_unreachable`]).
+    pub skipped: u32,
+    /// Playback stopped on the current entry, its song; [`Command::Retry`]
+    /// plays it again.
+    pub stopped: bool,
 }
 
 impl Default for PlayerState {
@@ -445,6 +474,9 @@ impl Default for PlayerState {
             outputs: Vec::new(),
             replay_gain: ReplayGainSettings::default(),
             gain_db: None,
+            streamed: None,
+            unreachable: None,
+            skip_unreachable: false,
         }
     }
 }
@@ -1112,6 +1144,11 @@ pub enum PairingCommand {
     SetRelay {
         url: Option<String>,
     },
+    /// One of [`NetState::quality`].
+    SetQuality {
+        of: QualityFor,
+        quality: Quality,
+    },
     /// What this engine is called ([`PairingState::name`]).
     SetName {
         name: String,
@@ -1157,6 +1194,12 @@ pub struct NetState {
     pub own_relay: Option<String>,
     /// Each linked device ([`PairedDevice::id`]) and how it is reached now.
     pub links: Vec<LinkState>,
+    /// What linked engines send this one, kept across restarts. Streams on
+    /// the LAN always get the original.
+    pub quality: Qualities,
+    /// Whether this device's network costs by the byte (Android says so;
+    /// elsewhere never): streams then use [`Qualities::metered`].
+    pub metered: bool,
 }
 
 impl Default for NetState {
@@ -1165,8 +1208,93 @@ impl Default for NetState {
             internet: true,
             own_relay: None,
             links: Vec::new(),
+            quality: Qualities::default(),
+            metered: false,
         }
     }
+}
+
+/// What a linked engine sends of a track: the file, or Opus at a bitrate.
+/// Opus goes only for lossless files and those above its bitrate: a lossy
+/// file at or below it comes as it is, as encoding it again would lose more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Quality {
+    Original,
+    Opus256,
+    Opus192,
+    Opus128,
+    Opus96,
+}
+
+impl Quality {
+    /// The Opus bitrate, or `None` for the original.
+    pub fn kbps(self) -> Option<u32> {
+        match self {
+            Quality::Original => None,
+            Quality::Opus256 => Some(256),
+            Quality::Opus192 => Some(192),
+            Quality::Opus128 => Some(128),
+            Quality::Opus96 => Some(96),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Qualities {
+    /// Streams off the LAN.
+    pub stream: Quality,
+    /// Streams off the LAN on a metered network.
+    pub metered: Quality,
+    /// Downloaded copies.
+    pub download: Quality,
+}
+
+impl Default for Qualities {
+    fn default() -> Self {
+        Self {
+            stream: Quality::Opus256,
+            metered: Quality::Opus128,
+            download: Quality::Opus256,
+        }
+    }
+}
+
+/// A track streaming from a linked engine: which one, what it sends and how
+/// it gets here, which can change mid-track.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Streamed {
+    /// The linked engine's name.
+    pub from: String,
+    /// The original, or the Opus it encodes the file to.
+    pub sent: Quality,
+    pub route: Route,
+}
+
+/// How a connection to a linked engine runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Route {
+    /// Directly, on the same network.
+    Lan,
+    /// Directly, over the internet.
+    Internet,
+    /// Through a relay.
+    Relayed,
+}
+
+/// Which of [`Qualities`] a [`PairingCommand::SetQuality`] sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum QualityFor {
+    Stream,
+    Metered,
+    Download,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

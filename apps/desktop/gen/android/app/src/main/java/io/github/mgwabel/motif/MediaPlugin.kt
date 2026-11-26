@@ -10,6 +10,9 @@ import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -83,6 +86,13 @@ class MediaPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve()
   }
 
+  /** Where whether the network is metered goes, as `{ metered }` (now, then on each change). */
+  @Command
+  fun listenNetwork(invoke: Invoke) {
+    Metered.listen(activity.applicationContext, invoke.parseArgs(ListenArgs::class.java).channel)
+    invoke.resolve()
+  }
+
   /** Sets the media volume step, without showing the system volume panel. */
   @Command
   fun setVolume(invoke: Invoke) {
@@ -115,6 +125,25 @@ class MediaPlugin(private val activity: Activity) : Plugin(activity) {
 
   private fun org.json.JSONObject.optStringOrNull(key: String): String? =
     if (isNull(key)) null else getString(key)
+}
+
+/** Whether the default network costs by the byte, for streams from linked engines (`NetState::metered`). */
+object Metered {
+  private var callback: ConnectivityManager.NetworkCallback? = null
+
+  @Synchronized fun listen(context: Context, channel: Channel) {
+    val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    callback?.let(connectivity::unregisterNetworkCallback)
+    channel.send(JSObject().put("metered", connectivity.isActiveNetworkMetered))
+    val now = object : ConnectivityManager.NetworkCallback() {
+      override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+        val metered = !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        channel.send(JSObject().put("metered", metered))
+      }
+    }
+    connectivity.registerDefaultNetworkCallback(now)
+    callback = now
+  }
 }
 
 /** The media volume, which is the phone engine's volume; the Rust side is `apps/desktop/src/media.rs`. */

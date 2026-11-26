@@ -774,7 +774,7 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   path, and only to linked engines: the endpoint's gate at the handshake,
   then every range, so an engine unlinked mid-track gets no more. Ranges are
   at most 64 KiB, 8 answered at once a connection, each within 8 s.
-  Originals only; transcoding is #244.
+  Originals only here; Opus off the LAN came with #244 (below).
 - **Reader:** 64 KiB ranges; reading straight through fetches up to 2 MiB
   ahead (32 ranges, ~16 s of CD FLAC), 4 in flight at once, lowest first: 32
   at once arrived in any order, so the one needed next came last (6 s to
@@ -871,6 +871,40 @@ end of file). The engine stays playback-only: it just reads a `ByteSource`
   playing track, and a read waiting on a range, still run on the decode
   thread: on a stalled link, stop and skip wait for them (up to 8 s; pause
   doesn't, it goes to the output).
+
+### Opus for linked engines (#244, 2026-11-25)
+
+- **Rule** (`library::transcode::plan`): at an Opus quality, lossless files
+  (FLAC, WAV, AIFF, WavPack, APE) and files above its bitrate (ALAC shows by
+  its bitrate) are encoded; lossy files at or below it, or of unknown
+  bitrate, go as they are. Streams on the LAN (the selected path direct, to
+  a private, link-local or loopback address: `net::lan`) always get the
+  original. Settings, kept in pairing.json as the internet switch is
+  (`NetState::quality`, `SetQuality`): streams off the LAN (Opus 256),
+  streams on a metered network (Opus 128, a suggested default) and downloads
+  (Opus 256, for #245); each Original or Opus 256/192/128/96. Android says
+  whether the default network is metered (`MediaPlugin.kt` `listenNetwork`
+  → `Pairing::set_metered`); elsewhere it never is.
+- **Encoder** (`library::transcode::Encode`): the engine's decoders, its
+  resampler to 48 kHz (`pipeline::Stream`), libopus in 20 ms packets, from
+  any point; each packet says how many of its frames are audio, so the end
+  is exact (the look-ahead, `pre_skip`, is trimmed at the start). It yields
+  packets, so a download can wrap them in Ogg. Surround keeps front left and
+  right only. 60 s of 44.1 kHz stereo to Opus 256 takes 0.48 s in a release
+  build on a Ryzen 5 3600 (124× real time, resampling included).
+- **Wire:** on `motif/files/1` a stream may ask `{id, from_ms, quality}`
+  instead of a range. The answer frame is `Opus {channels, pre_skip,
+  from_ms, audio_hash}` (where the encode starts, as near as the file
+  seeks; the source's audio hash, which a downloaded copy keeps so it
+  dedupes with it) or `Original` (read ranges instead), then packets (u16
+  length, u16 frames of audio, the packet) as the reader takes them (QUIC
+  flow control paces the encoder) and the stream's end; an encode that fails
+  resets the stream, so it never reads as the end. These streams hold no
+  range slot and no 8 s limit (a paused track holds one open).
+- **Reader:** off the LAN it asks for Opus first; `Original` falls back to
+  ranges. The engine gets the track decoded already (`engine::Opened::Decoded`)
+  and a seek asks again from there. A packet lost because the connection
+  closed is asked for again, on a new connection, from where it was.
 
 ## Phase 1 plan: desktop player
 

@@ -18,7 +18,17 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
   songs on this device" narrows songs, albums, artists and search to what's here.
 - **Play songs from your other devices**: a song that is only on a linked
   device plays here, streamed from it in its original quality, with seeking
-  and gapless albums. If that device can't be reached, the song says so.
+  and gapless albums. If that device can't be reached, playback stops on
+  the song and says so, with Retry in place of Play; or, with Settings →
+  Playback → Skip songs that can't be reached, skips past it and says how
+  many were skipped.
+- **Smaller streams away from home**: off your home network, lossless and
+  high-bitrate songs from a linked device come as Opus 256 kbps (128 on a
+  metered phone network) instead of the original; lossy songs at or below
+  that come as they are. Settings → Devices sets both, and the quality for
+  downloads, Original included. Now Playing shows which device a song
+  streams from and what arrives, and away from home whether it comes over
+  the internet or a relay.
 - **Scrobbles from every device**: a device with a scrobbling account also
   sends the plays synced from your devices without one (up to 14 days old),
   each play once.

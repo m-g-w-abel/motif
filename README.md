@@ -109,9 +109,16 @@ control isn't an add-on: it's the normal code path.
   same audio on several devices is one track (dedupe by audio hash). Songs
   not on this device carry a mark, dim while no device holding them is
   reachable, and one filter limits every list to this device.
-- Songs held only by a linked engine play by streaming the original from
-  it: byte-range reads over iroh with ordered read-ahead, so decoders seek
-  in it as in a file and the next track still starts gaplessly.
+- Songs held only by a linked engine play by streaming from it: the
+  original on the LAN, as byte-range reads over iroh with ordered
+  read-ahead, so decoders seek in it as in a file and the next track still
+  starts gaplessly. Away from home, lossless and high-bitrate files come as
+  Opus 256 (128 on a metered phone network), encoded live from the point
+  played at over 100× real time; lossy files at or below that come as they
+  are. All settable, Original included. Now Playing's file info shows what
+  arrives (Opus marked transcoded), the engine and, off the LAN, whether
+  direct or relayed, updated as that changes. A song whose device can't be
+  reached stops playback with Retry (or is skipped, counted, if set).
 - Away from home, the app controls a linked engine over the same link: it
   tries the LAN first, then tunnels the same WebSocket protocol over an
   iroh stream through a loopback proxy, with the same token and scopes

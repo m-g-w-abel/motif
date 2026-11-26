@@ -1,10 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { fade } from 'svelte/transition';
   import { getApp, getViewState } from '../../context';
-  import { formatTime, trackFormat, trackTitle } from '../../format';
+  import { formatTime, playedFormat, trackFormat, trackTitle } from '../../format';
+  import { elsewhere } from '../../devices';
   import { marquee } from '../../marquee';
+  import { DURATION } from '../../motion/transition';
   import type { InfoStyle } from '../../layout/model';
   import Heart from '../Heart.svelte';
+  import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import Stars from '../Stars.svelte';
 
@@ -30,14 +34,42 @@
   /** Hero names that don't fit one line (phones) scroll once per track while the sheet is open. */
   // Held where it is while the sheet moves (its change starts from the text as drawn), put back once it is closed.
   const scrolling = $derived(style === 'hero' && playing && track ? (sheet.rest ? track.id : sheet.moving ? false : null) : null);
-  const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
+  /** What arrives (Opus if it is transcoded), and a stream's device: known at once for a song preloaded for gapless, else faded in once it is. */
+  const shown = $derived(
+    playedFormat(
+      details,
+      details?.codec ?? (track ? trackFormat(track) : ''),
+      playing ? engine.player?.streamed : null,
+      playing && !!track && elsewhere({ track }),
+    ),
+  );
+  const format = $derived(shown.format);
+  const remote = $derived(playing && !!track && elsewhere({ track }));
+  /** A song from elsewhere until it's known how it streams (can take a second): its badge keeps its place, unseen, then fades in. */
+  const waiting = $derived(remote && !engine.player?.streamed);
+  /** Whether this song was waited for, so its device line fades in; one known at the change (preloaded) shows at once. */
+  let waitedOn: string | undefined;
+  const waited = $derived.by(() => {
+    if (waiting) waitedOn = track?.id;
+    return waitedOn === track?.id;
+  });
+  const transcoded = $derived(playing && !!engine.player?.streamed && engine.player.streamed.sent !== 'original');
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(
-    [details?.sample_rate && `${details.sample_rate / 1000} kHz`, details?.bitrate && `${details.bitrate} kbps`]
+    [shown.rate, shown.bitrate]
       .filter(Boolean)
       .map((v) => `${v} · `)
       .join(''),
   );
+  /** While the playing song's details are looked up (a frame or so), the badge keeps what it showed rather than a shorter guess. */
+  const loading = $derived(playing && details === undefined);
+  /** Where a stream comes from, or why it stopped: its device couldn't be reached. */
+  const unreachable = $derived(playing ? engine.player?.unreachable : null);
+  const device = $derived(unreachable?.stopped ? `${unreachable.from} can't be reached` : shown.device);
+  let held = { rates: '', format: '' };
+  const badge = $derived.by(() => (waiting || loading ? held : (held = { rates, format })));
+  /** Kept in place, unseen: nothing to show yet. */
+  const unseen = $derived(waiting || (loading && !badge.format));
 
   const rows = $derived<[string, string][]>(
     track
@@ -51,11 +83,12 @@
             ['Year', yearLabel(details)],
             ['Genre', details?.genre ?? ''],
             ['Format', format],
-            ['Sample rate', details?.sample_rate ? `${details.sample_rate / 1000} kHz` : ''],
-            ['Bit depth', details?.bit_depth ? `${details.bit_depth}-bit` : ''],
-            ['Bitrate', details?.bitrate ? `${details.bitrate} kbps` : ''],
+            ['Sample rate', shown.rate],
+            ['Bit depth', details?.bit_depth && !transcoded ? `${details.bit_depth}-bit` : ''],
+            ['Bitrate', shown.bitrate],
             ['ReplayGain', playing && gain != null ? `${gain > 0 ? '+' : ''}${gain.toFixed(2)} dB` : ''],
             ['File', track.source === 'local' ? track.id : ''],
+            ['Device', shown.device],
           ] as [string, string][]
         ).filter(([, value]) => value)
       : [],
@@ -74,8 +107,9 @@
     {#if track}
       <p class="hero-album" data-enter="fade">
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
-        {#if format}<span class="format"><span class="rates">{rates}</span>{format}</span>{/if}
+        {#if badge.format || unseen}<span class="format" class:unseen class:fades={remote}>{#if unseen}{'\u00a0'}{:else}<span class="rates">{badge.rates}</span>{badge.format}{/if}</span>{/if}
       </p>
+      {#if device}<p class="device" data-enter="fade" in:fade={{ duration: waited ? DURATION : 0 }}><Icon name="cloud" size={12} /> {device}</p>{/if}
       {#if playing && details && engine.can('library')}
         <div class="marks" data-enter="fade">
           {#if settings.current.ratings === 'stars'}
@@ -123,6 +157,7 @@
 
   /* Hero: large text for the now-playing screen. */
   .hero {
+    position: relative;
     height: auto;
     overflow: visible;
     padding: 0;
@@ -173,6 +208,35 @@
     gap: var(--space-2);
     margin: 2px 0 0;
     color: var(--text-muted);
+  }
+
+  /* Where a stream comes from, just under the file info in the gap the now-playing screen keeps below it, so it moves nothing; a long name ends in an ellipsis. */
+  .device {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    margin: var(--space-1) 0 0;
+    overflow: hidden;
+    font-size: 0.85em;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .device :global(svg) {
+    vertical-align: -1px;
+  }
+
+  /* A stream from elsewhere's badge fades in once it says what arrives. */
+  .fades {
+    transition: opacity 260ms;
+  }
+
+  /* Hidden at once. */
+  .unseen {
+    opacity: 0;
+    transition: none;
   }
 
   .marks {

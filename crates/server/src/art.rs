@@ -85,9 +85,9 @@ async fn answer(
                     .map(|(bytes, _)| bytes)
                     .map_err(|e| e.to_string()),
                 Ask::Waveform { id } => {
-                    let path = library.own_file(id).ok_or("not on this engine")?;
+                    let own = library.own_file(id).ok_or("not on this engine")?;
                     library
-                        .waveform(&path.to_string_lossy())
+                        .waveform(&own.path.to_string_lossy())
                         .map_err(|e| e.to_string())
                 }
             }
