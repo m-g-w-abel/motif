@@ -117,6 +117,8 @@ control isn't an add-on: it's the normal code path.
   iroh stream through a loopback proxy, with the same token and scopes
   (and only from the engine that token was paired with). The connection
   shows whether it goes over the LAN, the internet or a relay.
+- A linked engine's covers and seek bar waveforms are fetched from the owner on
+  first view (one more ALPN) and cached like local ones.
 - An **MPD server**, so existing MPD clients can drive Motif.
 - Scrobbling to Last.fm, ListenBrainz and Libre.fm, with an offline queue.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now

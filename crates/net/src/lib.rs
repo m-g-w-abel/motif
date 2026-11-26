@@ -29,15 +29,17 @@ pub enum Alpn {
     Sync,
     Catalog,
     Files,
+    Art,
 }
 
 impl Alpn {
-    pub const ALL: [Alpn; 5] = [
+    pub const ALL: [Alpn; 6] = [
         Alpn::Link,
         Alpn::Remote,
         Alpn::Sync,
         Alpn::Catalog,
         Alpn::Files,
+        Alpn::Art,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -47,6 +49,7 @@ impl Alpn {
             Alpn::Sync => b"motif/sync/1",
             Alpn::Catalog => b"motif/catalog/1",
             Alpn::Files => b"motif/files/1",
+            Alpn::Art => b"motif/art/1",
         }
     }
 

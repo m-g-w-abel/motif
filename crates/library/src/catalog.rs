@@ -291,6 +291,86 @@ impl Library {
         copies
     }
 
+    /// The linked engine to ask for artwork `key`: one whose catalog shows
+    /// it, when it isn't stored here yet. `None` for a key not in the
+    /// right form too: it names a file here (#266).
+    pub fn art_owner(&self, key: &str) -> Option<String> {
+        if !valid_art_key(key) || self.art_source(key).is_ok() {
+            return None;
+        }
+        self.db()
+            .query_row(
+                "SELECT device FROM tracks WHERE art = ?1 AND device != '' LIMIT 1",
+                [key],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+    }
+
+    /// Stores artwork `key` fetched from its owner like a folder image, so
+    /// [`Self::art`] makes thumbnails of it as of any other.
+    pub fn save_remote_art(&self, key: &str, bytes: &[u8]) -> Result<()> {
+        if !valid_art_key(key) {
+            return Err(Error::Other("not an artwork key".into()));
+        }
+        image::guess_format(bytes).map_err(|e| Error::Other(e.to_string()))?;
+        let file = self.shared.art_dir.join(format!("{key}.img"));
+        let part = file.with_extension("img.part");
+        std::fs::write(&part, bytes)?;
+        std::fs::rename(&part, &file)?;
+        self.db().execute(
+            "INSERT OR REPLACE INTO art (key, path) VALUES (?1, ?2)",
+            params![key, file.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
+    /// Where the seek bar waveform of a linked engine's track `path` is
+    /// to be asked for: the engine, its id for the track and, if the
+    /// catalog has it, the audio hash it is cached by. `None` for local tracks.
+    pub fn remote_waveform(&self, path: &str) -> Option<(String, i64, Option<String>)> {
+        let (device, id) = path.strip_prefix("remote:")?.split_once(':')?;
+        let hash = self
+            .db()
+            .query_row(
+                "SELECT audio_hash FROM tracks WHERE path = ?1",
+                [path],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .flatten()
+            .filter(|h| !h.is_empty());
+        Some((device.to_string(), id.parse().ok()?, hash))
+    }
+
+    /// The waveform cached for audio hash `hash`.
+    pub fn cached_waveform(&self, hash: &str) -> Option<Vec<u8>> {
+        self.db()
+            .query_row(
+                "SELECT levels FROM waveforms WHERE hash = ?1",
+                [hash],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+    }
+
+    /// Caches a waveform fetched from the engine holding the track.
+    pub fn store_waveform(&self, hash: &str, levels: &[u8]) {
+        let (hash, levels) = (hash.to_string(), levels.to_vec());
+        self.write_aside("waveform", move |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO waveforms (hash, levels) VALUES (?1, ?2)",
+                params![hash, levels],
+            )
+        });
+    }
+
     /// The file of this engine's own track `id`, if it is here: what a
     /// linked engine may read ([`Self::copies`]).
     pub fn own_file(&self, id: i64) -> Option<PathBuf> {
@@ -306,6 +386,12 @@ impl Library {
             .flatten()
             .map(PathBuf::from)
     }
+}
+
+/// Artwork keys are 32 hex digits ([`crate::scan::art_key`]): the name of a
+/// file in the art folder, which a peer's key must never reach out of.
+pub fn valid_art_key(key: &str) -> bool {
+    key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn seen(conn: &Connection, device: &str) -> Result<Seen> {
@@ -1007,5 +1093,77 @@ mod tests {
         };
         run("58k local", 58_000, 0);
         run("8k local + 50k remote", 8_000, 50_000);
+    }
+}
+
+#[cfg(test)]
+mod remote_art_tests {
+    use super::*;
+
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+
+    fn png() -> Vec<u8> {
+        let mut out = Vec::new();
+        image::RgbImage::new(4, 4)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    fn library() -> (Library, std::path::PathBuf) {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("motif-remote-art-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let library = Library::open(&dir).unwrap();
+        library
+            .db()
+            .execute(
+                "INSERT INTO tracks (path, size, mtime, device, title, art, audio_hash)
+                 VALUES ('remote:a:7', 0, 0, 'a', 'T', ?1, 'h')",
+                [KEY],
+            )
+            .unwrap();
+        (library, dir)
+    }
+
+    #[test]
+    fn a_linked_engines_cover_is_fetched_once_then_served_like_local_art() {
+        let (library, dir) = library();
+        assert!(library.art_image(KEY, None).is_err());
+        assert_eq!(library.art_owner(KEY).as_deref(), Some("a"));
+        library.save_remote_art(KEY, &png()).unwrap();
+        assert_eq!(library.art_owner(KEY), None);
+        assert_eq!(library.art_image(KEY, None).unwrap().1, "image/png");
+        assert!(library.art_image(KEY, Some(2)).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn keys_that_are_not_hashes_never_name_files() {
+        let (library, dir) = library();
+        assert!(library.save_remote_art("../x", &png()).is_err());
+        assert!(library.save_remote_art(KEY, b"not an image").is_err());
+        assert_eq!(library.art_owner("../x"), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_linked_engines_waveform_is_found_by_its_hash_once_stored() {
+        let (library, dir) = library();
+        assert_eq!(
+            library.remote_waveform("remote:a:7"),
+            Some(("a".into(), 7, Some("h".into())))
+        );
+        assert_eq!(library.remote_waveform("/music/a.flac"), None);
+        assert_eq!(library.cached_waveform("h"), None);
+        library.store_waveform("h", &[1, 2, 3]);
+        let until = std::time::Instant::now();
+        while library.cached_waveform("h").is_none() && until.elapsed().as_secs() < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(library.cached_waveform("h"), Some(vec![1, 2, 3]));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

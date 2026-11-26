@@ -10,6 +10,7 @@
 //!
 //! MPD clients have a server of their own (see `mpd.rs`), off by default.
 
+mod art;
 mod catalog;
 mod files;
 mod lan;
@@ -84,6 +85,8 @@ struct AppState {
     /// Limits artwork requests in flight. Each can hold a whole image or a
     /// decoded one (tens of MB), and a grid asks for hundreds at once.
     art_slots: Arc<Semaphore>,
+    /// Covers and waveforms of linked engines' tracks.
+    remote: Arc<art::Remote>,
 }
 
 /// Artwork requests served at once, each until its body is sent. A browser
@@ -160,6 +163,7 @@ fn app(live: live::Live, config: Config) -> Router {
             integrations: config.integrations,
             pairing: config.pairing,
             art_slots: Arc::new(Semaphore::new(ART_SLOTS)),
+            remote: Arc::new(art::Remote::new()),
         });
     match config.ui {
         Some(Ui::Dir(dir)) => {
@@ -331,6 +335,10 @@ async fn art(
     let Ok(slot) = state.art_slots.clone().acquire_owned().await else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    // A linked engine's cover is fetched while this request holds its slot.
+    if let Err(err) = state.remote.cover(&state.pairing, &library, &key).await {
+        tracing::debug!(key, %err, "can't fetch cover");
+    }
     let image = tokio::task::spawn_blocking(move || library.art_image(&key, params.size)).await;
     match image {
         Ok(Ok((bytes, media_type))) => {
@@ -385,6 +393,11 @@ async fn query(state: &AppState, query: LibraryQuery) -> Result<QueryResult, Str
         .borrow()
         .lrclib
         .then_some(library::LRCLIB);
+    if let LibraryQuery::Waveform { path } = &query
+        && let Some(levels) = state.remote.waveform(&state.pairing, &library, path).await
+    {
+        return levels.map(|levels| QueryResult::Waveform { levels });
+    }
     tokio::task::spawn_blocking(move || match query {
         LibraryQuery::Lyrics { path } => library
             .lyrics(&path, lrclib)

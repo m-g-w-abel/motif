@@ -9,6 +9,9 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
   engine is linked keeps controlling it away from home, over the same
   encrypted link, with the same permissions as at home. The connection shows
   whether it goes over the LAN, the internet or a relay.
+- **Covers and seek bar waveforms of your other devices' songs**: a song that is
+  only on a linked device shows its real cover and waveform, fetched from that
+  device the first time and kept here.
 - **Songs on your other devices show up in your library**: a linked device's
   songs mix in with yours (the same song on both shows once), marked with a
   cloud and dimmed while that device can't be reached. The sort menu's "Only
@@ -16,6 +19,9 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 - **Play songs from your other devices**: a song that is only on a linked
   device plays here, streamed from it in its original quality, with seeking
   and gapless albums. If that device can't be reached, the song says so.
+- **Scrobbles from every device**: a device with a scrobbling account also
+  sends the plays synced from your devices without one (up to 14 days old),
+  each play once.
 - **Playlists, history and ratings sync**: linked devices share playlists
   (names, songs, order), what you played (so Recently Played and play counts
   cover every device) and favourites and ratings. Changes made apart merge
