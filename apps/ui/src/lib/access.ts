@@ -68,6 +68,7 @@ const QUERY_SCOPES: Record<LibraryQuery['type'], Scope | null> = {
   move_playlist_item: 'library',
   set_downloaded: 'library',
   set_download_folder: 'library',
+  set_download_auto: 'library',
 };
 
 export const queryScope = (query: LibraryQuery): Scope | null => QUERY_SCOPES[query.type];

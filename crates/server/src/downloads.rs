@@ -22,11 +22,14 @@ pub(crate) async fn run(library: Library, pairing: Pairing) {
     let mut status = library.subscribe();
     let mut pruned = false;
     loop {
-        let changes = |s: &protocol::LibraryStatus| (s.revision, s.playlists);
+        // Play counts and the cap move what the auto-fill takes.
+        let changes =
+            |s: &protocol::LibraryStatus| (s.revision, s.playlists, s.plays, s.downloads.auto_mb);
         let seen = changes(&status.borrow_and_update());
         let planned = {
             let library = library.clone();
-            tokio::task::spawn_blocking(move || library.download_plan()).await
+            let quality = pairing.download_quality();
+            tokio::task::spawn_blocking(move || library.download_plan(quality)).await
         };
         let plan = match planned {
             Ok(Ok(plan)) => plan,

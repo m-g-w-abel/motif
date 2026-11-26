@@ -13,6 +13,11 @@ folder: string,
  */
 waiting: number, 
 /**
+ * The auto-fill's cap in megabytes ([`LibraryQuery::SetDownloadAuto`]);
+ * `None`: off.
+ */
+auto_mb: number | null, 
+/**
  * Why the last one failed (the disk is full, its engine is unreachable).
  */
 error: string | null, };

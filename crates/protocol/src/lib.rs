@@ -793,6 +793,13 @@ pub enum LibraryQuery {
     SetDownloadFolder {
         path: String,
     },
+    /// Also fills the Downloaded group with the most played tracks up to
+    /// `mb` megabytes, dropping the least played as counts change; members
+    /// added by hand never count against it. `None` turns it off (the
+    /// default). Safe to repeat.
+    SetDownloadAuto {
+        mb: Option<u32>,
+    },
 }
 
 /// Something in this device's Downloaded group (#245). The group is this
@@ -820,6 +827,10 @@ pub struct DownloadStatus {
     pub folder: String,
     /// Tracks still to download.
     pub waiting: u32,
+    /// The auto-fill's cap in megabytes ([`LibraryQuery::SetDownloadAuto`]);
+    /// `None`: off.
+    #[serde(default)]
+    pub auto_mb: Option<u32>,
     /// Why the last one failed (the disk is full, its engine is unreachable).
     pub error: Option<String>,
 }

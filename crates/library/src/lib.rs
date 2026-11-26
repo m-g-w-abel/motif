@@ -409,6 +409,11 @@ impl Library {
                 self.set_download_folder(&path)?;
                 QueryResult::Done
             }
+            LibraryQuery::SetDownloadAuto { mb } => {
+                drop(conn);
+                self.set_download_auto(mb)?;
+                QueryResult::Done
+            }
             LibraryQuery::Playlists => QueryResult::Playlists {
                 playlists: playlists::list(&conn)?,
             },

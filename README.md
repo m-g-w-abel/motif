@@ -127,6 +127,9 @@ control isn't an add-on: it's the normal code path.
   default, written as Ogg Opus with its tags), scanned in as the same track
   as the source (by audio hash) so they're never streamed, and deleted when
   no member needs them. Interrupted downloads resume from the chunks on disk.
+  Optionally (off by default) it also fills up to a size cap with the most
+  played songs (synced play counts), swapping in new favourites as counts
+  change; songs added by hand never count against the cap.
 - Away from home, the app controls a linked engine over the same link: it
   tries the LAN first, then tunnels the same WebSocket protocol over an
   iroh stream through a loopback proxy, with the same token and scopes
