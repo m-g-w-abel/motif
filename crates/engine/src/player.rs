@@ -1862,6 +1862,42 @@ mod tests {
         assert_eq!(p.snapshot(t0, 0).streamed, Some(relayed));
     }
 
+    #[test]
+    fn a_preloaded_stream_says_how_it_streams_from_its_first_state() {
+        use protocol::{Quality, Route, Streamed};
+        /// Resolves to a stream that hasn't said yet, as each resolve does.
+        struct Unopened;
+        impl Resolver for Unopened {
+            fn resolve(&self, _: &TrackRef) -> Result<Playable, String> {
+                Ok(Playable::File(stream(None), ReplayGain::default()))
+            }
+        }
+        fn stream(said: Option<Streamed>) -> crate::Source {
+            let open: crate::Opener = std::sync::Arc::new(|| Err(std::io::Error::other("")));
+            let streamed = tokio::sync::watch::channel(said).1;
+            let name = "remote".into();
+            crate::Source::Stream {
+                name,
+                open,
+                streamed,
+            }
+        }
+        let t0 = Instant::now();
+        let mut p = playing(&["a", "b"], t0);
+        p.resolve_current(&Unopened, t0);
+        let said = Streamed {
+            from: "Desktop".into(),
+            sent: Quality::Opus256,
+            route: Route::Internet,
+        };
+        // The output opened b early for gapless; its owner has answered.
+        let b = p.upcoming().unwrap().id;
+        let preloaded = Playable::File(stream(Some(said.clone())), ReplayGain::default());
+        assert!(p.moved_to(b, preloaded, t0));
+        p.resolve_current(&Unopened, t0);
+        assert_eq!(p.snapshot(t0, 0).streamed, Some(said));
+    }
+
     /// Untagged files, measured some time later, recording requests.
     #[derive(Default)]
     struct Measuring(std::sync::Mutex<Vec<Vec<String>>>);
