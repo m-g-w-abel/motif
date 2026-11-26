@@ -1,16 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { streamedLabel } from './format';
+import { playedFormat } from './format';
 
-describe('streamedLabel', () => {
-  it('names the engine, what it sends and the route', () => {
-    expect(streamedLabel({ from: 'Desktop', sent: 'opus256', route: 'relayed' }, 'FLAC')).toBe(
-      'Streamed from Desktop · Opus 256 (from FLAC) · relayed',
-    );
-    expect(streamedLabel({ from: 'Desktop', sent: 'original', route: 'lan' }, 'FLAC')).toBe(
-      'Streamed from Desktop · original FLAC · LAN',
-    );
-    expect(streamedLabel({ from: 'Desktop', sent: 'opus128', route: 'internet' }, undefined)).toBe(
-      'Streamed from Desktop · Opus 128 · internet',
-    );
+const flac = { codec: 'FLAC', sample_rate: 44100, bitrate: 1600 };
+
+describe('playedFormat', () => {
+  it('shows a transcoded stream as the Opus that arrives, and its device', () => {
+    expect(playedFormat(flac, 'FLAC', { from: 'Desktop', sent: 'opus256', route: 'lan' })).toEqual({
+      rate: '48 kHz',
+      bitrate: '256 kbps',
+      format: 'OPUS (transcoded)',
+      device: 'Desktop',
+    });
+  });
+
+  it("shows an original stream as its file, and its device's route off the LAN", () => {
+    expect(playedFormat(flac, 'FLAC', { from: 'Desktop', sent: 'original', route: 'relayed' })).toEqual({
+      rate: '44.1 kHz',
+      bitrate: '1600 kbps',
+      format: 'FLAC',
+      device: 'Desktop · relayed',
+    });
+    const internet = playedFormat(flac, 'FLAC', { from: 'Desktop', sent: 'opus128', route: 'internet' });
+    expect(internet.device).toBe('Desktop · internet');
+    expect(internet.bitrate).toBe('128 kbps');
+  });
+
+  it('shows a local file as it is, with no device', () => {
+    expect(playedFormat(flac, 'FLAC', null)).toEqual({ rate: '44.1 kHz', bitrate: '1600 kbps', format: 'FLAC', device: '' });
+    expect(playedFormat(null, 'MP3', undefined)).toEqual({ rate: '', bitrate: '', format: 'MP3', device: '' });
   });
 });

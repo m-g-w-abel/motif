@@ -1,4 +1,3 @@
-import type { Route } from './protocol/Route';
 import type { Streamed } from './protocol/Streamed';
 import type { TrackRef } from './protocol/TrackRef';
 
@@ -23,13 +22,22 @@ export function trackFormat(track: TrackRef): string {
   return match ? match[1].toUpperCase() : '';
 }
 
-const ROUTES: Record<Route, string> = { lan: 'LAN', internet: 'internet', relayed: 'relayed' };
-
-/** How a track streams from a linked engine, with `codec` its file's: "Streamed from Desktop · Opus 256 (from FLAC) · relayed". */
-export function streamedLabel({ from, sent, route }: Streamed, codec: string | null | undefined): string {
-  const kbps = sent.replace('opus', '');
-  const what = sent === 'original' ? `original${codec ? ` ${codec}` : ''}` : `Opus ${kbps}${codec ? ` (from ${codec})` : ''}`;
-  return `Streamed from ${from} · ${what} · ${ROUTES[route]}`;
+/** What is playing, as the file info shows it: a transcoded stream as the Opus that arrives, a streamed one with its device (and route off the LAN). */
+export function playedFormat(
+  file: { codec?: string | null; sample_rate?: number | null; bitrate?: number | null } | null | undefined,
+  format: string,
+  streamed: Streamed | null | undefined,
+): { rate: string; bitrate: string; format: string; device: string } {
+  const device = streamed ? `${streamed.from}${streamed.route === 'lan' ? '' : ` · ${streamed.route}`}` : '';
+  if (streamed && streamed.sent !== 'original') {
+    return { rate: '48 kHz', bitrate: `${streamed.sent.replace('opus', '')} kbps`, format: 'OPUS (transcoded)', device };
+  }
+  return {
+    rate: file?.sample_rate ? `${file.sample_rate / 1000} kHz` : '',
+    bitrate: file?.bitrate ? `${file.bitrate} kbps` : '',
+    format,
+    device,
+  };
 }
 
 /** A stable two-colour gradient per album, used until real artwork exists. */

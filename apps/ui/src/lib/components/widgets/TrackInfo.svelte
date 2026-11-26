@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { getApp, getViewState } from '../../context';
-  import { formatTime, streamedLabel, trackFormat, trackTitle } from '../../format';
+  import { formatTime, playedFormat, trackFormat, trackTitle } from '../../format';
   import { marquee } from '../../marquee';
   import type { InfoStyle } from '../../layout/model';
   import Heart from '../Heart.svelte';
+  import Icon from '../Icon.svelte';
   import Scrollbar from '../Scrollbar.svelte';
   import Stars from '../Stars.svelte';
 
@@ -30,12 +31,15 @@
   /** Hero names that don't fit one line (phones) scroll once per track while the sheet is open. */
   // Held where it is while the sheet moves (its change starts from the text as drawn), put back once it is closed.
   const scrolling = $derived(style === 'hero' && playing && track ? (sheet.rest ? track.id : sheet.moving ? false : null) : null);
-  const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
-  /** How the playing track comes from a linked engine, if it streams from one. */
-  const streamed = $derived(playing && engine.player?.streamed ? streamedLabel(engine.player.streamed, format) : '');
+  /** What arrives: a stream's device, and Opus if it is transcoded. */
+  const shown = $derived(
+    playedFormat(details, details?.codec ?? (track ? trackFormat(track) : ''), playing ? engine.player?.streamed : null),
+  );
+  const format = $derived(shown.format);
+  const transcoded = $derived(playing && !!engine.player?.streamed && engine.player.streamed.sent !== 'original');
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(
-    [details?.sample_rate && `${details.sample_rate / 1000} kHz`, details?.bitrate && `${details.bitrate} kbps`]
+    [shown.rate, shown.bitrate]
       .filter(Boolean)
       .map((v) => `${v} · `)
       .join(''),
@@ -53,12 +57,12 @@
             ['Year', yearLabel(details)],
             ['Genre', details?.genre ?? ''],
             ['Format', format],
-            ['Sample rate', details?.sample_rate ? `${details.sample_rate / 1000} kHz` : ''],
-            ['Bit depth', details?.bit_depth ? `${details.bit_depth}-bit` : ''],
-            ['Bitrate', details?.bitrate ? `${details.bitrate} kbps` : ''],
+            ['Sample rate', shown.rate],
+            ['Bit depth', details?.bit_depth && !transcoded ? `${details.bit_depth}-bit` : ''],
+            ['Bitrate', shown.bitrate],
             ['ReplayGain', playing && gain != null ? `${gain > 0 ? '+' : ''}${gain.toFixed(2)} dB` : ''],
             ['File', track.source === 'local' ? track.id : ''],
-            ['Stream', streamed],
+            ['Device', shown.device],
           ] as [string, string][]
         ).filter(([, value]) => value)
       : [],
@@ -77,9 +81,8 @@
     {#if track}
       <p class="hero-album" data-enter="fade">
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
-        {#if format}<span class="format"><span class="rates">{rates}</span>{format}</span>{/if}
+        {#if format}<span class="format"><span class="rates">{rates}</span>{format}{#if shown.device}{' · '}<span class="device"><Icon name="cloud" size={11} /> {shown.device}</span>{/if}</span>{/if}
       </p>
-      {#if streamed}<p class="streamed" data-enter="fade">{streamed}</p>{/if}
       {#if playing && details && engine.can('library')}
         <div class="marks" data-enter="fade">
           {#if settings.current.ratings === 'stars'}
@@ -179,10 +182,13 @@
     color: var(--text-muted);
   }
 
-  .streamed {
-    margin: 2px 0 0;
-    font-size: 0.85em;
-    color: var(--text-muted);
+  /* A name keeps its case in the phone's upper-case badge. */
+  .device {
+    text-transform: none;
+  }
+
+  .device :global(svg) {
+    vertical-align: -1px;
   }
 
   .marks {

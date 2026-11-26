@@ -17,8 +17,8 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
   metered phone network) instead of the original; lossy songs at or below
   that come as they are. Settings → Devices sets both, and the quality for
   downloads, Original included. Now Playing shows which device a song
-  streams from, what it sends and whether over your home network, the
-  internet or a relay.
+  streams from and what arrives, and away from home whether it comes over
+  the internet or a relay.
 - **Playlists, history and ratings sync**: linked devices share playlists
   (names, songs, order), what you played (so Recently Played and play counts
   cover every device) and favourites and ratings. Changes made apart merge
