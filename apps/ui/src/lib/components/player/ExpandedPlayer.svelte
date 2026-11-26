@@ -737,7 +737,7 @@
     }
 
     [data-step='half'] :is(.album-title, .more),
-    [data-step='half'] .details :global(.hero-album) {
+    [data-step='half'] .details :global(:is(.hero-album, .hero .device)) {
       display: none;
     }
 
