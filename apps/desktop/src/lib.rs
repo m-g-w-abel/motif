@@ -108,6 +108,10 @@ pub fn run() {
             ))?;
             tracing::info!(%url, "engine");
             app.manage(EngineUrl(url));
+            #[cfg(target_os = "android")]
+            if let Some(pairing) = &pairing {
+                media::name_engine(&app.state::<media::Kotlin<tauri::Wry>>(), pairing.clone());
+            }
             app.manage(remote::OwnEngine(pairing));
             app.manage(remote::Tunnels::default());
             Ok(())
@@ -118,6 +122,7 @@ pub fn run() {
             remote::discover_engines,
             remote::pair_engine,
             remote::own_engine_key,
+            remote::own_engine_name,
             remote::link_engine,
             remote::unlink_engine,
             remote::tunnel,

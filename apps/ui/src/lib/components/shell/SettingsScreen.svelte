@@ -78,6 +78,12 @@
     else if (name !== current) engine.pair({ type: 'rename', device, name });
   }
 
+  function renameEngine(current: string, input: HTMLInputElement) {
+    const name = input.value.trim();
+    if (!name) input.value = current;
+    else if (name !== current) engine.pair({ type: 'set_name', name });
+  }
+
   /** Android only: rechecked when the app comes back from the system toggle. */
   const storage = androidStorage();
   let allFilesAccess = $state(storage?.hasAllFilesAccess() ?? true);
@@ -747,6 +753,18 @@
       {:else if group === 'devices'}
         {#if engine.pairing}
           {@const p = engine.pairing}
+          <div class="row">
+            <span class="label">Name</span>
+            <input
+              class="select"
+              aria-label="Name of this engine"
+              value={p.name}
+              maxlength="64"
+              onchange={(e) => renameEngine(p.name, e.currentTarget)}
+              onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            />
+            <p class="status">What other devices call this one.</p>
+          </div>
           <div class="row">
             <span class="label">Other devices</span>
             <div class="segmented" role="radiogroup" aria-label="Other devices">

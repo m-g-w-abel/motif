@@ -13,7 +13,12 @@ export type PairingState = {
 /**
  * The engine's public key (ed25519, hex), its identity.
  */
-engine_key: string, code: PairingCode | null, auto_approve: Preset | null, 
+engine_key: string, 
+/**
+ * What other devices call it: its computer's or phone's name until
+ * renamed.
+ */
+name: string, code: PairingCode | null, auto_approve: Preset | null, 
 /**
  * Devices that redeemed a code and wait for approval.
  */

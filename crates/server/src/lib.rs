@@ -738,7 +738,13 @@ mod tests {
             integrations: watch::channel(Default::default()).0,
             pairing: Pairing::in_memory(),
         };
-        let name = format!("Motif {}", &config.pairing.engine_key()[..8]);
+        config
+            .pairing
+            .command(protocol::PairingCommand::SetName {
+                name: "Desk".into(),
+            })
+            .unwrap();
+        let name = "Desk";
         let (addr, serve) = bind(engine, config).await.unwrap();
         tokio::spawn(serve);
 

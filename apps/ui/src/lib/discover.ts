@@ -21,6 +21,9 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
 /** The engines answering on the LAN now; takes a couple of seconds. */
 export const discoverEngines = () => invoke<FoundEngine[]>('discover_engines');
 
+/** This app's own engine's name, or `null` where it has none here. */
+export const ownEngineName = () => invoke<string>('own_engine_name').catch(() => null);
+
 /** Redeems `code` at `address`; waits for the host to approve. Rejects with a text for the user. */
 export const pairEngine = (address: string, code: string, name: string) => invoke<Paired>('pair_engine', { address, code, name });
 

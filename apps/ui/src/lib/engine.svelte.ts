@@ -374,7 +374,9 @@ export class EngineClient {
         // shortcut: ignores network latency (ms on a LAN), measure round trips when listen-along needs tighter sync (phase 7).
         this.clockOffset = message.now_ms - Date.now();
         // Engines from before #237 send no name.
-        if (message.engine_name) engines.update((list) => setName(list, list.current, message.engine_name));
+        if (message.engine_name && engines.current.id !== LOCAL_ID) {
+          engines.update((list) => setName(list, list.current, message.engine_name));
+        }
         if (message.protocol_version !== PROTOCOL_VERSION) {
           this.error = `engine speaks protocol v${message.protocol_version}, this UI expects v${PROTOCOL_VERSION}`;
         }

@@ -54,9 +54,10 @@ export function setToken(list: EngineList, id: string, token: string | null): En
   return { ...list, engines: list.engines.map((e) => (e.id === id ? { ...e, token } : e)) };
 }
 
-/** Names an engine by what it calls itself, where it was saved under one of its addresses (paired by QR without seeing it on the LAN). */
+/** Names an engine by what it calls itself (`Hello.engine_name`), which wins over whatever it was saved under; the same list if nothing changed. */
 export function setName(list: EngineList, id: string, name: string): EngineList {
-  return { ...list, engines: list.engines.map((e) => (e.id === id && e.addresses.includes(e.name) ? { ...e, name } : e)) };
+  if (!list.engines.some((e) => e.id === id && e.name !== name)) return list;
+  return { ...list, engines: list.engines.map((e) => (e.id === id ? { ...e, name } : e)) };
 }
 
 export function switchTo(list: EngineList, id: string): EngineList {

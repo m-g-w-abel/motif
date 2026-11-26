@@ -92,7 +92,9 @@ control isn't an add-on: it's the normal code path.
 
 **Remote control and integrations**
 - Device pairing by QR code, using ed25519 device keys and scoped, revocable
-  tokens (Full, Control playback, View only). Discovery over mDNS.
+  tokens (Full, Control playback, View only). Discovery over mDNS. Each
+  engine has one name (its computer's, or the phone's model, until renamed)
+  that every list shows, and renames reach the other devices when they meet.
 - Linked engines (your desktop and phone) reach each other over
   [iroh](https://iroh.computer) on their identity keys: end-to-end encrypted,
   directly or through a relay (public, or your own), with no account or

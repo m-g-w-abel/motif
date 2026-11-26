@@ -11,6 +11,7 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -45,6 +46,10 @@ class MediaPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   override fun onStop(activity: AppCompatActivity) = Background.visible(false)
+
+  /** The phone's model ("Pixel 8"), which names its engine until renamed. */
+  @Command
+  fun model(invoke: Invoke) = invoke.resolve(JSObject().put("model", Build.MODEL))
 
   /** Where "hold background work" goes, as `{ held }` (now, then on each change). */
   @Command

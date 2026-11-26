@@ -49,14 +49,16 @@ describe('engine list', () => {
     expect(list.engines.map((e) => e.token)).toEqual(['paired', 'desk-token']);
   });
 
-  it('names an engine saved under its address by the name it gives', () => {
+  it('names an engine by the name it gives, whatever it was saved under', () => {
     const list = addEngine(loadEngines(null, null), { ...desk, name: '192.168.1.5:7700' });
-    expect(setName(list, 'abc', 'Motif abc').engines[1].name).toBe('Motif abc');
+    const named = setName(list, 'abc', 'Kitchen');
+    expect(named.engines.map((e) => e.name)).toEqual(['This device', 'Kitchen']);
+    expect(setName(named, 'abc', 'Desk').engines[1].name).toBe('Desk');
   });
 
-  it('keeps a name that is not an address', () => {
+  it('leaves the list as it is when the name is the same', () => {
     const list = addEngine(loadEngines(null, null), desk);
-    expect(setName(list, 'abc', 'Motif abc').engines[1].name).toBe('Desk');
+    expect(setName(list, 'abc', 'Desk')).toBe(list);
   });
 
   it('ignores switching to an engine it does not know', () => {

@@ -1,6 +1,7 @@
 //! The iroh endpoint ([`net`]) while this engine has linked engines: it keeps
 //! a [`net::Alpn::Link`] connection to each one it can reach, where they swap
-//! addresses for each other's address book ([`Pairing::met`]), and shows how
+//! addresses for each other's address book and their names
+//! ([`Pairing::met`]), and shows how
 //! each is reached ([`Pairing::set_reach`]). While the LAN switch is on it
 //! also browses `_motif._tcp` over mDNS, whose adverts carry the iroh port,
 //! so engines whose addresses changed find each other again without relays.
@@ -345,8 +346,12 @@ async fn keep(
         };
         shared.live.insert(key.clone(), live);
     }
-    match net::hello(&conn, &net.addr()).await {
-        Ok(addr) => pairing.met(&key, addr),
+    let mine = Hello {
+        addr: net.addr(),
+        name: Some(pairing.engine_name()),
+    };
+    match net::hello(&conn, &mine).await {
+        Ok(Hello { addr, name }) => pairing.met(&key, addr, name.as_deref()),
         Err(err) => tracing::debug!(%key, %err, "iroh: no hello"),
     }
     tokio::select! {
@@ -367,6 +372,16 @@ async fn keep(
     if net::refused(&conn) {
         unlinked_by(&pairing, &key);
     }
+}
+
+/// What linked engines tell each other on meeting.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Hello {
+    #[serde(flatten)]
+    addr: net::PeerAddr,
+    /// Missing from engines before names.
+    #[serde(default)]
+    name: Option<String>,
 }
 
 /// The engine with `key` said it isn't linked with this one (it forgot this
@@ -633,6 +648,10 @@ mod tests {
             p.command(protocol::PairingCommand::SetInternet { allowed: false })
                 .unwrap();
         }
+        b.command(protocol::PairingCommand::SetName {
+            name: "Desk".into(),
+        })
+        .unwrap();
         // A met B on the LAN; B knows nothing of A yet.
         b.link("A", a.engine_key(), &[]).unwrap();
         tokio::spawn(run(b.clone(), 0, None, None));
@@ -645,6 +664,10 @@ mod tests {
         wait_for(&b, direct).await;
         let (_, told) = &b.linked()[0];
         assert!(!told.direct.is_empty(), "B learned where A is");
+        // And each other's names, which they were linked under.
+        wait_for(&a, |s| s.devices[0].name == "Desk").await;
+        let a_name = a.engine_name();
+        wait_for(&b, |s| s.devices[0].name == a_name).await;
 
         // Unlinking closes the link, and the other end forgets it too.
         let device = b.subscribe().borrow().devices[0].id.clone();

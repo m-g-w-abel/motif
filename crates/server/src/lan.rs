@@ -91,7 +91,9 @@ impl LanListener {
         let open = self.listener.is_some() && self.bound.ip().is_unspecified();
         let addresses = open.then(|| lan_addresses(self.local.port()));
         let iroh = self.pairing.iroh_port();
-        if open != self.advert.is_some() || self.advert.as_ref().is_some_and(|a| a.iroh != iroh) {
+        let name = self.pairing.engine_name();
+        let changed = |a: &Advert| a.iroh != iroh || a.shown != name;
+        if open != self.advert.is_some() || self.advert.as_ref().is_some_and(changed) {
             // Withdrawn first: the new one has the same name.
             self.advert = None;
             self.advert = open
@@ -173,12 +175,14 @@ impl axum::serve::Listener for LanListener {
     }
 }
 
-/// A service (`_motif._tcp`, `_mpd._tcp`) with the engine key in TXT (and
-/// the iroh UDP port, if given), withdrawn when dropped.
+/// A service (`_motif._tcp`, `_mpd._tcp`) with the engine key and name in
+/// TXT (and the iroh UDP port, if given), withdrawn when dropped.
 pub(crate) struct Advert {
     daemon: ServiceDaemon,
     name: String,
     iroh: Option<u16>,
+    /// The engine's name in TXT.
+    shown: String,
 }
 
 impl Advert {
@@ -190,14 +194,15 @@ impl Advert {
     ) -> Option<Self> {
         let key = pairing.engine_key();
         let short = &key[..8];
-        let name = pairing.engine_name();
-        let txt: Vec<(&str, String)> = [("id", key.to_owned())]
+        let shown = pairing.engine_name();
+        let txt: Vec<(&str, String)> = [("id", key.to_owned()), ("name", shown.clone())]
             .into_iter()
             .chain(iroh.map(|p| ("iroh", p.to_string())))
             .collect();
         let service = ServiceInfo::new(
             &format!("{service}.local."),
-            &name,
+            // Unique on the LAN, which names needn't be; browsers show `name`.
+            &format!("Motif {short}"),
             &format!("motif-{short}.local."),
             (),
             port,
@@ -208,7 +213,12 @@ impl Advert {
             let daemon = ServiceDaemon::new()?;
             let name = service.get_fullname().to_owned();
             daemon.register(service)?;
-            Ok(Self { daemon, name, iroh })
+            Ok(Self {
+                daemon,
+                name,
+                iroh,
+                shown,
+            })
         });
         advert
             .inspect_err(|err| tracing::warn!(%err, "can't advertise over mDNS"))

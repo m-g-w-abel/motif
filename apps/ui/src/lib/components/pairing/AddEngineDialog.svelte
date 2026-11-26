@@ -2,7 +2,7 @@
   import { surface } from '../../motion/surface';
   import { getApp } from '../../context';
   import { guessName } from '../../deviceName';
-  import { discoverEngines, holdMulticast, pairEngine, parsePairLink, type FoundEngine, type PairLink } from '../../discover';
+  import { discoverEngines, holdMulticast, ownEngineName, pairEngine, parsePairLink, type FoundEngine, type PairLink } from '../../discover';
   import { engines } from '../../engine.svelte';
   import { addEngine, switchTo } from '../../engines';
   import { isAndroid } from '../../platform';
@@ -17,6 +17,9 @@
   let chosen = $state<FoundEngine | null>(null);
   let code = $state('');
   let name = $state(guessName());
+  /** This app's own engine's name, which pairing sends instead of `name`; `null` where another process's engine serves the window. */
+  let ownName = $state<string | null>(null);
+  ownEngineName().then((n) => (ownName = n));
   let waiting = $state(false);
   let cancelled = false;
   let error = $state<string | null>(null);
@@ -58,7 +61,8 @@
       try {
         const paired = await pairEngine(address, code, name);
         if (paired.engine_key !== chosen.id) throw new Error("this isn't the engine that was picked");
-        const engine = { id: chosen.id, name: chosen.name, addresses: chosen.addresses, token: paired.token };
+        // Engines from before names send none.
+        const engine = { id: chosen.id, name: paired.engine_name || chosen.name, addresses: chosen.addresses, token: paired.token };
         // Allowed after Cancel: keep the token, but don't take control from under the user.
         engines.update((list) => (cancelled ? addEngine(list, engine) : switchTo(addEngine(list, engine), engine.id)));
         if (!cancelled) onClose();
@@ -143,7 +147,7 @@
     <h2>Add an engine</h2>
     {#if waiting && chosen}
       <p>Waiting for approval…</p>
-      <p class="hint">Allow <strong>{name}</strong> on {chosen.name}.</p>
+      <p class="hint">Allow <strong>{ownName ?? name}</strong> on {chosen.name}.</p>
       <div class="actions"><button class="button" onclick={cancel}>Cancel</button></div>
     {:else if chosen}
       <p class="hint">On {chosen.name}: Settings → Devices → Pair a device, then enter the code it shows.</p>
@@ -152,10 +156,12 @@
           <span>Code</span>
           <input class="field code" bind:value={code} autocomplete="off" autocapitalize="characters" spellcheck="false" use:focus />
         </label>
-        <label>
-          <span>Name for this device</span>
-          <input class="field" bind:value={name} maxlength="64" />
-        </label>
+        {#if ownName === null}
+          <label>
+            <span>Name for this device</span>
+            <input class="field" bind:value={name} maxlength="64" />
+          </label>
+        {/if}
         {#if error}<p class="error selectable" role="alert">{error}</p>{/if}
         <div class="actions">
           <button type="button" class="button" onclick={() => ((chosen = null), (error = null))}>Back</button>

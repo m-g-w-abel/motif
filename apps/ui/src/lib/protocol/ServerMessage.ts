@@ -7,8 +7,8 @@ import type { QueryResult } from "./QueryResult";
  */
 export type ServerMessage = { "type": "hello", protocol_version: number, engine_version: string, 
 /**
- * What the engine is called (as on the LAN), for clients that
- * saved it under an address.
+ * What the engine is called ([`PairingState::name`]), which
+ * clients show it as.
  */
 engine_name: string, 
 /**

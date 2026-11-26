@@ -39,11 +39,15 @@ fn found(service: &ResolvedService) -> Option<Found> {
         .collect();
     addresses.sort();
     (!addresses.is_empty()).then(|| Found {
-        name: service
-            .get_fullname()
-            .strip_suffix(&format!(".{}", service.ty_domain))
-            .unwrap_or(&id)
-            .to_owned(),
+        // Engines from before names have none in TXT.
+        name: match service.get_property_val_str("name") {
+            Some(name) => name.to_owned(),
+            None => service
+                .get_fullname()
+                .strip_suffix(&format!(".{}", service.ty_domain))
+                .unwrap_or(&id)
+                .to_owned(),
+        },
         addresses: addresses
             .into_iter()
             .map(|ip| format!("{ip}:{}", service.get_port()))
@@ -83,8 +87,9 @@ pub async fn discover_engines() -> Result<Vec<Found>, String> {
 pub struct OwnEngine(pub Option<server::Pairing>);
 
 /// Redeems `code` at `address`'s `POST /pair`, sending this app's engine key
-/// so the host can link the two; the answer waits for the host's approval
-/// (up to 5 minutes). Errors are texts for the user.
+/// and name (`name` only without one) so the host can link the two; the
+/// answer waits for the host's approval (up to 5 minutes). Errors are
+/// texts for the user.
 #[tauri::command]
 pub async fn pair_engine(
     own: tauri::State<'_, OwnEngine>,
@@ -93,7 +98,15 @@ pub async fn pair_engine(
     name: String,
 ) -> Result<Paired, String> {
     let key = own.0.as_ref().map(|p| p.engine_key().to_owned());
+    let name = own.0.as_ref().map_or(name, server::Pairing::engine_name);
     pair(address, code, name, key).await
+}
+
+/// This app's own engine's name, which [`pair_engine`] sends.
+#[tauri::command]
+pub fn own_engine_name(own: tauri::State<'_, OwnEngine>) -> Result<String, String> {
+    let pairing = own.0.as_ref().ok_or("this app's engine runs elsewhere")?;
+    Ok(pairing.engine_name())
 }
 
 /// This app's own engine's key, to send to the engine it controls
@@ -281,7 +294,14 @@ mod tests {
     use mdns_sd::ServiceInfo;
 
     fn resolved(addresses: &str, id: Option<&str>) -> ResolvedService {
-        let txt: Vec<(&str, &str)> = id.map(|id| ("id", id)).into_iter().collect();
+        named(addresses, id, None)
+    }
+
+    fn named(addresses: &str, id: Option<&str>, name: Option<&str>) -> ResolvedService {
+        let txt: Vec<(&str, &str)> = [id.map(|id| ("id", id)), name.map(|n| ("name", n))]
+            .into_iter()
+            .flatten()
+            .collect();
         ServiceInfo::new(
             "_motif._tcp.local.",
             "Motif abcd1234",
@@ -305,6 +325,12 @@ mod tests {
                 addresses: vec!["192.168.1.20:7700".into()],
             })
         );
+    }
+
+    #[test]
+    fn an_engine_is_the_name_it_advertises() {
+        let service = named("192.168.1.20", Some("abcd1234ef"), Some("Desk"));
+        assert_eq!(found(&service).unwrap().name, "Desk");
     }
 
     #[test]

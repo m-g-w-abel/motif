@@ -57,6 +57,9 @@ struct Shared {
 
 #[derive(Serialize, Deserialize)]
 struct Saved {
+    /// The engine's name, once renamed; else [`Inner::default_name`].
+    #[serde(default)]
+    name: Option<String>,
     auto_approve: Option<Preset>,
     devices: Vec<Stored>,
     log: Vec<PairingLogEntry>,
@@ -80,6 +83,7 @@ struct Saved {
 impl Default for Saved {
     fn default() -> Self {
         Self {
+            name: None,
             auto_approve: None,
             devices: Vec::new(),
             log: Vec::new(),
@@ -117,6 +121,8 @@ struct Stored {
 
 struct Inner {
     saved: Saved,
+    /// Its name until renamed: the computer's, or the phone's model.
+    default_name: String,
     code: Option<PairingCode>,
     code_ttl_ms: u64,
     pending: Vec<(PendingDevice, oneshot::Sender<Option<Preset>>)>,
@@ -179,10 +185,11 @@ impl Pairing {
         let engine_key = hex(SigningKey::from_bytes(&secret).verifying_key().as_bytes());
         let pairing = Self(Arc::new(Shared {
             file,
-            engine_key,
+            engine_key: engine_key.clone(),
             secret,
             inner: Mutex::new(Inner {
                 saved,
+                default_name: default_name(hostname(), &engine_key),
                 code: None,
                 code_ttl_ms: CODE_TTL_MS,
                 pending: Vec::new(),
@@ -206,9 +213,17 @@ impl Pairing {
         &self.0.engine_key
     }
 
-    /// What it's called on the LAN and to its clients.
-    pub(crate) fn engine_name(&self) -> String {
-        format!("Motif {}", &self.engine_key()[..8])
+    /// What it's called on the LAN, to its clients and to linked engines.
+    pub fn engine_name(&self) -> String {
+        self.lock().name()
+    }
+
+    /// Names the engine `name` until it is renamed, where the platform
+    /// knows better than its hostname (Android: the phone's model).
+    pub fn name_by_default(&self, name: &str) {
+        let mut inner = self.lock();
+        inner.default_name = default_name(Some(name.to_owned()), &self.0.engine_key);
+        self.publish(&inner);
     }
 
     pub(crate) fn secret(&self) -> [u8; 32] {
@@ -297,8 +312,9 @@ impl Pairing {
         })
     }
 
-    /// Records where the linked engine with `key` said it is, on meeting it.
-    pub(crate) fn met(&self, key: &str, address: net::PeerAddr) {
+    /// Records where the linked engine with `key` said it is, on meeting
+    /// it, and what it is called now (engines from before names say nothing).
+    pub(crate) fn met(&self, key: &str, address: net::PeerAddr, name: Option<&str>) {
         let mut inner = self.lock();
         let Some(stored) = inner
             .saved
@@ -310,6 +326,9 @@ impl Pairing {
         };
         stored.device.last_seen_ms = Some(engine::wall_clock_ms());
         stored.address = Some(address);
+        if let Some(name) = name.map(str::trim).filter(|n| !n.is_empty()) {
+            stored.device.name = clean_name(name);
+        }
         self.save(&inner);
         self.publish(&inner);
     }
@@ -748,6 +767,12 @@ impl Pairing {
                 }
                 inner.saved.own_relay = url;
             }
+            PairingCommand::SetName { name } => {
+                if name.trim().is_empty() {
+                    return Err("a name is needed".into());
+                }
+                inner.saved.name = Some(clean_name(&name));
+            }
             PairingCommand::SetEngineKey { .. } => {
                 return Err("only a paired device has an engine key to send".into());
             }
@@ -799,6 +824,7 @@ impl Pairing {
             device: id,
             token,
             engine_key: self.0.engine_key.clone(),
+            engine_name: inner.name(),
         }
     }
 
@@ -825,6 +851,7 @@ impl Pairing {
         let addresses = inner.lan.as_deref().unwrap_or_default();
         self.0.state.send_replace(PairingState {
             engine_key: self.0.engine_key.clone(),
+            name: inner.name(),
             code: inner.code.clone(),
             auto_approve: inner.saved.auto_approve,
             pending: inner.pending.iter().map(|(p, _)| p.clone()).collect(),
@@ -943,6 +970,13 @@ fn new_code(inner: &mut Inner) -> PairingCode {
 }
 
 impl Inner {
+    fn name(&self) -> String {
+        self.saved
+            .name
+            .clone()
+            .unwrap_or_else(|| self.default_name.clone())
+    }
+
     fn next_id(&mut self) -> u32 {
         self.next_id += 1;
         self.next_id
@@ -990,6 +1024,31 @@ fn log(inner: &mut Inner, at_ms: u64, action: PairingAction, device: String) {
     });
     if log.len() > LOG_CAP {
         log.drain(..log.len() - LOG_CAP);
+    }
+}
+
+/// `hostname`, if it names this machine, else one from `engine_key`.
+fn default_name(hostname: Option<String>, engine_key: &str) -> String {
+    match hostname.as_deref().map(str::trim) {
+        // Android's, and machines nobody named.
+        Some("" | "localhost") | None => format!("Motif {}", &engine_key[..8]),
+        Some(name) => clean_name(name),
+    }
+}
+
+/// The computer's name, with no dependency for it.
+fn hostname() -> Option<String> {
+    if cfg!(windows) {
+        std::env::var("COMPUTERNAME").ok()
+    } else if cfg!(target_os = "macos") {
+        // The name shown in Sharing settings, not the `.local` one.
+        let out = std::process::Command::new("scutil")
+            .args(["--get", "ComputerName"])
+            .output()
+            .ok()?;
+        String::from_utf8(out.stdout).ok()
+    } else {
+        std::fs::read_to_string("/proc/sys/kernel/hostname").ok()
     }
 }
 
@@ -1077,6 +1136,7 @@ mod tests {
             .unwrap();
         assert_eq!(pairing.authenticate(&paired.token), Some(paired.device));
         assert_eq!(paired.engine_key, pairing.engine_key());
+        assert_eq!(paired.engine_name, pairing.engine_name());
         assert!(pairing.redeem(request(&code), peer()).await.is_err());
 
         pairing.lock().code_ttl_ms = 0;
@@ -1419,8 +1479,8 @@ mod tests {
 
         // Meeting over iroh: what it says replaces what we had.
         let told = addr(&["10.0.0.2:41000"], Some("https://relay.example.com./"));
-        pairing.met(&key(4), told.clone());
-        pairing.met(&key(5), told.clone());
+        pairing.met(&key(4), told.clone(), None);
+        pairing.met(&key(5), told.clone(), None);
         let again = Pairing::open(&dir).unwrap();
         assert_eq!(book(&again), [(key(4), told)]);
 
@@ -1434,6 +1494,51 @@ mod tests {
         );
         assert_eq!(book(&Pairing::open(&dir).unwrap()), [(key(4), after)]);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_engine_is_named_after_its_computer_until_renamed() {
+        let key = "1a2b3c4d5e6f";
+        assert_eq!(default_name(Some("desk\n".into()), key), "desk");
+        assert_eq!(
+            default_name(Some("localhost".into()), key),
+            "Motif 1a2b3c4d"
+        );
+        assert_eq!(default_name(Some(" ".into()), key), "Motif 1a2b3c4d");
+        assert_eq!(default_name(None, key), "Motif 1a2b3c4d");
+
+        let dir = std::env::temp_dir().join(format!("motif-name-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let named = |p: &Pairing| (p.engine_name(), p.subscribe().borrow().name.clone());
+        let pairing = Pairing::open(&dir).unwrap();
+        pairing.name_by_default("Pixel 8");
+        assert_eq!(named(&pairing), ("Pixel 8".into(), "Pixel 8".into()));
+        for _ in 0..2 {
+            pairing
+                .command(PairingCommand::SetName {
+                    name: " Kitchen ".into(),
+                })
+                .unwrap();
+        }
+        let again = Pairing::open(&dir).unwrap();
+        again.name_by_default("Pixel 8");
+        assert_eq!(named(&again), ("Kitchen".into(), "Kitchen".into()));
+        let blank = PairingCommand::SetName { name: " ".into() };
+        assert!(again.command(blank).is_err());
+        assert_eq!(again.engine_name(), "Kitchen");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_linked_engine_takes_the_name_it_gives_on_meeting() {
+        let pairing = Pairing::in_memory();
+        pairing.link("192.168.1.5:7700", &key(4), &[]).unwrap();
+        let name = |p: &Pairing| p.subscribe().borrow().devices[0].name.clone();
+        pairing.met(&key(4), net::PeerAddr::default(), Some("Desk"));
+        assert_eq!(name(&pairing), "Desk");
+        // From an engine before names: kept.
+        pairing.met(&key(4), net::PeerAddr::default(), None);
+        assert_eq!(name(&pairing), "Desk");
     }
 
     #[test]
