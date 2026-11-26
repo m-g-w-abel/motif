@@ -31,7 +31,7 @@
   /** Hero names that don't fit one line (phones) scroll once per track while the sheet is open. */
   // Held where it is while the sheet moves (its change starts from the text as drawn), put back once it is closed.
   const scrolling = $derived(style === 'hero' && playing && track ? (sheet.rest ? track.id : sheet.moving ? false : null) : null);
-  /** What arrives: a stream's device, and Opus if it is transcoded. */
+  /** What arrives (Opus if it is transcoded), and a stream's device. */
   const shown = $derived(
     playedFormat(details, details?.codec ?? (track ? trackFormat(track) : ''), playing ? engine.player?.streamed : null),
   );
@@ -81,8 +81,9 @@
     {#if track}
       <p class="hero-album" data-enter="fade">
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
-        {#if format}<span class="format"><span class="rates">{rates}</span>{format}{#if shown.device}{' · '}<span class="device"><Icon name="cloud" size={11} /> {shown.device}</span>{/if}</span>{/if}
+        {#if format}<span class="format"><span class="rates">{rates}</span>{format}</span>{/if}
       </p>
+      {#if shown.device}<p class="device" data-enter="fade"><Icon name="cloud" size={12} /> {shown.device}</p>{/if}
       {#if playing && details && engine.can('library')}
         <div class="marks" data-enter="fade">
           {#if settings.current.ratings === 'stars'}
@@ -182,9 +183,14 @@
     color: var(--text-muted);
   }
 
-  /* A name keeps its case in the phone's upper-case badge. */
+  /* Where a stream comes from, under the file info; a long name ends in an ellipsis. */
   .device {
-    text-transform: none;
+    margin: var(--space-1) 0 0;
+    overflow: hidden;
+    font-size: 0.85em;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .device :global(svg) {

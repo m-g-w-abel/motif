@@ -649,6 +649,10 @@
       justify-content: center;
     }
 
+    .details :global(.hero .device) {
+      text-align: center;
+    }
+
     .details :global(.hero .format) {
       padding: 2px var(--space-3);
       border: 0;
