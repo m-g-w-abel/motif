@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { getApp, getViewState } from '../../context';
-  import { formatTime, trackFormat, trackTitle } from '../../format';
+  import { formatTime, streamedLabel, trackFormat, trackTitle } from '../../format';
   import { marquee } from '../../marquee';
   import type { InfoStyle } from '../../layout/model';
   import Heart from '../Heart.svelte';
@@ -31,6 +31,8 @@
   // Held where it is while the sheet moves (its change starts from the text as drawn), put back once it is closed.
   const scrolling = $derived(style === 'hero' && playing && track ? (sheet.rest ? track.id : sheet.moving ? false : null) : null);
   const format = $derived(details?.codec ?? (track ? trackFormat(track) : ''));
+  /** How the playing track comes from a linked engine, if it streams from one. */
+  const streamed = $derived(playing && engine.player?.streamed ? streamedLabel(engine.player.streamed, format) : '');
   /** Before the format on phones: "48 kHz · 152 kbps · ". */
   const rates = $derived(
     [details?.sample_rate && `${details.sample_rate / 1000} kHz`, details?.bitrate && `${details.bitrate} kbps`]
@@ -56,6 +58,7 @@
             ['Bitrate', details?.bitrate ? `${details.bitrate} kbps` : ''],
             ['ReplayGain', playing && gain != null ? `${gain > 0 ? '+' : ''}${gain.toFixed(2)} dB` : ''],
             ['File', track.source === 'local' ? track.id : ''],
+            ['Stream', streamed],
           ] as [string, string][]
         ).filter(([, value]) => value)
       : [],
@@ -76,6 +79,7 @@
         <span class="album-name" data-move={playing ? 'album:now' : undefined}>{track.album ?? ''}</span>
         {#if format}<span class="format"><span class="rates">{rates}</span>{format}</span>{/if}
       </p>
+      {#if streamed}<p class="streamed" data-enter="fade">{streamed}</p>{/if}
       {#if playing && details && engine.can('library')}
         <div class="marks" data-enter="fade">
           {#if settings.current.ratings === 'stars'}
@@ -172,6 +176,12 @@
     align-items: center;
     gap: var(--space-2);
     margin: 2px 0 0;
+    color: var(--text-muted);
+  }
+
+  .streamed {
+    margin: 2px 0 0;
+    font-size: 0.85em;
     color: var(--text-muted);
   }
 

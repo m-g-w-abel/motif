@@ -231,6 +231,17 @@ impl Pairing {
             .collect()
     }
 
+    /// The name of the linked engine with `key`.
+    pub(crate) fn linked_name(&self, key: &str) -> Option<String> {
+        let inner = self.lock();
+        let linked = inner
+            .saved
+            .devices
+            .iter()
+            .find(|d| linked_key(d) == Some(key));
+        linked.map(|d| d.device.name.clone())
+    }
+
     pub(crate) fn is_linked(&self, key: &str) -> bool {
         self.lock()
             .saved

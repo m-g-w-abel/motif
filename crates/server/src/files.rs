@@ -28,9 +28,9 @@ use library::{
     transcode::{self, Encode},
 };
 use net::{Alpn, Connection, Net, RecvStream, SendStream};
-use protocol::{Quality, Reach};
+use protocol::{Quality, Reach, Streamed};
 use serde::{Deserialize, Serialize};
-use tokio::runtime::Handle;
+use tokio::{runtime::Handle, sync::watch};
 
 use crate::{
     Pairing,
@@ -297,8 +297,10 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
     // Opened again for each decoder tried: they share the connection and
     // what it fetched while it lives, or a failure to dial for a while.
     let open = Mutex::new(None::<(Result<Dialled, String>, Instant)>);
+    let (tell, streamed) = watch::channel(None);
     Source::Stream {
         name,
+        streamed,
         open: Arc::new(move || {
             let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
             let dialled = match &*open {
@@ -309,7 +311,8 @@ pub(crate) fn source(pairing: Pairing, copies: Vec<(String, i64)>, runtime: Hand
                     return Err(io::Error::other(err.clone()));
                 }
                 _ => {
-                    let dialled = runtime.block_on(dial(&pairing, &copies, runtime.clone()));
+                    let dialled = dial(&pairing, &copies, tell.clone());
+                    let dialled = runtime.block_on(dialled);
                     let (dialled, _) = open.insert((dialled, Instant::now()));
                     dialled.clone().map_err(io::Error::other)?
                 }
@@ -357,7 +360,7 @@ impl Dialled {
 async fn dial(
     pairing: &Pairing,
     copies: &[(String, i64)],
-    runtime: Handle,
+    tell: watch::Sender<Option<Streamed>>,
 ) -> Result<Dialled, String> {
     let net = pairing
         .net()
@@ -373,7 +376,8 @@ async fn dial(
         let addr = pairing.linked().into_iter().find(|(k, _)| *k == key);
         let Some((_, addr)) = addr else { continue };
         let locate = locate(pairing.clone(), key.clone());
-        let connected = connect(&net, &key, &addr, id, runtime.clone(), locate, &quality);
+        let from = (pairing.linked_name(&key).unwrap_or_default(), tell.clone());
+        let connected = connect(&net, &key, &addr, id, locate, &quality, from);
         match tokio::time::timeout(DIAL, connected).await {
             Ok(Ok(opened)) => return Ok(opened),
             Ok(Err(err)) => reasons.push(err),
@@ -403,29 +407,38 @@ fn locate(pairing: Pairing, key: String) -> Locate {
 
 /// Opens track `id` on the linked engine `key` at the `quality` wanted over
 /// the connection: Opus if the owner encodes it, else its first range and
-/// size.
+/// size. Tells how it comes as `from` (its name, and where to tell).
 async fn connect(
     net: &Net,
     key: &str,
     addr: &net::PeerAddr,
     id: i64,
-    runtime: Handle,
     locate: Locate,
     quality: &(dyn Fn(&Connection) -> Quality + Sync),
+    (from, tell): (String, watch::Sender<Option<Streamed>>),
 ) -> Result<Dialled, String> {
     let conn = net.connect(key, addr, Alpn::Files).await?;
     let quality = quality(&conn);
+    let started = match quality {
+        Quality::Original => None,
+        _ => ask(&conn, id, Duration::ZERO, quality).await?,
+    };
     let link = Link {
         conn: Mutex::new(conn.clone()),
         redial: tokio::sync::Mutex::new(None),
         key: key.into(),
         locate,
         id,
-        runtime,
+        runtime: Handle::current(),
+        from,
+        sent: match started {
+            Some(_) => quality,
+            None => Quality::Original,
+        },
+        streamed: tell,
     };
-    if quality != Quality::Original
-        && let Some(started) = ask(&conn, id, Duration::ZERO, quality).await?
-    {
+    link.follow(&conn);
+    if let Some(started) = started {
         let first = Arc::new(Mutex::new(Some(started)));
         return Ok(Dialled::Opus(Arc::new(link), quality, first));
     }
@@ -453,6 +466,10 @@ struct Link {
     locate: Locate,
     id: i64,
     runtime: Handle,
+    /// The owner's name, what it sends and where to say so.
+    from: String,
+    sent: Quality,
+    streamed: watch::Sender<Option<Streamed>>,
 }
 
 /// A connection to the owner of track `id` and the ranges fetched or
@@ -482,7 +499,35 @@ enum Chunk {
     Failed(String),
 }
 
+/// How often a stream's route is told at most, as it changes.
+const ROUTE_EVERY: Duration = Duration::from_secs(3);
+
 impl Link {
+    /// Tells how the track comes over `conn` now, and as that changes while
+    /// it is open and the track is still wanted.
+    fn follow(&self, conn: &Connection) {
+        let (from, sent) = (self.from.clone(), self.sent);
+        let streamed = move |route| {
+            Some(Streamed {
+                from: from.clone(),
+                sent,
+                route,
+            })
+        };
+        self.streamed.send_replace(streamed(net::route(conn)));
+        let (conn, tell) = (conn.clone(), self.streamed.clone());
+        self.runtime.spawn(async move {
+            let told = net::follow_route(&conn, ROUTE_EVERY, |route| {
+                let now = streamed(route);
+                tell.send_if_modified(|was| (*was != now).then(|| *was = now).is_some());
+            });
+            tokio::select! {
+                _ = told => {}
+                _ = tell.closed() => {}
+            }
+        });
+    }
+
     fn conn(&self) -> Connection {
         self.conn.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -526,6 +571,7 @@ impl Link {
         match dialled.await {
             Ok(conn) => {
                 *self.conn.lock().unwrap_or_else(|e| e.into_inner()) = conn.clone();
+                self.follow(&conn);
                 *failed = None;
                 Ok(conn)
             }
@@ -1060,9 +1106,9 @@ mod tests {
         id: i64,
         quality: Quality,
     ) -> Result<Dialled, String> {
-        let runtime = Handle::current();
         let (net, at) = locate()?;
-        connect(&net, &owner.key(), &at, id, runtime, locate, &|_| quality).await
+        let from = ("Owner".into(), watch::channel(None).0);
+        connect(&net, &owner.key(), &at, id, locate, &|_| quality, from).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1285,6 +1331,10 @@ mod tests {
         let Ok(Playable::File(source, _)) = resolver.resolve(&track) else {
             panic!("not resolved");
         };
+        let Source::Stream { streamed, .. } = &source else {
+            panic!("not a stream");
+        };
+        let streamed = streamed.clone();
         // On the decode thread: every frame, then a seek.
         let (frames, reached) = tokio::task::spawn_blocking(move || {
             let mut decoder = decoder::open(&source, &decoder::all())?;
@@ -1301,6 +1351,12 @@ mod tests {
         .unwrap();
         // On the LAN (loopback here), the original: a WAV at its own rate.
         assert_eq!(frames, 3 * 44_100);
+        let lan = protocol::Streamed {
+            from: "A".into(),
+            sent: Quality::Original,
+            route: protocol::Route::Lan,
+        };
+        assert_eq!(*streamed.borrow(), Some(lan));
         assert!(reached.abs_diff(Duration::from_millis(1500)) < Duration::from_millis(100));
 
         // Unlinked, it no longer resolves.
@@ -1361,6 +1417,8 @@ mod tests {
         let Ok(dialled @ Dialled::Opus(..)) = opened else {
             panic!("the FLAC not encoded");
         };
+        let streamed = dialled.link().streamed.borrow().clone();
+        assert_eq!(streamed.map(|s| s.sent), Some(Quality::Opus256));
         let decoded = tokio::task::spawn_blocking(move || {
             let Ok(Opened::Decoded(mut decoder)) = dialled.open() else {
                 panic!("not decoded");
@@ -1432,6 +1490,7 @@ mod tests {
         Source::Stream {
             name: "measured".into(),
             open: Arc::new(move || Ok(Opened::Bytes(Box::new(Reader::new(remote.clone(), len))))),
+            streamed: watch::channel(None).1,
         }
     }
 
@@ -1547,9 +1606,9 @@ mod tests {
                         &key,
                         &addr,
                         id,
-                        runtime.clone(),
                         locate,
                         &|_| Quality::Original,
+                        ("Owner".into(), watch::channel(None).0),
                     ));
                     let Ok(Dialled::Original(remote)) = connected else {
                         panic!("not opened");

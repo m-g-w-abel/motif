@@ -1,3 +1,5 @@
+import type { Route } from './protocol/Route';
+import type { Streamed } from './protocol/Streamed';
 import type { TrackRef } from './protocol/TrackRef';
 
 export function formatTime(ms: number): string {
@@ -19,6 +21,15 @@ export function trackTitle(track: TrackRef): string {
 export function trackFormat(track: TrackRef): string {
   const match = /\.([a-z0-9]+)$/i.exec(track.id);
   return match ? match[1].toUpperCase() : '';
+}
+
+const ROUTES: Record<Route, string> = { lan: 'LAN', internet: 'internet', relayed: 'relayed' };
+
+/** How a track streams from a linked engine, with `codec` its file's: "Streamed from Desktop · Opus 256 (from FLAC) · relayed". */
+export function streamedLabel({ from, sent, route }: Streamed, codec: string | null | undefined): string {
+  const kbps = sent.replace('opus', '');
+  const what = sent === 'original' ? `original${codec ? ` ${codec}` : ''}` : `Opus ${kbps}${codec ? ` (from ${codec})` : ''}`;
+  return `Streamed from ${from} · ${what} · ${ROUTES[route]}`;
 }
 
 /** A stable two-colour gradient per album, used until real artwork exists. */

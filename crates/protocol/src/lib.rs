@@ -423,6 +423,9 @@ pub struct PlayerState {
     /// The ReplayGain adjustment applied to the current track, in dB
     /// (`None` when off or nothing is loaded).
     pub gain_db: Option<f32>,
+    /// How the current track comes from a linked engine, while it streams
+    /// from one (`None` for this device's files).
+    pub streamed: Option<Streamed>,
 }
 
 impl Default for PlayerState {
@@ -442,6 +445,7 @@ impl Default for PlayerState {
             outputs: Vec::new(),
             replay_gain: ReplayGainSettings::default(),
             gain_db: None,
+            streamed: None,
         }
     }
 }
@@ -1218,6 +1222,31 @@ impl Default for Qualities {
             download: Quality::Opus256,
         }
     }
+}
+
+/// A track streaming from a linked engine: which one, what it sends and how
+/// it gets here, which can change mid-track.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Streamed {
+    /// The linked engine's name.
+    pub from: String,
+    /// The original, or the Opus it encodes the file to.
+    pub sent: Quality,
+    pub route: Route,
+}
+
+/// How a connection to a linked engine runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Route {
+    /// Directly, on the same network.
+    Lan,
+    /// Directly, over the internet.
+    Internet,
+    /// Through a relay.
+    Relayed,
 }
 
 /// Which of [`Qualities`] a [`PairingCommand::SetQuality`] sets.

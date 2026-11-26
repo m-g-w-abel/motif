@@ -113,7 +113,8 @@ control isn't an add-on: it's the normal code path.
   starts gaplessly. Away from home, lossless and high-bitrate files come as
   Opus 256 (128 on a metered phone network), encoded live from the point
   played at over 100× real time; lossy files at or below that come as they
-  are. All settable, Original included.
+  are. All settable, Original included. Now Playing names the engine, what
+  it sends and the route (LAN, internet or relayed), updated as it changes.
 - An **MPD server**, so existing MPD clients can drive Motif.
 - Scrobbling to Last.fm, ListenBrainz and Libre.fm, with an offline queue.
 - Discord Rich Presence, plus OS media controls (MPRIS, SMTC, macOS Now

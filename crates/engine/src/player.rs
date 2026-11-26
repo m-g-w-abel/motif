@@ -285,6 +285,7 @@ impl Player {
                 Some(Playable::File(_, tags)) => self.gain_db(tags, false),
                 _ => None,
             },
+            streamed: self.streamed().and_then(|s| s.borrow().clone()),
         }
     }
 
@@ -496,6 +497,14 @@ impl Player {
     }
 
     /// What the current entry resolved to, once [`Self::resolve_current`] has run.
+    /// Says how the current track streams, if it streams.
+    pub fn streamed(&self) -> Option<&tokio::sync::watch::Receiver<Option<protocol::Streamed>>> {
+        match self.playable()? {
+            Playable::File(crate::Source::Stream { streamed, .. }, _) => Some(streamed),
+            _ => None,
+        }
+    }
+
     pub fn playable(&self) -> Option<&Playable> {
         let (id, playable) = self.resolved.as_ref()?;
         (self.current_item()?.id == *id).then_some(playable)
@@ -1814,6 +1823,43 @@ mod tests {
         let x = p.upcoming().unwrap().id;
         p.moved_to(x, Playable::Simulated, t0);
         assert_eq!(p.gain_db(&TAGS, false), Some(-6.0));
+    }
+
+    #[test]
+    fn the_state_says_how_the_current_track_streams_as_that_changes() {
+        use protocol::{Quality, Route, Streamed};
+        let t0 = Instant::now();
+        let (tell, streamed) = tokio::sync::watch::channel(None);
+        struct Linked(tokio::sync::watch::Receiver<Option<Streamed>>);
+        impl Resolver for Linked {
+            fn resolve(&self, _: &TrackRef) -> Result<Playable, String> {
+                let open: crate::Opener = std::sync::Arc::new(|| Err(std::io::Error::other("")));
+                let streamed = self.0.clone();
+                let name = "remote".into();
+                let source = crate::Source::Stream {
+                    name,
+                    open,
+                    streamed,
+                };
+                Ok(Playable::File(source, ReplayGain::default()))
+            }
+        }
+        let mut p = playing(&["a"], t0);
+        p.resolve_current(&Linked(streamed), t0);
+        assert_eq!(p.snapshot(t0, 0).streamed, None, "not opened yet");
+        let lan = Streamed {
+            from: "Desktop".into(),
+            sent: Quality::Original,
+            route: Route::Lan,
+        };
+        tell.send_replace(Some(lan.clone()));
+        assert_eq!(p.snapshot(t0, 0).streamed, Some(lan.clone()));
+        let relayed = Streamed {
+            route: Route::Relayed,
+            ..lan
+        };
+        tell.send_replace(Some(relayed.clone()));
+        assert_eq!(p.snapshot(t0, 0).streamed, Some(relayed));
     }
 
     /// Untagged files, measured some time later, recording requests.

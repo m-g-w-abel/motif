@@ -4,7 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use protocol::{ReplayGain, TrackRef};
+use protocol::{ReplayGain, Streamed, TrackRef};
+use tokio::sync::watch;
 
 use crate::audio::decoder::Decoder;
 
@@ -25,10 +26,11 @@ pub enum Source {
     /// Audio from elsewhere (a linked engine): bytes read as from a file, or
     /// audio decoded already. `name` tells streams apart; `open` starts it at
     /// the beginning and is called on the decode thread, so it may block on
-    /// the network.
+    /// the network. `streamed` says how it comes once opened.
     Stream {
         name: String,
         open: Opener,
+        streamed: watch::Receiver<Option<Streamed>>,
     },
 }
 

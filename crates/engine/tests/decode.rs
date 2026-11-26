@@ -157,6 +157,7 @@ fn stream(file: &str) -> Source {
     Source::Stream {
         name: file.into(),
         open: Arc::new(move || Ok(Opened::Bytes(Box::new(Held(Cursor::new(bytes.clone())))))),
+        streamed: tokio::sync::watch::channel(None).1,
     }
 }
 
