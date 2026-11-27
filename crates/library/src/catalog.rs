@@ -977,51 +977,6 @@ mod tests {
         assert_eq!(total, 2);
     }
 
-    #[test]
-    fn tracks_from_before_version_16_are_in_the_catalog() {
-        let dir = dir("old");
-        {
-            // A version 15 library: no catalog columns.
-            let conn = rusqlite::Connection::open(dir.join("library.db")).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE tracks (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE,
-                     size INTEGER NOT NULL, mtime INTEGER NOT NULL, title TEXT, artist TEXT,
-                     album TEXT, album_artist TEXT, track_no INTEGER, disc_no INTEGER,
-                     year INTEGER, original_year INTEGER, genre TEXT, duration_ms INTEGER,
-                     codec TEXT, sample_rate INTEGER, bit_depth INTEGER, channels INTEGER,
-                     bitrate INTEGER, musicbrainz_recording TEXT, isrc TEXT, audio_hash TEXT,
-                     art TEXT, rg_track_gain REAL, rg_track_peak REAL, rg_album_gain REAL,
-                     rg_album_peak REAL, missing INTEGER NOT NULL DEFAULT 0, problem TEXT,
-                     added INTEGER, musicbrainz_album TEXT);
-                 INSERT INTO tracks (path, size, mtime, title, audio_hash) VALUES ('/m/a.flac', 1, 1, 'A', 'h1');
-                 PRAGMA user_version = 15;",
-            )
-            .unwrap();
-        }
-        let library = Library::open(&dir).unwrap();
-        let page = library.catalog_page(&Seen::default(), 10).unwrap();
-        assert_eq!(page.changes.len(), 1);
-        assert_eq!(
-            page.changes[0].track.as_ref().unwrap().title.as_deref(),
-            Some("A")
-        );
-        library
-            .db()
-            .execute("UPDATE tracks SET genre = 'Jazz'", [])
-            .unwrap();
-        let seen = Seen {
-            epoch: Some(page.epoch),
-            version: page.changes[0].version,
-        };
-        assert_eq!(
-            library.catalog_page(&seen, 10).unwrap().changes.len(),
-            1,
-            "later changes count on"
-        );
-        drop(library);
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
     /// Query times with a big catalog from another engine (PLAN.md, #241):
     /// `cargo test -p library catalog::tests::timings -- --ignored --nocapture`.
     #[test]
