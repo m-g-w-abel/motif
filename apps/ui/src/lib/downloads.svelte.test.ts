@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Downloads, memberLabel, progress } from './downloads.svelte';
+import { Downloads, memberLabel, onlyCopies, progress } from './downloads.svelte';
 import type { EngineClient } from './engine.svelte';
 import type { Downloadable } from './protocol/Downloadable';
 import type { LibraryQuery } from './protocol/LibraryQuery';
+import type { LibraryTrack } from './protocol/LibraryTrack';
 import type { TrackRef } from './protocol/TrackRef';
 
 const album: Downloadable = { kind: 'album', album: 'Low\u001fBlue' };
@@ -41,7 +42,7 @@ describe('downloads', () => {
     const [remove] = downloads.items([album]);
     expect(remove.label).toBe('Remove download');
     remove.run();
-    expect(downloads.has(album)).toBe(false);
+    await vi.waitFor(() => expect(downloads.has(album)).toBe(false));
     await vi.waitFor(() => expect(sent.filter((q) => q.type === 'set_downloaded')).toHaveLength(2));
     expect(sent.at(-1)).toEqual({ type: 'set_downloaded', member: album, downloaded: false });
   });
@@ -74,5 +75,45 @@ describe('downloads', () => {
   it('counts how many of a member\'s songs are here', () => {
     const rows = ['remote:k:1', '/music/Motif/a.opus', '/music/b.flac'].map((id) => ({ track: { source: 'local', id } as TrackRef }));
     expect(progress(rows)).toEqual({ here: 2, total: 3 });
+  });
+
+  it('finds the copies no linked engine holds any more', () => {
+    const row = (id: string, devices: string[]) => ({ track: { source: 'local', id }, devices }) as unknown as LibraryTrack;
+    const rows = [row('/music/Motif/a.opus', []), row('/music/Motif/b.opus', ['desk']), row('/music/c.flac', []), row('/music/Motif/d.opus', ['gone'])];
+    const downloads = new Downloads(engine().e);
+    const only = onlyCopies(rows, (t) => downloads.isCopy(t), new Set(['desk']));
+    expect(only.map((r) => r.track.id)).toEqual(['/music/Motif/a.opus', '/music/Motif/d.opus']);
+  });
+
+  it('asks before removing the only copy of a song, and keeps it when told no', async () => {
+    const { e, sent } = engine([album]);
+    const copy = { track: { source: 'local', id: '/music/Motif/Low/Blue/1.opus', title: 'A' }, devices: [], track_no: 1 };
+    (e as unknown as { query: unknown }).query = vi.fn(async (q: LibraryQuery) => {
+      sent.push(q);
+      if (q.type === 'album_tracks') return { type: 'tracks', total: 1, offset: 0, tracks: [copy] };
+      return q.type === 'downloaded' ? { type: 'downloaded', members: [album] } : { type: 'done' };
+    });
+    const confirm = vi.fn(async () => false);
+    const downloads = new Downloads(e, confirm);
+    downloads.members = [album];
+    await downloads.remove([album]);
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(downloads.has(album)).toBe(true);
+    expect(sent.some((q) => q.type === 'set_downloaded')).toBe(false);
+    confirm.mockResolvedValue(true);
+    await downloads.remove([album]);
+    expect(downloads.has(album)).toBe(false);
+  });
+
+  it('shows a member downloading until all its songs are here', async () => {
+    const { e } = engine([album]);
+    const rows = [{ track: { source: 'local', id: 'remote:k:1' }, devices: ['desk'] }, { track: { source: 'local', id: '/music/Motif/2.opus' }, devices: [] }];
+    (e as unknown as { query: unknown }).query = vi.fn(async (q: LibraryQuery) =>
+      q.type === 'album_tracks' ? { type: 'tracks', total: 2, offset: 0, tracks: rows } : q.type === 'downloaded' ? { type: 'downloaded', members: [album] } : { type: 'done' },
+    );
+    const downloads = new Downloads(e);
+    expect(downloads.state(album)).toEqual({ kind: 'off' });
+    downloads.sync();
+    await vi.waitFor(() => expect(downloads.state(album)).toEqual({ kind: 'downloading', share: 0.5 }));
   });
 });

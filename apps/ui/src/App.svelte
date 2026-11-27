@@ -63,7 +63,7 @@
   const settingsView = new SettingsView();
   const views = new Views();
   const playlists = new Playlists(engine);
-  const downloads = new Downloads(engine);
+  const downloads = new Downloads(engine, (title, detail, action) => playlists.confirm(title, detail, action));
   setApp({ engine, library, position, layout, themes, settings, sheet, settingsView, views, playlists, downloads });
   // The lists are wanted everywhere: Add to playlist and Download menus, the Playlists and Downloaded views.
   $effect(() => playlists.sync());

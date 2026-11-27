@@ -1,11 +1,9 @@
 <script lang="ts">
   import { getApp } from '../../context';
-  import { elsewhere } from '../../devices';
-  import { memberLabel, progress } from '../../downloads.svelte';
-  import { NO_FILTER } from '../../library.svelte';
+  import { keyOf, memberLabel } from '../../downloads.svelte';
   import type { Downloadable } from '../../protocol/Downloadable';
-  import type { LibraryTrack } from '../../protocol/LibraryTrack';
   import Icon from '../Icon.svelte';
+  import DownloadMark from '../DownloadMark.svelte';
   import Artwork from '../player/Artwork.svelte';
 
   // The Downloaded view: what this device keeps copies of, each with how much of it is here, and how downloading goes.
@@ -15,45 +13,19 @@
     title: string;
     line: string;
     art: string | null;
-    here: number;
-    total: number;
   }
 
-  /** What a member's row shows, looked up from the library (an artist's albums, a playlist's songs). */
+  /** What a member's row shows besides its progress, from its songs (an artist's albums, a song's title). */
   async function rowOf(m: Downloadable): Promise<Partial<Row>> {
-    const songs = async (albums: string[]): Promise<LibraryTrack[]> => {
-      if (!albums.length) return [];
-      const r = await engine.query({ type: 'album_tracks', albums, sort: [], filter: NO_FILTER });
-      return r.type === 'tracks' ? r.tracks : [];
-    };
-    if (m.kind === 'album') {
-      const rows = await songs([m.album]);
-      return { art: rows[0]?.art ?? null, ...progress(rows) };
-    }
+    const rows = await downloads.tracksOf(m);
+    const art = rows.find((t) => t.art)?.art ?? null;
     if (m.kind === 'artist') {
-      // shortcut: an artist's first 500 albums; page them if a collector has more.
-      const r = await engine.query({ type: 'albums', search: null, artist: m.name, sort: [], filter: NO_FILTER, offset: 0, limit: 500 });
-      const albums = r.type === 'albums' ? r.albums : [];
-      const rows = await songs(albums.map((a) => a.key));
-      return { art: albums[0]?.art ?? null, line: `Artist · ${albums.length} ${albums.length === 1 ? 'album' : 'albums'}`, ...progress(rows) };
+      const albums = new Set(rows.map((t) => t.track.album)).size;
+      return { art, line: `Artist · ${albums} ${albums === 1 ? 'album' : 'albums'}` };
     }
-    // A playlist's entries and a looked-up song are the linked engine's rows even once a copy shadows them:
-    // their albums list the row that wins.
-    const shown = async (tracks: LibraryTrack[]) => {
-      const keyOf = (t: LibraryTrack) => `${t.album_artist ?? t.track.artist ?? ''}\u001f${t.track.album ?? ''}`;
-      const winners = await songs([...new Set(tracks.map(keyOf))]);
-      const same = (a: LibraryTrack, b: LibraryTrack) => keyOf(a) === keyOf(b) && a.track.title === b.track.title && a.track_no === b.track_no;
-      return tracks.map((t) => winners.find((w) => same(w, t)) ?? t);
-    };
-    if (m.kind === 'playlist') {
-      const rows = await shown((await playlists.entries(m.id)).map((e) => e.track));
-      return { art: rows.find((t) => t.art)?.art ?? null, ...progress(rows) };
-    }
-    const r = await engine.query({ type: 'lookup', paths: [m.path] });
-    const track = r.type === 'tracks' ? r.tracks[0] : undefined;
-    if (!track) return {};
-    const [here] = await shown([track]);
-    return { title: track.track.title ?? undefined, line: `Song · ${track.track.artist ?? 'Unknown artist'}`, art: track.art, here: elsewhere(here) ? 0 : 1, total: 1 };
+    if (m.kind !== 'track') return { art };
+    const track = rows[0];
+    return track ? { title: track.track.title ?? undefined, line: `Song · ${track.track.artist ?? 'Unknown artist'}`, art } : {};
   }
 
   let found = $state.raw(new Map<string, Partial<Row>>());
@@ -73,7 +45,7 @@
     downloads.members.map((m) => {
       const playlist = m.kind === 'playlist' ? playlists.list.find((p) => p.id === m.id) : undefined;
       const label = memberLabel(m);
-      const row: Row = { title: playlist?.name ?? label.title, line: label.line, art: playlist?.art ?? null, here: 0, total: 0, ...found.get(idOf(m)) };
+      const row: Row = { title: playlist?.name ?? label.title, line: label.line, art: playlist?.art ?? null, ...found.get(idOf(m)) };
       return { member: m, row };
     }),
   );
@@ -98,6 +70,7 @@
   {/if}
   <ul class="members">
     {#each rows as { member, row } (idOf(member))}
+      {@const counted = downloads.progress.get(keyOf(member))}
       <li>
         <button class="member" disabled={member.kind !== 'album' && member.kind !== 'playlist'} onclick={() => open(member, row.title)}>
           <span class="cover">
@@ -107,14 +80,15 @@
             <span class="title">{row.title}</span>
             <span class="line">{row.line}</span>
           </span>
-          {#if row.total}
-            <span class="progress" class:done={row.here === row.total} title="{row.here} of {row.total} songs on this device">
-              {#if row.here === row.total}<Icon name="check" size={14} />{:else}{row.here}/{row.total}{/if}
+          {#if counted}
+            <span class="progress" title="{counted.here} of {counted.total} songs on this device">
+              {#if counted.here < counted.total}{counted.here}/{counted.total}{/if}
+              <DownloadMark {member} size={16} />
             </span>
           {/if}
         </button>
         {#if canChange}
-          <button class="icon-button" aria-label="Remove download: {row.title}" title="Remove download" onclick={() => downloads.set([member], false)}>
+          <button class="icon-button" aria-label="Remove download: {row.title}" title="Remove download" onclick={() => downloads.remove([member])}>
             <Icon name="close" size={16} />
           </button>
         {/if}
@@ -222,14 +196,12 @@
 
   .progress {
     display: flex;
+    align-items: center;
+    gap: var(--space-1);
     color: var(--text-muted);
     font-size: 0.88em;
     font-variant-numeric: tabular-nums;
     flex: none;
-  }
-
-  .progress.done {
-    color: var(--accent);
   }
 
   .empty {

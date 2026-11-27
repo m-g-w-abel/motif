@@ -7,7 +7,7 @@
   import type { Scope } from '../../protocol/Scope';
   import AddEngineDialog from '../pairing/AddEngineDialog.svelte';
   import PairDialog from '../pairing/PairDialog.svelte';
-  import { addFolder, androidStorage, setDownloadFolder } from '../../folders';
+  import { addDownloadFolder, addFolder, androidStorage } from '../../folders';
   import { installTheme } from '../../layout/install';
   import { openUrl } from '../../openUrl';
   import { moveItem } from '../../reorder';
@@ -617,11 +617,24 @@
               Songs, albums, artists and playlists you download from linked devices are kept here to play offline. Choose
               Download in their menus; they're listed under Downloaded.
             </p>
-            <div class="item">
-              <span class="path selectable" title={status.downloads.folder}>{status.downloads.folder || 'No download folder'}</span>
-            </div>
+            <!-- One of the music folders, so downloads are scanned in; a new one joins them. -->
             <div class="actions">
-              <button class="button" onclick={() => setDownloadFolder(engine)}>Change folder…</button>
+              <span>Save in</span>
+              <select
+                class="select"
+                aria-label="Download folder"
+                value={status.downloads.folder}
+                onchange={(e) => {
+                  const path = e.currentTarget.value;
+                  if (path) return query({ type: 'set_download_folder', path });
+                  e.currentTarget.value = status.downloads.folder;
+                  void addDownloadFolder(engine);
+                }}
+              >
+                {#if !status.roots.includes(status.downloads.folder)}<option value={status.downloads.folder}>{status.downloads.folder}</option>{/if}
+                {#each status.roots as root (root)}<option value={root}>{root}</option>{/each}
+                <option value="">Add a new folder…</option>
+              </select>
             </div>
             {#if engine.pairing}
               {@const net = engine.pairing.net}

@@ -25,6 +25,7 @@
   import { swap } from '../../motion/swap';
   import { canDecorate } from '../../windowChrome';
   import Icon from '../Icon.svelte';
+  import DownloadMark from '../DownloadMark.svelte';
   import Artwork from '../player/Artwork.svelte';
   import AlbumGrid from '../widgets/AlbumGrid.svelte';
   import SongList from '../widgets/SongList.svelte';
@@ -222,7 +223,7 @@
     {#if download && member}
       {@const on = downloads.has(member)}
       <button class="tool" class:active={on} aria-pressed={on} aria-label="Download" title={download.label} onclick={download.run}>
-        <Icon name={on ? 'cloud-done' : 'cloud-download'} size={18} />
+        <DownloadMark {member} />
       </button>
     {:else if pageCloud}
       <span class="cloud" class:away={pageCloud.away} title={pageCloud.title} aria-label={pageCloud.title}><Icon name="cloud" size={18} /></span>

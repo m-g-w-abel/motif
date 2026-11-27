@@ -70,8 +70,14 @@ export async function addFolder(engine: EngineClient): Promise<void> {
   if (path) await engine.query({ type: 'add_root', path }).catch((e: Error) => (engine.error = e.message));
 }
 
-/** Asks where downloads go (a library folder; the engine moves nothing already there). */
-export async function setDownloadFolder(engine: EngineClient): Promise<void> {
+/** Asks for a new folder, adds it to the library and saves downloads there from now on (copies made already stay). */
+export async function addDownloadFolder(engine: EngineClient): Promise<void> {
   const path = await pickFolder(engine, 'Save downloads in');
-  if (path) await engine.query({ type: 'set_download_folder', path }).catch((e: Error) => (engine.error = e.message));
+  if (!path) return;
+  try {
+    await engine.query({ type: 'add_root', path });
+    await engine.query({ type: 'set_download_folder', path });
+  } catch (e) {
+    engine.error = (e as Error).message;
+  }
 }

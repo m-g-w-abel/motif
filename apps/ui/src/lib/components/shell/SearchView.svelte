@@ -12,6 +12,8 @@
   import { trackListData } from '../../sources.svelte';
   import { viewOptions } from '../../viewOptions';
   import Icon from '../Icon.svelte';
+  import DownloadMark from '../DownloadMark.svelte';
+  import type { Downloadable } from '../../protocol/Downloadable';
   import Artwork from '../player/Artwork.svelte';
   import AlbumGrid from '../widgets/AlbumGrid.svelte';
   import SongList from '../widgets/SongList.svelte';
@@ -171,7 +173,7 @@
         {@const download = artistMenu(best.artist.name)[0]}
         {@const on = downloads.has({ kind: 'artist', name: best.artist.name })}
         <button class="tool downloaded" class:active={on} aria-pressed={on} aria-label="Download {best.artist.name}" title={download.label} onclick={download.run}>
-          <Icon name={on ? 'cloud-done' : 'cloud-download'} size={18} />
+          <DownloadMark member={{ kind: 'artist', name: best.artist.name }} />
         </button>
       {/if}
     </div>
@@ -191,7 +193,7 @@
   {#if songs.count}<h2 class="sub">Songs</h2>{/if}
 {/snippet}
 
-{#snippet nameRow(name: string, line: string, art: string | null, onclick: () => void, items: () => MenuItem[] = () => [], downloaded = false)}
+{#snippet nameRow(name: string, line: string, art: string | null, onclick: () => void, items: () => MenuItem[] = () => [], member?: Downloadable)}
   <li>
     <button class="name-row" {onclick} use:menu={items}>
       <span class="cover small">
@@ -201,7 +203,7 @@
         <span class="title">{name}</span>
         <span class="artist">{line}</span>
       </span>
-      {#if downloaded}<span class="downloaded" title="Downloaded" aria-label="Downloaded"><Icon name="cloud-done" size={14} /></span>{/if}
+      {#if member && downloads.has(member)}<span class="downloaded" title="Downloaded" aria-label="Downloaded"><DownloadMark {member} size={14} /></span>{/if}
     </button>
   </li>
 {/snippet}
@@ -313,7 +315,7 @@
               artist.art,
               () => pickArtist(artist.name),
               () => artistMenu(artist.name),
-              downloads.has({ kind: 'artist', name: artist.name }),
+              { kind: 'artist', name: artist.name },
             )}
           {:else}
             <li class="empty">No artists match “{searched}”.</li>

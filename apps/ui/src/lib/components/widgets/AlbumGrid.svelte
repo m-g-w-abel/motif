@@ -20,6 +20,7 @@
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
   import { sortLabel, viewSort } from '../../sort.svelte';
   import Icon from '../Icon.svelte';
+  import DownloadMark from '../DownloadMark.svelte';
   import Artwork from '../player/Artwork.svelte';
   import { gridRows } from '../../gridRows';
   import Scrollbar from '../Scrollbar.svelte';
@@ -581,7 +582,7 @@
                 </span>
               {/if}
               {#if downloads.has(memberOf(album.key))}
-                <span class="downloaded" title="Downloaded" aria-label="Downloaded"><Icon name="cloud-done" size={12} /></span>
+                <span class="downloaded" title="Downloaded" aria-label="Downloaded"><DownloadMark member={memberOf(album.key)} size={14} /></span>
               {/if}
               {#if selecting}
                 <span class="check" class:on={picked.has(album.key)} aria-hidden="true">
