@@ -171,7 +171,7 @@
         {@const download = artistMenu(best.artist.name)[0]}
         {@const on = downloads.has({ kind: 'artist', name: best.artist.name })}
         <button class="tool downloaded" class:active={on} aria-pressed={on} aria-label="Download {best.artist.name}" title={download.label} onclick={download.run}>
-          <Icon name="download" size={18} />
+          <Icon name={on ? 'cloud-done' : 'cloud-download'} size={18} />
         </button>
       {/if}
     </div>
@@ -201,7 +201,7 @@
         <span class="title">{name}</span>
         <span class="artist">{line}</span>
       </span>
-      {#if downloaded}<span class="downloaded" title="Downloaded" aria-label="Downloaded"><Icon name="download" size={14} /></span>{/if}
+      {#if downloaded}<span class="downloaded" title="Downloaded" aria-label="Downloaded"><Icon name="cloud-done" size={14} /></span>{/if}
     </button>
   </li>
 {/snippet}

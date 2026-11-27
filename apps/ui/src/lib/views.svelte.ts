@@ -30,7 +30,7 @@ export const CATEGORIES: { kind: Category; label: string; icon: IconName; colour
   { kind: 'played', label: 'Recently Played', icon: 'play', colour: '#3f3d8a' },
   { kind: 'added', label: 'Recently Added', icon: 'plus', colour: '#4e6043' },
   { kind: 'favourites', label: 'Favourites', icon: 'heart', colour: '#a8405a' },
-  { kind: 'downloaded', label: 'Downloaded', icon: 'download', colour: '#2f7a78' },
+  { kind: 'downloaded', label: 'Downloaded', icon: 'cloud-done', colour: '#2f7a78' },
 ];
 
 /** The Library home's entries for the Hearts or Stars setting: Favourites are loved songs, so Stars hides them. */

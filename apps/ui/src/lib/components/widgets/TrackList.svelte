@@ -698,7 +698,7 @@
                     {:else}
                       {cell(column, i)}
                       {#if column === 'title' && mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={12} /></span>{/if}
-                      {#if column === 'title' && track && downloads.isCopy(track)}<span class="device" title="Downloaded" aria-label="Downloaded"><Icon name="download" size={12} /></span>{/if}
+                      {#if column === 'title' && track && downloads.isCopy(track)}<span class="device" title="Downloaded" aria-label="Downloaded"><Icon name="cloud-done" size={12} /></span>{/if}
                       {#if column === 'title' && error}<span class="reason">{error}</span>{/if}
                     {/if}
                   </td>

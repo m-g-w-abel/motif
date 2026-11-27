@@ -13,6 +13,7 @@
   import { navTarget, scrollInto } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
+  import { trackMembers } from '../../downloads.svelte';
   import { starsLabel, starsOf } from '../../ratings';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { ordered, span, toggle, type ItemAt } from '../../selection';
@@ -298,7 +299,7 @@
                   {#if !inAlbum}<span class="artist">{track.artist || 'Unknown artist'}</span>{/if}
                 </span>
                 {#if mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={13} /></span>{/if}
-                {#if downloads.isCopy(track)}<span class="device" title="Downloaded" aria-label="Downloaded"><Icon name="download" size={13} /></span>{/if}
+                {#if downloads.isCopy(track)}<span class="device" title="Downloaded" aria-label="Downloaded"><Icon name="cloud-done" size={13} /></span>{/if}
                 {#if settings.current.ratings === 'hearts' ? details?.favourite : details?.rating}
                   <span class="marks" aria-label={settings.current.ratings === 'hearts' ? 'Loved' : starsLabel(starsOf(details?.rating))}>
                     {#if settings.current.ratings === 'hearts'}<Icon name="heart" size={12} solid />{:else}<span class="stars">{'★'.repeat(starsOf(details?.rating))}</span>{/if}
@@ -345,6 +346,9 @@
         {#if playlists.canAdd(chosen())}
           <button aria-haspopup="menu" onclick={addToPlaylist}>Add to playlist…</button>
         {/if}
+        {#each downloads.items(trackMembers(chosen())) as item (item.label)}
+          <button disabled={!picked.size} onclick={() => (item.run(), (selecting = false))}>{item.label}</button>
+        {/each}
         {#if onremove}
           <button class="danger" disabled={!picked.size} title="Delete from this playlist" onclick={remove}>Delete</button>
         {/if}

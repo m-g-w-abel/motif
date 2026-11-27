@@ -24,7 +24,7 @@
 use std::{
     collections::HashMap,
     io::{self, Read, Seek, SeekFrom, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
@@ -641,6 +641,29 @@ impl Store {
             if !wanted && !live.contains(&file.path()) {
                 let _ = std::fs::remove_file(file.path());
             }
+        }
+    }
+
+    /// Done with a file [`fetch_whole`] fetched in the original: deleted, or,
+    /// while it is still open for playing, once that is done with it.
+    pub(crate) fn release(&self, fetched: &Path) {
+        let stem = fetched.file_name().unwrap_or_default().to_string_lossy();
+        let Some((key, id)) = stem.rsplit_once('-') else {
+            return;
+        };
+        let Ok(id) = id.parse::<i64>() else {
+            return;
+        };
+        let open = self.lock();
+        let live = open.get(&(key.to_string(), id)).and_then(Weak::upgrade);
+        if live.is_none() {
+            let _ = std::fs::remove_file(fetched.with_extension("have"));
+            let _ = std::fs::remove_file(fetched);
+        }
+        drop(open);
+        // Dropped outside the lock: the last one deletes the file, taking it.
+        if let Some(remote) = live {
+            remote.kept.store(false, Ordering::Relaxed);
         }
     }
 

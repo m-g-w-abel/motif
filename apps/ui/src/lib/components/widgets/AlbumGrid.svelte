@@ -581,7 +581,7 @@
                 </span>
               {/if}
               {#if downloads.has(memberOf(album.key))}
-                <span class="downloaded" title="Downloaded" aria-label="Downloaded"><Icon name="download" size={12} /></span>
+                <span class="downloaded" title="Downloaded" aria-label="Downloaded"><Icon name="cloud-done" size={12} /></span>
               {/if}
               {#if selecting}
                 <span class="check" class:on={picked.has(album.key)} aria-hidden="true">

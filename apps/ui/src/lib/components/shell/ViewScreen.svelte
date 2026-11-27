@@ -222,7 +222,7 @@
     {#if download && member}
       {@const on = downloads.has(member)}
       <button class="tool" class:active={on} aria-pressed={on} aria-label="Download" title={download.label} onclick={download.run}>
-        <Icon name="download" size={18} />
+        <Icon name={on ? 'cloud-done' : 'cloud-download'} size={18} />
       </button>
     {:else if pageCloud}
       <span class="cloud" class:away={pageCloud.away} title={pageCloud.title} aria-label={pageCloud.title}><Icon name="cloud" size={18} /></span>
