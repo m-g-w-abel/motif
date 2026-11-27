@@ -37,17 +37,23 @@
       const rows = await songs(albums.map((a) => a.key));
       return { art: albums[0]?.art ?? null, line: `Artist · ${albums.length} ${albums.length === 1 ? 'album' : 'albums'}`, ...progress(rows) };
     }
+    // A playlist's entries and a looked-up song are the linked engine's rows even once a copy shadows them:
+    // their albums list the row that wins.
+    const shown = async (tracks: LibraryTrack[]) => {
+      const keyOf = (t: LibraryTrack) => `${t.album_artist ?? t.track.artist ?? ''}\u001f${t.track.album ?? ''}`;
+      const winners = await songs([...new Set(tracks.map(keyOf))]);
+      const same = (a: LibraryTrack, b: LibraryTrack) => keyOf(a) === keyOf(b) && a.track.title === b.track.title && a.track_no === b.track_no;
+      return tracks.map((t) => winners.find((w) => same(w, t)) ?? t);
+    };
     if (m.kind === 'playlist') {
-      const rows = (await playlists.entries(m.id)).map((e) => e.track);
+      const rows = await shown((await playlists.entries(m.id)).map((e) => e.track));
       return { art: rows.find((t) => t.art)?.art ?? null, ...progress(rows) };
     }
     const r = await engine.query({ type: 'lookup', paths: [m.path] });
     const track = r.type === 'tracks' ? r.tracks[0] : undefined;
     if (!track) return {};
-    // Its copy shadows the linked engine's row, which a lookup still finds: the album lists the one that wins.
-    const key = `${track.album_artist ?? track.track.artist ?? ''}\u001f${track.track.album ?? ''}`;
-    const shown = (await songs([key])).find((t) => t.track.title === track.track.title && t.track_no === track.track_no) ?? track;
-    return { title: track.track.title ?? undefined, line: `Song · ${track.track.artist ?? 'Unknown artist'}`, art: track.art, here: elsewhere(shown) ? 0 : 1, total: 1 };
+    const [here] = await shown([track]);
+    return { title: track.track.title ?? undefined, line: `Song · ${track.track.artist ?? 'Unknown artist'}`, art: track.art, here: elsewhere(here) ? 0 : 1, total: 1 };
   }
 
   let found = $state.raw(new Map<string, Partial<Row>>());
