@@ -6,7 +6,6 @@
   import { deviceRows, REACH_LABELS } from '../../devices';
   import { HELP_URL, openUrl } from '../../openUrl';
   import type { MenuItem } from '../../contextMenu.svelte';
-  import { trackMembers } from '../../downloads.svelte';
   import { pickActions, runPick, type PickAction, type Picking } from '../../picking';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { markActions, type MarkAction } from '../../ratings';
@@ -59,7 +58,7 @@
   const downloadItems = $derived.by(() => {
     if (!more || !shown) return [];
     const on = shown.picking;
-    return downloads.items(on.members?.() ?? trackMembers(picked)).map((item) => ({ ...item, run: () => (item.run(), on.done()) }));
+    return (on.members ? downloads.items(on.members()) : downloads.songItems(picked)).map((item) => ({ ...item, run: () => (item.run(), on.done()) }));
   });
   const MARK_LABELS: Record<MarkAction, string> = { love: 'Love', unlove: 'Unlove', clear: 'Clear rating' };
 

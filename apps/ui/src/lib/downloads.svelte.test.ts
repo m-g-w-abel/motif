@@ -139,4 +139,51 @@ describe('downloads', () => {
     expect(downloads.song(remote(2, 'h2'))).toEqual({ kind: 'here' });
     expect(downloads.song(remote(9, 'h9'))).toBeNull();
   });
+
+  it("moves each song's ring only forward, and only the song downloading now fills", async () => {
+    const { e } = engine([album]);
+    const remote = (id: number) => ({ source: 'local', id: `remote:k:${id}`, keys: { audio_hash: `h${id}` } }) as unknown as TrackRef;
+    const rows = [1, 2].map((id) => ({ track: remote(id), devices: ['desk'] }));
+    (e as unknown as { query: unknown }).query = vi.fn(async (q: LibraryQuery) =>
+      q.type === 'album_tracks' ? { type: 'tracks', total: 2, offset: 0, tracks: rows } : q.type === 'downloaded' ? { type: 'downloaded', members: [album], excluded: [] } : { type: 'done' },
+    );
+    const downloads = new Downloads(e);
+    downloads.sync();
+    await vi.waitFor(() => expect(downloads.song(remote(1))).toEqual({ kind: 'downloading', share: 0 }));
+    const fetching = (source: string, percent: number) => (e.library!.downloads.fetching = { source, percent });
+    fetching('remote:k:1', 99);
+    expect(downloads.song(remote(1))).toEqual({ kind: 'downloading', share: 0.99 });
+    expect(downloads.song(remote(2))).toEqual({ kind: 'downloading', share: 0 });
+    // Saved, not scanned in yet: it holds rather than going back.
+    e.library!.downloads.fetching = null;
+    expect(downloads.song(remote(1))).toEqual({ kind: 'downloading', share: 0.99 });
+    fetching('remote:k:2', 30);
+    expect(downloads.song(remote(1))).toEqual({ kind: 'downloading', share: 0.99 });
+    expect(downloads.song(remote(2))).toEqual({ kind: 'downloading', share: 0.3 });
+  });
+
+  it('offers Remove download on a song here as a download from any member, and forgets one taken out', async () => {
+    const { e } = engine([album]);
+    const copy = { source: 'local', id: '/music/Motif/Low/Blue/01 One.opus', keys: { audio_hash: 'h1' } } as unknown as TrackRef;
+    const linked = { source: 'local', id: 'remote:k:1', keys: { audio_hash: 'h1' } } as unknown as TrackRef;
+    const out = { source: 'local', id: 'remote:k:2', keys: { audio_hash: 'h2' } } as unknown as TrackRef;
+    const rows = [
+      { track: copy, devices: [] },
+      { track: out, devices: ['desk'] },
+    ];
+    (e as unknown as { query: unknown }).query = vi.fn(async (q: LibraryQuery) =>
+      q.type === 'album_tracks'
+        ? { type: 'tracks', total: 2, offset: 0, tracks: rows }
+        : q.type === 'downloaded'
+          ? { type: 'downloaded', members: [album], excluded: ['remote:k:2'] }
+          : { type: 'done' },
+    );
+    const downloads = new Downloads(e);
+    downloads.sync();
+    await vi.waitFor(() => expect(downloads.state(album)).toEqual({ kind: 'done' }));
+    expect(downloads.songItems([copy])[0].label).toBe('Remove download');
+    expect(downloads.songItems([linked])[0].label).toBe('Remove download');
+    expect(downloads.song(out)).toBeNull();
+    expect(downloads.songItems([out])[0].label).toBe('Download');
+  });
 });

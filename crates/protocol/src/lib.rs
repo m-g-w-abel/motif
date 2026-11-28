@@ -846,6 +846,10 @@ pub enum QueryResult {
     },
     Downloaded {
         members: Vec<Downloadable>,
+        /// The linked engines' rows of songs taken out of a member that
+        /// takes them in (Remove download on the song), so they stay out.
+        #[serde(default)]
+        excluded: Vec<String>,
     },
     Tracks {
         total: u32,

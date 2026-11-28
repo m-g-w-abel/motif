@@ -13,7 +13,6 @@
   import { navTarget, scrollInto } from '../../keynav';
   import { menu } from '../../contextMenu.svelte';
   import { playTracks, queueTracks, trackMenu } from '../../menus';
-  import { trackMembers } from '../../downloads.svelte';
   import { starsLabel, starsOf } from '../../ratings';
   import type { TrackRef } from '../../protocol/TrackRef';
   import { ordered, span, toggle, type ItemAt } from '../../selection';
@@ -347,7 +346,7 @@
         {#if playlists.canAdd(chosen())}
           <button aria-haspopup="menu" onclick={addToPlaylist}>Add to playlist…</button>
         {/if}
-        {#each downloads.items(trackMembers(chosen())) as item (item.label)}
+        {#each downloads.songItems(chosen()) as item (item.label)}
           <button disabled={!picked.size} onclick={() => (item.run(), (selecting = false))}>{item.label}</button>
         {/each}
         {#if onremove}

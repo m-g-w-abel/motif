@@ -52,6 +52,8 @@ export class Downloads {
   /** The members' songs still to come (their linked engines' rows), and the audio of those here. */
   #coming = $state.raw(new Set<string>());
   #here = $state.raw(new Set<string>());
+  /** How far each song still coming has got, so its ring only goes forward (not reactive: read with the status). */
+  #shown = new Map<string, number>();
   #synced = '';
   private engine: EngineClient;
   /** Asks the user to confirm `action`, `detail` saying why; true to go ahead. */
@@ -78,11 +80,15 @@ export class Downloads {
       .then(async (r) => {
         if (r.type !== 'downloaded') return;
         this.members = r.members;
-        const songs = await Promise.all(r.members.map((m) => this.tracksOf(m).catch(() => undefined)));
+        // Songs taken out of their member are no longer its.
+        const out = new Set(r.excluded ?? []);
+        const songsOf = (m: Downloadable) => this.tracksOf(m).then((rows) => rows.filter((row) => !out.has(row.track.id)));
+        const songs = await Promise.all(r.members.map((m) => songsOf(m).catch(() => undefined)));
         if (this.#synced !== key) return;
         this.progress = new Map(r.members.flatMap((m, i) => (songs[i] ? [[keyOf(m), progress(songs[i])]] : [])));
         const all = songs.flatMap((s) => s ?? []);
         this.#coming = new Set(all.filter(elsewhere).map((r) => r.track.id));
+        for (const id of this.#shown.keys()) if (!this.#coming.has(id)) this.#shown.delete(id);
         this.#here = new Set(all.flatMap((r) => (!elsewhere(r) && r.track.keys?.audio_hash ? [r.track.keys.audio_hash] : [])));
       })
       .catch(() => {});
@@ -101,10 +107,16 @@ export class Downloads {
    */
   song(track: TrackRef): { kind: 'downloading'; share: number } | { kind: 'here' } | null {
     const fetching = this.status?.fetching;
-    if (fetching?.source === track.id) return { kind: 'downloading', share: fetching.percent / 100 };
+    const shown = this.#shown.get(track.id) ?? 0;
+    if (fetching?.source === track.id) {
+      const share = Math.max(shown, fetching.percent / 100);
+      this.#shown.set(track.id, share);
+      return { kind: 'downloading', share };
+    }
     const hash = track.keys?.audio_hash;
     if (this.isCopy(track) || (hash && this.#here.has(hash))) return { kind: 'here' };
-    return this.#coming.has(track.id) ? { kind: 'downloading', share: 0 } : null;
+    // Saved and waiting to be scanned in, or failed and waiting to resume: it holds where it got to.
+    return this.#coming.has(track.id) ? { kind: 'downloading', share: shown } : null;
   }
 
   async #songs(albums: string[]): Promise<LibraryTrack[]> {
@@ -159,6 +171,12 @@ export class Downloads {
     }
   }
 
+  /** [`items`] for songs: Remove download once each is here as a download, from whichever member. */
+  songItems(tracks: TrackRef[]): MenuItem[] {
+    const here = tracks.every((t) => this.has({ kind: 'track', path: t.id }) || this.song(t)?.kind === 'here');
+    return this.items(trackMembers(tracks), here);
+  }
+
   /** A library file that is a downloaded copy: it sits in the download folder. */
   isCopy(track: Pick<TrackRef, 'source' | 'id'>): boolean {
     const folder = this.status?.folder.replace(/[\\/]+$/, '');
@@ -169,9 +187,8 @@ export class Downloads {
    * Download, or Remove download once all of `members` are in. Only where this device may change the library,
    * and, as downloads come from linked engines, only with one linked (or for what is in already).
    */
-  items(members: Downloadable[]): MenuItem[] {
+  items(members: Downloadable[], all = members.every((m) => this.has(m))): MenuItem[] {
     if (!members.length || !this.engine.can('library')) return [];
-    const all = members.every((m) => this.has(m));
     const linked = this.engine.pairing ? this.engine.pairing.net.links.length > 0 : true;
     if (!all && !linked && !members.some((m) => this.has(m))) return [];
     return [

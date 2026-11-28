@@ -24,6 +24,8 @@ pub(crate) const SCHEMA: &str = "
     -- (`remote:<engine>:<id>`) and that track's audio hash, which the copy
     -- takes (an Opus copy hashes differently).
     CREATE TABLE IF NOT EXISTS downloads (path TEXT PRIMARY KEY, source TEXT NOT NULL, hash TEXT);
+    -- A song taken out of a member that takes it in: its catalog row and audio.
+    CREATE TABLE IF NOT EXISTS download_excluded (path TEXT PRIMARY KEY, hash TEXT);
 ";
 
 /// A linked engine's track to download.
@@ -129,6 +131,33 @@ fn kind(member: &Downloadable) -> (&'static str, &str) {
     }
 }
 
+/// The catalog row a track stands for (a downloaded copy's source) and its
+/// audio hash.
+fn source_of(conn: &Connection, path: &str) -> Result<(String, Option<String>)> {
+    let hash_of = |path: &str| -> Result<Option<Option<String>>> {
+        Ok(conn
+            .query_row(
+                "SELECT nullif(audio_hash, '') FROM tracks WHERE path = ?1",
+                [path],
+                |r| r.get(0),
+            )
+            .optional()?)
+    };
+    let copy: Option<String> = conn
+        .query_row(
+            "SELECT source FROM downloads WHERE path = ?1",
+            [path],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let source = copy.unwrap_or_else(|| path.to_string());
+    let hash = match hash_of(&source)? {
+        Some(hash) => hash,
+        None => hash_of(path)?.ok_or_else(|| Error::Other(format!("no track {path}")))?,
+    };
+    Ok((source, hash))
+}
+
 fn members(conn: &Connection) -> Result<Vec<(Downloadable, Option<String>)>> {
     let mut stmt =
         conn.prepare("SELECT kind, key, hash FROM download_members ORDER BY kind, key")?;
@@ -182,34 +211,65 @@ fn tracks_of(conn: &Connection, member: &Downloadable, hash: Option<&str>) -> Re
 impl Library {
     /// What the Downloaded group holds.
     pub(crate) fn downloaded(&self) -> Result<QueryResult> {
-        let members = members(&self.db())?.into_iter().map(|(m, _)| m).collect();
-        Ok(QueryResult::Downloaded { members })
+        let conn = self.db();
+        let members = members(&conn)?.into_iter().map(|(m, _)| m).collect();
+        let mut stmt = conn.prepare("SELECT path FROM download_excluded ORDER BY path")?;
+        let excluded = stmt.query_map([], |r| r.get(0))?;
+        let excluded = excluded.collect::<rusqlite::Result<_>>()?;
+        Ok(QueryResult::Downloaded { members, excluded })
     }
 
     /// Adds `member` to the Downloaded group, or takes it out. Safe to repeat.
+    /// A song taken out that another member takes in stays out of it, until
+    /// it is added again or that member is taken out.
     pub(crate) fn set_downloaded(&self, member: &Downloadable, downloaded: bool) -> Result<()> {
         let conn = self.db();
         let (kind, key) = kind(member);
-        if !downloaded {
+        if let Downloadable::Track { path } = member {
+            let (source, hash) = source_of(&conn, path)?;
+            conn.execute(
+                "DELETE FROM download_excluded WHERE path = ?1 OR hash = ?2",
+                params![source, hash],
+            )?;
+            conn.execute(
+                "DELETE FROM download_members WHERE kind = 'track' AND key IN (?1, ?2)",
+                params![path, source],
+            )?;
+            if downloaded {
+                conn.execute(
+                    "INSERT INTO download_members (kind, key, hash) VALUES ('track', ?1, ?2)",
+                    params![source, hash],
+                )?;
+            } else {
+                let mut taken = false;
+                for (member, h) in members(&conn)? {
+                    let tracks = tracks_of(&conn, &member, h.as_deref())?;
+                    taken |= (tracks.iter())
+                        .any(|t| t.path == source || (hash.is_some() && t.hash == hash));
+                }
+                if taken {
+                    conn.execute(
+                        "INSERT OR REPLACE INTO download_excluded (path, hash) VALUES (?1, ?2)",
+                        params![source, hash],
+                    )?;
+                }
+            }
+        } else if !downloaded {
+            // What was taken out of it can come back with it.
+            for t in tracks_of(&conn, member, None)? {
+                conn.execute(
+                    "DELETE FROM download_excluded WHERE path = ?1 OR hash = ?2",
+                    params![t.path, t.hash],
+                )?;
+            }
             conn.execute(
                 "DELETE FROM download_members WHERE kind = ?1 AND key = ?2",
                 [kind, key],
             )?;
         } else {
-            let hash: Option<String> = match member {
-                Downloadable::Track { path } => conn
-                    .query_row(
-                        "SELECT nullif(audio_hash, '') FROM tracks WHERE path = ?1",
-                        [path],
-                        |r| r.get(0),
-                    )
-                    .optional()?
-                    .ok_or_else(|| Error::Other(format!("no track {path}")))?,
-                _ => None,
-            };
             conn.execute(
-                "INSERT OR IGNORE INTO download_members (kind, key, hash) VALUES (?1, ?2, ?3)",
-                params![kind, key, hash],
+                "INSERT OR IGNORE INTO download_members (kind, key) VALUES (?1, ?2)",
+                [kind, key],
             )?;
         }
         drop(conn);
@@ -254,7 +314,14 @@ impl Library {
         let conn = self.db();
         let mut all = Vec::new();
         for (member, hash) in members(&conn)? {
-            all.extend(tracks_of(&conn, &member, hash.as_deref())?);
+            for track in tracks_of(&conn, &member, hash.as_deref())? {
+                let excluded = conn
+                    .prepare_cached("SELECT 1 FROM download_excluded WHERE path = ?1 OR hash = ?2")?
+                    .exists(params![track.path, track.hash])?;
+                if !excluded {
+                    all.push(track);
+                }
+            }
         }
         let here = |hash: &Option<String>| -> Result<bool> {
             let Some(hash) = hash else { return Ok(false) };
@@ -625,6 +692,41 @@ mod tests {
     }
 
     #[test]
+    fn a_song_taken_out_of_a_downloaded_album_stays_out_until_downloaded_again() {
+        let (library, dir) = library("exclude");
+        let a1 = remote(&library, 1, "One", "Alpha", "h1");
+        remote(&library, 2, "Two", "Alpha", "h2");
+        library.set_downloaded(&album("Alpha"), true).unwrap();
+        let saved = download(&library);
+        // Taken out from its copy's row (twice: safe to repeat).
+        let copy = Downloadable::Track {
+            path: saved[0].to_str().unwrap().into(),
+        };
+        library.set_downloaded(&copy, false).unwrap();
+        library.set_downloaded(&copy, false).unwrap();
+        assert_eq!(removed(&library), [saved[0].clone()]);
+        assert!(fetched(&library).is_empty(), "came back with its album");
+        assert!(saved[1].exists());
+        let QueryResult::Downloaded { members, excluded } = library.downloaded().unwrap() else {
+            panic!("not the members");
+        };
+        assert_eq!(members, [album("Alpha")]);
+        assert_eq!(excluded, std::slice::from_ref(&a1));
+
+        // Downloaded again.
+        let song = Downloadable::Track { path: a1.clone() };
+        library.set_downloaded(&song, true).unwrap();
+        assert_eq!(fetched(&library), std::slice::from_ref(&a1));
+        library.set_downloaded(&song, false).unwrap();
+        assert!(fetched(&library).is_empty());
+        // Taking the album out clears what was taken out of it.
+        library.set_downloaded(&album("Alpha"), false).unwrap();
+        library.set_downloaded(&album("Alpha"), true).unwrap();
+        assert_eq!(fetched(&library), [a1]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn a_track_another_member_needs_survives_removing_one() {
         let (library, dir) = library("shared");
         let a1 = remote(&library, 1, "One", "Alpha", "h1");
@@ -666,7 +768,7 @@ mod tests {
         // Never the user's own file.
         library.set_downloaded(&artist, false).unwrap();
         assert!(library.download_plan().unwrap().remove.is_empty());
-        let QueryResult::Downloaded { members } = library.downloaded().unwrap() else {
+        let QueryResult::Downloaded { members, .. } = library.downloaded().unwrap() else {
             panic!()
         };
         assert!(members.is_empty());
