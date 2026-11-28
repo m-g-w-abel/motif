@@ -84,7 +84,7 @@ impl Library {
         {
             let conn = self.db();
             let device = self.device();
-            let tx = conn.unchecked_transaction()?;
+            let tx = crate::db::write_tx(&conn)?;
             for path in paths {
                 let Some(track) = sync::track_at(&tx, path)? else {
                     continue;

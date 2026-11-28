@@ -191,7 +191,7 @@ fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
         }
 
         let mut seen = HashSet::new();
-        let mut batch = conn.transaction()?;
+        let mut batch = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         for entry in files {
             let path = entry.path();
             let Some(path_str) = path.to_str().map(str::to_string) else {
@@ -223,7 +223,7 @@ fn scan(shared: &Shared, conn: &mut Connection) -> rusqlite::Result<()> {
                     s.tracks = tracks;
                 });
             }
-            batch = conn.transaction()?;
+            batch = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         }
         for (path, _) in known
             .iter()

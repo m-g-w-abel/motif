@@ -87,7 +87,7 @@ pub fn create(
     if id.is_empty() {
         return Err(Error::Other("a playlist needs an id".into()));
     }
-    let tx = conn.unchecked_transaction()?;
+    let tx = crate::db::write_tx(conn)?;
     // Made already (or deleted since, which stays): a repeat, so its tracks are in too.
     if exists(&tx, id).is_err() && !sync::tombstoned(&tx, &format!("deleted/{id}"))? {
         let op = Op::Name {
@@ -105,7 +105,7 @@ pub fn add(conn: &Connection, device: &str, id: &str, op: &str, paths: &[String]
     if op.is_empty() {
         return Err(Error::Other("an addition needs an id".into()));
     }
-    let tx = conn.unchecked_transaction()?;
+    let tx = crate::db::write_tx(conn)?;
     exists(&tx, id)?;
     append(&tx, device, id, op, paths)?;
     tx.commit()?;
@@ -179,7 +179,7 @@ pub fn delete(conn: &Connection, device: &str, id: &str) -> Result<()> {
 }
 
 pub fn remove(conn: &Connection, device: &str, id: &str, items: &[String]) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = crate::db::write_tx(conn)?;
     for item in items {
         let there = tx
             .query_row(

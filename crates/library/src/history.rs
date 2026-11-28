@@ -44,7 +44,7 @@ impl Library {
         };
         let added = {
             let conn = self.db();
-            let tx = conn.unchecked_transaction()?;
+            let tx = crate::db::write_tx(&conn)?;
             let there = tx
                 .query_row(
                     "SELECT 1 FROM plays WHERE track_path = ?1 AND played_at = ?2",
