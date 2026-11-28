@@ -662,6 +662,34 @@ impl Library {
     }
 }
 
+/// Once the linked engine's row `source` has its audio `hash`, the copies
+/// downloaded from it before it had one take it too, in place of their own,
+/// so they stand in for it.
+pub(crate) fn source_hashed(conn: &Connection, source: &str, hash: &str) -> rusqlite::Result<()> {
+    let copies: Vec<String> = conn
+        .prepare_cached("SELECT path FROM downloads WHERE source = ?1 AND coalesce(hash, '') = ''")?
+        .query_map([source], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for copy in copies {
+        conn.execute(
+            "UPDATE downloads SET hash = ?1 WHERE path = ?2",
+            [hash, &copy],
+        )?;
+        // What its own hash keyed (plays, caches) follows it.
+        conn.execute(
+            "INSERT OR REPLACE INTO hash_moves (path, old) SELECT path, audio_hash FROM tracks
+             WHERE path = ?1 AND device = '' AND coalesce(audio_hash, '') != ''",
+            [&copy],
+        )?;
+        conn.execute(
+            "UPDATE tracks SET audio_hash = ?1 WHERE path = ?2 AND device = ''",
+            [hash, &copy],
+        )?;
+        db::move_hash(conn, &copy, hash)?;
+    }
+    Ok(())
+}
+
 /// The audio hash a downloaded copy at `path` takes: its source's.
 pub(crate) fn source_hash(conn: &Connection, path: &str) -> Option<String> {
     conn.query_row(
@@ -848,6 +876,69 @@ mod tests {
         assert_eq!(gone.len(), 1);
         assert!(gone[0].ends_with("02 Two.flac"), "{gone:?}");
         assert!(saved[0].exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_copy_downloaded_before_its_source_was_hashed_takes_its_hash_once_it_comes() {
+        use crate::catalog::{CatalogTrack, Change, Page};
+        let (library, dir) = library("late-hash");
+        let page = |from, audio_hash: Option<&str>| Page {
+            epoch: "x".into(),
+            from,
+            changes: vec![Change {
+                version: from + 1,
+                id: 1,
+                track: Some(CatalogTrack {
+                    title: Some("One".into()),
+                    artist: Some("Band".into()),
+                    album: Some("Alpha".into()),
+                    track_no: Some(1),
+                    codec: Some("FLAC".into()),
+                    audio_hash: audio_hash.map(Into::into),
+                    ..Default::default()
+                }),
+            }],
+        };
+        library.merge_catalog("e", page(0, None)).unwrap();
+        library.set_downloaded(&album("Alpha"), true).unwrap();
+        let wanted = library.download_plan().unwrap().fetch.remove(0);
+        assert_eq!(wanted.hash, None);
+        let copy = library.download_folder().join("01 One.opus");
+        library.add_download(&copy, &wanted).unwrap();
+        let copy = copy.to_str().unwrap();
+        // Hashed by the scanner as its own audio, its source's being unknown.
+        library
+            .db()
+            .execute(
+                "INSERT INTO tracks (path, size, mtime, title, artist, album, track_no, audio_hash)
+                 VALUES (?1, 0, 0, 'One', 'Band', 'Alpha', 1, 'pkt-b3:own')",
+                [copy],
+            )
+            .unwrap();
+
+        // The owner hashes it.
+        library.merge_catalog("e", page(1, Some("h1"))).unwrap();
+        let conn = library.db();
+        let copy_hash: String = conn
+            .query_row(
+                "SELECT audio_hash FROM tracks WHERE path = ?1",
+                [copy],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(copy_hash, "h1");
+        let shadowed: bool = conn
+            .query_row(
+                "SELECT shadowed FROM tracks WHERE path = ?1",
+                [&wanted.source],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(shadowed, "the linked engine's row still shows");
+        drop(conn);
+        assert!(fetched(&library).is_empty());
+        assert!(removed(&library).is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 
