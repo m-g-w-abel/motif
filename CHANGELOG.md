@@ -13,8 +13,10 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
   Playlists (their edits follow), albums, artists (their later albums too)
   and songs added to it download from your other devices to Music/Motif, as
   Opus 256 kbps by default, and play from there; taking them out deletes the
-  copies nothing else in the group needs. Only the engine side is in so far;
-  the screens come next.
+  copies nothing else in the group needs. Choose Download in the menu of a
+  song, album, artist or playlist (or in select mode); Downloaded in the
+  Library lists what's in the group and how much of each is here, and
+  Settings → Library picks the folder and quality.
 - **Streams ride out a dropped connection**: a song streamed from a linked
   device, and the next one, are fetched whole to a cache on disk, so a short
   network drop no longer stops playback and seeking within what has arrived

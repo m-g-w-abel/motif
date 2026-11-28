@@ -3,7 +3,7 @@ import { SETTINGS_GROUPS, type SettingsGroup } from './settingsView.svelte';
 
 export const GROUP_INFO: Record<SettingsGroup, { label: string; summary: string; icon: IconName; colour: string }> = {
   interface: { label: 'Interface', summary: 'Theme, scale, font, colours', icon: 'columns', colour: '#e0629a' },
-  library: { label: 'Library', summary: 'Music folders, scanning', icon: 'library', colour: '#4aa3df' },
+  library: { label: 'Library', summary: 'Music folders, scanning, downloads', icon: 'library', colour: '#4aa3df' },
   playback: { label: 'Playback', summary: 'Output, ReplayGain, decoders', icon: 'music', colour: '#e8a03c' },
   keyboard: { label: 'Keyboard', summary: 'Shortcuts, vim keys', icon: 'list', colour: '#8d8d99' },
   gestures: { label: 'Gestures', summary: 'Swipes and holds on touch screens', icon: 'grid', colour: '#7bc96f' },
@@ -23,6 +23,7 @@ const SETTINGS: { group: SettingsGroup; label: string }[] = [
   { group: 'interface', label: 'Accent' },
   { group: 'library', label: 'All files access' },
   { group: 'library', label: 'Music folders' },
+  { group: 'library', label: 'Downloads' },
   { group: 'playback', label: 'Output' },
   { group: 'playback', label: 'ReplayGain' },
   { group: 'playback', label: 'Skip songs that can\'t be reached' },

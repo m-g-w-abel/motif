@@ -130,6 +130,9 @@ control isn't an add-on: it's the normal code path.
   Optionally (off by default) it also fills up to a size cap with the most
   played songs (synced play counts), swapping in new favourites as counts
   change; songs added by hand never count against the cap.
+  Download / Remove download sits in the menus and select mode of songs,
+  albums, artists and playlists; downloaded copies and members are marked,
+  and the Downloaded view lists each member with how much of it is here.
 - Away from home, the app controls a linked engine over the same link: it
   tries the LAN first, then tunnels the same WebSocket protocol over an
   iroh stream through a loopback proxy, with the same token and scopes

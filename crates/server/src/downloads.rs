@@ -11,7 +11,7 @@ use std::{
 };
 
 use library::{Library, downloads::Wanted, transcode};
-use protocol::{Quality, TrackKeys, TrackRef};
+use protocol::{Fetching, Quality, TrackKeys, TrackRef};
 
 use crate::{Pairing, files};
 
@@ -122,19 +122,38 @@ async fn download(
         None => Quality::Original,
     };
     let tags = library.download_tags(&wanted.source);
-    let (fetched, encoded) = files::fetch_whole(pairing, &copies, quality, &tags).await?;
+    let (source, told) = (wanted.source.clone(), library.clone());
+    let tell = move |share: f32| {
+        let percent = (share * 100.0) as u8;
+        let source = source.clone();
+        told.set_download_fetching(Some(Fetching { source, percent }));
+    };
+    tell(0.0);
+    let fetched = files::fetch_whole(pairing, &copies, quality, &tags, wanted.length, tell).await;
+    library.set_download_fetching(None);
+    let (fetched, encoded) = fetched?;
     let ext = match encoded {
         true => "opus".into(),
         false => wanted.extension(),
     };
     let to = free(&library.download_folder().join(&wanted.name), &ext);
-    let (library, wanted) = (library.clone(), wanted.clone());
+    let (library, wanted, store) = (library.clone(), wanted.clone(), pairing.store());
     tokio::task::spawn_blocking(move || {
-        place(&fetched, &to).map_err(|err| match err.kind() {
+        let saved = match encoded {
+            true => place(&fetched, &to),
+            // The original's file may be open for playing too: it stays for that.
+            false => share(&fetched, &to),
+        };
+        saved.map_err(|err| match err.kind() {
             std::io::ErrorKind::StorageFull => "the disk is full".to_string(),
             _ => format!("can't save {}: {err}", to.display()),
         })?;
-        let _ = std::fs::remove_file(fetched.with_extension("have"));
+        match encoded {
+            true => {
+                let _ = std::fs::remove_file(fetched.with_extension("have"));
+            }
+            false => store.release(&fetched),
+        }
         library
             .add_download(&to, &wanted)
             .map_err(|e| e.to_string())?;
@@ -161,6 +180,21 @@ fn free(name: &Path, ext: &str) -> PathBuf {
         })
         .find(|path| !path.exists())
         .unwrap_or_else(|| with(String::new()))
+}
+
+/// Copies `from` to `to`, by a hard link on the same disk.
+fn share(from: &Path, to: &Path) -> std::io::Result<()> {
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if std::fs::hard_link(from, to).is_ok() {
+        return Ok(());
+    }
+    let copied = std::fs::copy(from, to).map(|_| ());
+    if copied.is_err() {
+        let _ = std::fs::remove_file(to);
+    }
+    copied
 }
 
 /// Moves `from` to `to`: renamed on the same disk, else copied.
@@ -287,6 +321,7 @@ mod tests {
         let status = library.status();
         assert_eq!(status.downloads.waiting, 0);
         assert_eq!(status.downloads.error, None);
+        assert_eq!(status.downloads.fetching, None);
 
         library.query(set(false)).unwrap();
         until("deleted", || !copy.exists()).await;
@@ -295,6 +330,51 @@ mod tests {
                 .find(&remote)
                 .is_none_or(|p| p.to_string_lossy().starts_with("remote:"))
         );
+        for dir in dirs {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_track_being_played_downloads_again_after_it_was_taken_out() {
+        let file = wav(3);
+        let (library, pairing, dirs) = linked("shared", &[("a.wav", file.clone())]).await;
+        pairing
+            .command(PairingCommand::SetQuality {
+                of: QualityFor::Download,
+                quality: Quality::Original,
+            })
+            .unwrap();
+        let remote = crate::files::tests::tracks(&library).remove(0);
+        // Open for playing, as the player holds the current and next tracks.
+        let copies = library.copies(&remote);
+        let source =
+            crate::files::source(pairing.clone(), copies, tokio::runtime::Handle::current());
+        let engine::Source::Stream { open, .. } = &source else {
+            panic!("not a stream");
+        };
+        let open = open.clone();
+        let playing = tokio::task::spawn_blocking(move || open().map_err(|e| e.to_string()))
+            .await
+            .unwrap()
+            .unwrap();
+        let set = |downloaded| LibraryQuery::SetDownloaded {
+            member: Downloadable::Track {
+                path: remote.id.clone(),
+            },
+            downloaded,
+        };
+        library.query(set(true)).unwrap();
+        until("downloaded", || downloaded(&library).len() == 1).await;
+        let copy = downloaded(&library).remove(0);
+        library.query(set(false)).unwrap();
+        until("deleted", || !copy.exists()).await;
+        // Still playing: the download shares that fetch again.
+        library.query(set(true)).unwrap();
+        until("downloaded again", || downloaded(&library).len() == 1).await;
+        assert_eq!(std::fs::read(&downloaded(&library)[0]).unwrap(), file);
+        assert_eq!(library.status().downloads.error, None);
+        drop(playing);
         for dir in dirs {
             let _ = std::fs::remove_dir_all(dir);
         }

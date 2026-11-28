@@ -20,8 +20,8 @@ export function moveCommand(items: readonly string[], from: number, to: number):
 /** Saved playlists, kept by the engine's library. */
 export class Playlists {
   list = $state<Playlist[]>([]);
-  /** What `PlaylistPrompt.svelte` is asking: a name (`value`), or to confirm `action` when `value` is null. */
-  asking = $state<{ title: string; value: string | null; action: string; done: (answer: string | null) => void } | null>(null);
+  /** What `PlaylistPrompt.svelte` is asking: a name (`value`), or to confirm `action` when `value` is null (`detail` saying why). */
+  asking = $state<{ title: string; detail?: string; value: string | null; action: string; done: (answer: string | null) => void } | null>(null);
   #synced = '';
   private engine: EngineClient;
 
@@ -52,9 +52,14 @@ export class Playlists {
     return r.type === 'playlist_tracks' ? r.entries : [];
   }
 
-  #ask(title: string, value: string | null, action: string): Promise<string | null> {
+  #ask(title: string, value: string | null, action: string, detail?: string): Promise<string | null> {
     this.asking?.done(null);
-    return new Promise((done) => (this.asking = { title, value, action, done }));
+    return new Promise((done) => (this.asking = { title, detail, value, action, done }));
+  }
+
+  /** Asks to confirm `action` (`detail` saying why); the same dialog as a playlist's Delete. */
+  async confirm(title: string, detail: string, action: string): Promise<boolean> {
+    return (await this.#ask(title, null, action, detail)) !== null;
   }
 
   /** Asks for a name; `null` if cancelled or left empty. */

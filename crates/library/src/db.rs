@@ -89,8 +89,25 @@ pub const ALBUM_ART: &str = "(SELECT f.art FROM tracks f WHERE f.art IS NOT NULL
              = coalesce(tracks.album_artist, tracks.artist, '') || char(31) || coalesce(tracks.album, '')
          ORDER BY coalesce(f.disc_no, 1), coalesce(f.track_no, 0), f.path LIMIT 1)";
 
+// Immediate: a deferred read-to-write upgrade fails at once with SQLITE_BUSY (the busy timeout
+// is skipped) when the scanner holds the write lock; BEGIN IMMEDIATE waits for it instead.
+pub fn write_tx(conn: &Connection) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+    rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+}
+
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
+    // Versions 1–15 were upgraded step by step until every library in use was 16.
+    let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    if (1..16).contains(&version) {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some(format!(
+                "{} is from an old version of Motif ({version}) that this one can't upgrade: delete it to start a new library",
+                path.display()
+            )),
+        ));
+    }
     // WAL lets queries read while the scanner writes.
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -177,8 +194,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
          END;
 ",
     )?;
-    upgrade(&conn, &path.with_file_name("art"))?;
-    // After the upgrade, which adds `plays.hash` and the catalog columns.
+    upgrade(&conn)?;
     // Triggers are made anew each time, so older libraries get their latest body.
     let shadow = |hash: &str| {
         format!(
@@ -278,172 +294,9 @@ pub fn resolve(file: &str, hash: &str) -> String {
 /// re-read at the next scan, or when the table changes.
 const VERSION: i32 = 16;
 
-fn upgrade(conn: &Connection, art_dir: &Path) -> rusqlite::Result<()> {
+fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    let has = |column: &str| {
-        conn.prepare("SELECT 1 FROM pragma_table_info('tracks') WHERE name = ?1")
-            .and_then(|mut s| s.exists([column]))
-    };
-    if version < 2 {
-        // Version 2 reads files lofty can't parse with Symphonia instead.
-        conn.execute("UPDATE tracks SET mtime = -1 WHERE duration_ms IS NULL", [])?;
-    }
-    if version < 3 {
-        // Version 3 keeps tracks whose files disappear (marked missing) and
-        // notes why damaged files can't be played.
-        if !has("missing")? {
-            conn.execute(
-                "ALTER TABLE tracks ADD COLUMN missing INTEGER NOT NULL DEFAULT 0",
-                [],
-            )?;
-        }
-        if !has("problem")? {
-            conn.execute("ALTER TABLE tracks ADD COLUMN problem TEXT", [])?;
-        }
-    }
-    if version < 4 && !has("added")? {
-        // Version 4 notes when each track was added; the file's modification
-        // time is the best guess for tracks already in the library.
-        conn.execute("ALTER TABLE tracks ADD COLUMN added INTEGER", [])?;
-        conn.execute("UPDATE tracks SET added = max(mtime, 0)", [])?;
-    }
-    if version < 5 {
-        // Version 5 shows a folder image over embedded art when it is at
-        // least as large: re-read tracks showing embedded art (cached as
-        // `<key>.<ext>`; folder images keep their own names).
-        conn.execute(
-            "UPDATE tracks SET mtime = -1 WHERE art IN (SELECT key FROM art WHERE path GLOB '*' || key || '.*')",
-            [],
-        )?;
-    }
-    if version < 6 {
-        // Version 6 gives ties to embedded art again. A folder image can
-        // share its key with an embedded copy, so re-read every track with art.
-        conn.execute("UPDATE tracks SET mtime = -1 WHERE art IS NOT NULL", [])?;
-    }
-    if version < 7 {
-        // Version 7 reads ReplayGain tags: add the columns and re-read every file.
-        for column in [
-            "rg_track_gain",
-            "rg_track_peak",
-            "rg_album_gain",
-            "rg_album_peak",
-        ] {
-            if !has(column)? {
-                conn.execute(&format!("ALTER TABLE tracks ADD COLUMN {column} REAL"), [])?;
-            }
-        }
-        conn.execute("UPDATE tracks SET mtime = -1", [])?;
-    }
-    if version < 8 {
-        // Version 8 reads the MusicBrainz release ID (for Discord's cover
-        // art): add the column and re-read every file.
-        if !has("musicbrainz_album")? {
-            conn.execute("ALTER TABLE tracks ADD COLUMN musicbrainz_album TEXT", [])?;
-        }
-        conn.execute("UPDATE tracks SET mtime = -1", [])?;
-    }
-    if version < 9 {
-        // Version 9 reads the original release year: add the column and
-        // re-read every file.
-        if !has("original_year")? {
-            conn.execute("ALTER TABLE tracks ADD COLUMN original_year INTEGER", [])?;
-        }
-        conn.execute("UPDATE tracks SET mtime = -1", [])?;
-    }
-    if version < 10 {
-        // Version 10 reads embedded covers from their tracks instead of
-        // keeping full-size copies (`<key>.<ext>`, 951 MB on a phone, #133):
-        // point each at a present track and delete the copy. A copy whose
-        // tracks are all missing stays, being the only one left.
-        let copies = conn
-            .prepare(
-                "SELECT path, (SELECT t.path FROM tracks t WHERE t.art = art.key AND t.missing = 0 LIMIT 1)
-                 FROM art WHERE path GLOB '*' || key || '.*'",
-            )?
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (copy, track) in copies {
-            let Some(track) = track else { continue };
-            conn.execute("UPDATE art SET path = ?1 WHERE path = ?2", [&track, &copy])?;
-            let _ = std::fs::remove_file(copy);
-        }
-        // Copies of a track's other pictures (`Library::images`) were never
-        // in the table; thumbnails are `<key>-<size>.jpg`.
-        let mut referenced = conn.prepare("SELECT 1 FROM art WHERE path = ?1")?;
-        for entry in std::fs::read_dir(art_dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            let copy = !entry.file_name().to_string_lossy().contains('-');
-            if copy && !referenced.exists([path.to_string_lossy()])? {
-                let _ = std::fs::remove_file(path);
-            }
-        }
-    }
-    if version < 11 {
-        // Version 11 decodes Opus (with libopus) to hash it: check the files
-        // noted as damaged again, since every Opus file was.
-        conn.execute(
-            "UPDATE tracks SET audio_hash = NULL, problem = NULL WHERE problem IS NOT NULL",
-            [],
-        )?;
-    }
-    if version < 12 {
-        // Version 12 decodes Opus whose comment header (cover) is over 16 MiB
-        // (#137): check the damaged files again.
-        conn.execute(
-            "UPDATE tracks SET audio_hash = NULL, problem = NULL WHERE problem IS NOT NULL",
-            [],
-        )?;
-    }
-    if version < 13 {
-        // Files stored with no tags at all, from before lofty read such
-        // headers (#148): read them again, since a rescan only reads changes.
-        conn.execute("UPDATE tracks SET mtime = -1 WHERE codec IS NULL", [])?;
-    }
-    if version < 14 {
-        // Version 14 notes the audio of each play, so history follows moved
-        // files as playlists do, and fills in what reads used to.
-        let has_hash = conn
-            .prepare("SELECT 1 FROM pragma_table_info('plays') WHERE name = 'hash'")?
-            .exists([])?;
-        if !has_hash {
-            conn.execute("ALTER TABLE plays ADD COLUMN hash TEXT", [])?;
-        }
-        conn.execute_batch(
-            "UPDATE plays SET hash = (SELECT nullif(audio_hash, '') FROM tracks WHERE path = track_path)
-             WHERE hash IS NULL;
-             UPDATE playlist_items SET hash = (SELECT nullif(audio_hash, '') FROM tracks WHERE path = file)
-             WHERE hash IS NULL;",
-        )?;
-    }
-    if version < 15 {
-        // Version 15 hashes lossy files by their compressed packets (#233),
-        // since decoders differ between platforms: hash them again, and note
-        // the old hash so playlists, plays and caches follow it.
-        conn.execute_batch(
-            "INSERT OR REPLACE INTO hash_moves SELECT path, audio_hash FROM tracks
-             WHERE audio_hash LIKE 'pcm-b3:%' AND codec NOT IN ('FLAC', 'WAV', 'AIFF', 'WavPack', 'APE');
-             UPDATE tracks SET audio_hash = NULL
-             WHERE path IN (SELECT path FROM hash_moves);",
-        )?;
-    }
-    if version < 16 {
-        // Version 16 shares the catalog with linked engines (#241): rows
-        // say whose they are, and the tracks already here count as changes.
-        for (column, kind) in [
-            ("device", "TEXT NOT NULL DEFAULT ''"),
-            ("shadowed", "INTEGER NOT NULL DEFAULT 0"),
-            ("version", "INTEGER"),
-        ] {
-            if !has(column)? {
-                conn.execute(
-                    &format!("ALTER TABLE tracks ADD COLUMN {column} {kind}"),
-                    [],
-                )?;
-            }
-        }
-        conn.execute("UPDATE tracks SET version = id WHERE version IS NULL", [])?;
-    }
+    // Steps for later versions go here, e.g. `if version < 17 { UPDATE tracks SET mtime = -1 … }`.
     if version < VERSION {
         conn.pragma_update(None, "user_version", VERSION)?;
     }
@@ -583,116 +436,25 @@ mod tests {
     }
 
     #[test]
-    fn versions_12_and_13_read_damaged_and_untagged_files_again() {
-        let file = std::env::temp_dir().join(format!("motif-db12-{}.db", std::process::id()));
-        let conn = open(&file).unwrap();
-        conn.execute(
-            "INSERT INTO tracks (path, size, mtime, audio_hash, problem)
-             VALUES ('big.opus', 1, 1, '', 'ogg: packet buffer would exceed max size')",
-            [],
-        )
-        .unwrap();
-        conn.pragma_update(None, "user_version", 11).unwrap();
-        drop(conn);
-        let conn = open(&file).unwrap();
-        let row: (Option<String>, Option<String>, i64) = conn
-            .query_row("SELECT audio_hash, problem, mtime FROM tracks", [], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-            })
-            .unwrap();
-        drop(conn);
-        for end in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{end}", file.display()));
-        }
-        assert_eq!(row, (None, None, -1), "its tags are read again too");
-    }
-
-    #[test]
-    fn version_14_gives_old_plays_their_hash() {
-        let file = std::env::temp_dir().join(format!("motif-db14-{}.db", std::process::id()));
-        {
-            // A version 13 library, from before plays had a hash.
-            let conn = Connection::open(&file).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE plays (track_path TEXT NOT NULL, played_at INTEGER NOT NULL,
-                     PRIMARY KEY (track_path, played_at));
-                 INSERT INTO plays VALUES ('a.flac', 100);
-                 PRAGMA user_version = 13;",
-            )
-            .unwrap();
-        }
-        let conn = open(&file).unwrap();
-        conn.execute(
-            "INSERT INTO tracks (path, size, mtime) VALUES ('a.flac', 1, 1)",
-            [],
-        )
-        .unwrap();
-        // The scanner hashes it later.
-        conn.execute(
-            "UPDATE tracks SET audio_hash = 'h' WHERE path = 'a.flac'",
-            [],
-        )
-        .unwrap();
-        let hash: Option<String> = conn
-            .query_row("SELECT hash FROM plays", [], |r| r.get(0))
-            .unwrap();
-        drop(conn);
-        for end in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{end}", file.display()));
-        }
-        assert_eq!(hash.as_deref(), Some("h"));
-    }
-
-    #[test]
-    fn version_15_moves_what_the_old_hash_keyed_to_the_packet_hash() {
+    fn a_library_from_before_version_16_is_refused_and_a_new_one_opens() {
         let file = std::env::temp_dir().join(format!("motif-db15-{}.db", std::process::id()));
         let conn = open(&file).unwrap();
-        conn.execute_batch(
-            "INSERT INTO tracks (path, size, mtime, codec, audio_hash) VALUES
-                 ('a.opus', 1, 1, 'Opus', 'pcm-b3:old'),
-                 ('b.wav', 1, 1, 'WAV', 'pcm-b3:wav');
-             INSERT INTO playlists VALUES ('p', 'P');
-             INSERT INTO playlist_items VALUES ('p', 'i', 0, 'a.opus', 'pcm-b3:old');
-             INSERT INTO plays (track_path, played_at, hash) VALUES ('a.opus', 100, 'pcm-b3:old');
-             INSERT INTO waveforms VALUES ('pcm-b3:old', x'01');
-             INSERT INTO loudness VALUES ('pcm-b3:old', -9.0, 0.5);
-             INSERT INTO lyrics VALUES ('pcm-b3:old', 's', 'p', 1);
-             PRAGMA user_version = 14;",
-        )
-        .unwrap();
+        conn.pragma_update(None, "user_version", 15).unwrap();
         drop(conn);
-        let conn = open(&file).unwrap();
-        let hashes = |sql: &str| -> Vec<Option<String>> {
-            conn.prepare(sql)
-                .unwrap()
-                .query_map([], |r| r.get(0))
-                .unwrap()
-                .collect::<Result<_, _>>()
-                .unwrap()
-        };
-        assert_eq!(
-            hashes("SELECT audio_hash FROM tracks ORDER BY path"),
-            [None, Some("pcm-b3:wav".into())],
-            "lossy files are hashed again, lossless ones keep theirs"
-        );
-        conn.execute(
-            "UPDATE tracks SET audio_hash = 'pkt-b3:new' WHERE path = 'a.opus'",
-            [],
-        )
-        .unwrap();
-        move_hash(&conn, "a.opus", "pkt-b3:new").unwrap();
-        move_hash(&conn, "a.opus", "pkt-b3:new").unwrap(); // safe to repeat
-        for table in ["playlist_items", "plays", "waveforms", "loudness", "lyrics"] {
-            assert_eq!(
-                hashes(&format!("SELECT hash FROM {table}")),
-                [Some("pkt-b3:new".into())],
-                "{table}"
-            );
+        let old = open(&file).map(|_| ()).unwrap_err().to_string();
+        for end in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{end}", file.display()));
         }
+        assert!(old.contains("delete it"), "{old}");
+        let conn = open(&file).unwrap();
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         drop(conn);
         for end in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{end}", file.display()));
         }
+        assert_eq!(version, VERSION);
     }
 
     const fn rule(key: SortKey, descending: bool) -> SortRule {

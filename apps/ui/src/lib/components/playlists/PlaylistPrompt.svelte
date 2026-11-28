@@ -2,7 +2,7 @@
   import { surface } from '../../motion/surface';
   import { getApp } from '../../context';
 
-  // Asks for a playlist's name, or to confirm deleting one (`Playlists.asking`).
+  // Asks for a playlist's name, or to confirm deleting one or removing a download (`Playlists.asking`).
   const { playlists } = getApp();
   const asking = $derived(playlists.asking);
   let value = $state('');
@@ -17,6 +17,7 @@
   <dialog transition:surface={{ enter: 'grow' }} use:open aria-label={asking.title} onclose={() => playlists.asking === asking && playlists.answer(null)}>
     <form method="dialog" onsubmit={() => playlists.answer(asking.value === null ? '' : value)}>
       <h2>{asking.title}</h2>
+      {#if asking.detail}<p>{asking.detail}</p>{/if}
       <!-- First in the dialog, so showModal() focuses it. -->
       {#if asking.value !== null}<input type="text" bind:value aria-label="Name" />{/if}
       <div class="actions">
@@ -51,6 +52,11 @@
   h2 {
     margin: 0;
     font-size: 1em;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-muted);
   }
 
   input {
