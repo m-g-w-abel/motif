@@ -3,6 +3,7 @@ import { trackTitle } from './format';
 import type { ViewState } from './context';
 import type { MenuItem } from './contextMenu.svelte';
 import type { EngineClient } from './engine.svelte';
+import type { Downloads } from './downloads.svelte';
 import { addFolder } from './folders';
 import type { QueueItem } from './protocol/QueueItem';
 import type { TrackRef } from './protocol/TrackRef';
@@ -112,6 +113,7 @@ export function trackMenu(
   library: LibraryClient,
   style: RatingStyle,
   playlists: Playlists,
+  downloads: Downloads,
   data: SongListData,
   view: ViewState,
   i: number,
@@ -125,6 +127,7 @@ export function trackMenu(
       ...playItem(engine, () => playTracks(engine, tracks)),
       ...queueItems(engine, tracks),
       ...playlists.addItems(tracks),
+      ...downloads.songItems(tracks),
       ...markItems(engine, library, style, tracks),
     ];
   }
@@ -132,6 +135,7 @@ export function trackMenu(
     ...playItem(engine, () => data.play(i)),
     ...queueItems(engine, [track]),
     ...playlists.addItems([track]),
+    ...downloads.songItems([track]),
     ...markItems(engine, library, style, [track], data.details?.(i)),
   ];
   if (track.album) {

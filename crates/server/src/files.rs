@@ -24,7 +24,7 @@
 use std::{
     collections::HashMap,
     io::{self, Read, Seek, SeekFrom, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
@@ -100,6 +100,8 @@ const IN_FLIGHT: usize = 4;
 const STALL: Duration = Duration::from_secs(8);
 /// How long dialling a linked engine may take.
 const DIAL: Duration = Duration::from_secs(5);
+/// How often a download tells how far it is.
+const TELL: Duration = Duration::from_millis(250);
 
 /// A slower link, for measuring: `rate` bytes a second shared by every range
 /// on the connection, each answered `latency` late. Notes the offset of each
@@ -425,12 +427,15 @@ async fn dial(
 /// [`Store`], kept, at `quality` (#245): its file there, and whether it came
 /// encoded (an Ogg Opus file with `tags`). One being fetched for playing is
 /// shared. Safe to repeat: ranges carry on from what is here; an encoded
-/// copy starts again.
+/// copy starts again. Tells the share of it here (0 to 1) as it comes, every
+/// [`TELL`] at most; an encoded one only knowing its `length`.
 pub(crate) async fn fetch_whole(
     pairing: &Pairing,
     copies: &[(String, i64)],
     quality: Quality,
     tags: &[(String, String)],
+    length: Option<Duration>,
+    mut tell: impl FnMut(f32) + Send + 'static,
 ) -> Result<(PathBuf, bool), String> {
     let store = pairing.store();
     // Being fetched for playing (or another download): fetched once.
@@ -444,7 +449,7 @@ pub(crate) async fn fetch_whole(
     match dialled {
         Dialled::Original(remote) => {
             remote.kept.store(true, Ordering::Relaxed);
-            remote.fetched().await?;
+            remote.fetched(tell).await?;
             Ok((store.path(&remote.link.key, remote.link.id), false))
         }
         Dialled::Opus(link, _, packets) => {
@@ -461,10 +466,15 @@ pub(crate) async fn fetch_whole(
                 let (channels, pre_skip) = (packets.channels, packets.pre_skip);
                 let mut ogg =
                     transcode::OggOpus::new(file, channels, pre_skip, &tags).map_err(stored)?;
-                let mut i = 0;
+                let (mut i, mut frames, mut told) = (0, 0, Instant::now());
                 while let Some(packet) = packets.packet(i)? {
                     ogg.packet(&packet.data, packet.frames).map_err(stored)?;
                     i += 1;
+                    frames += u64::from(packet.frames);
+                    if let Some(length) = length.filter(|_| told.elapsed() >= TELL) {
+                        told = Instant::now();
+                        tell((frames as f64 / 48_000.0 / length.as_secs_f64()).min(1.0) as f32);
+                    }
                 }
                 ogg.finish().map_err(stored)?;
                 Ok::<_, String>(())
@@ -641,6 +651,29 @@ impl Store {
             if !wanted && !live.contains(&file.path()) {
                 let _ = std::fs::remove_file(file.path());
             }
+        }
+    }
+
+    /// Done with a file [`fetch_whole`] fetched in the original: deleted, or,
+    /// while it is still open for playing, once that is done with it.
+    pub(crate) fn release(&self, fetched: &Path) {
+        let stem = fetched.file_name().unwrap_or_default().to_string_lossy();
+        let Some((key, id)) = stem.rsplit_once('-') else {
+            return;
+        };
+        let Ok(id) = id.parse::<i64>() else {
+            return;
+        };
+        let open = self.lock();
+        let live = open.get(&(key.to_string(), id)).and_then(Weak::upgrade);
+        if live.is_none() {
+            let _ = std::fs::remove_file(fetched.with_extension("have"));
+            let _ = std::fs::remove_file(fetched);
+        }
+        drop(open);
+        // Dropped outside the lock: the last one deletes the file, taking it.
+        if let Some(remote) = live {
+            remote.kept.store(false, Ordering::Relaxed);
         }
     }
 
@@ -842,15 +875,18 @@ impl Remote {
         self.state().have.iter().all(|&h| h)
     }
 
-    /// Once every chunk is here, fetching what failed again a few times.
-    async fn fetched(self: &Arc<Self>) -> Result<(), String> {
+    /// Once every chunk is here, fetching what failed again a few times;
+    /// telling the share here every [`TELL`] meanwhile.
+    async fn fetched(self: &Arc<Self>, mut tell: impl FnMut(f32)) -> Result<(), String> {
         let mut tries = 0;
         loop {
             {
                 let mut state = self.state();
-                if state.have.iter().all(|&h| h) {
+                let here = state.have.iter().filter(|&&h| h).count();
+                if here == state.have.len() {
                     return Ok(());
                 }
+                tell(here as f32 / state.have.len() as f32);
                 let coming = (state.chunks.values()).any(|c| matches!(c, Chunk::Coming(..)));
                 if !coming {
                     let failed = state.chunks.values().find_map(|c| match c {
@@ -867,7 +903,7 @@ impl Remote {
                     self.fill(&mut state);
                 }
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            tokio::time::sleep(TELL).await;
         }
     }
 
@@ -2441,7 +2477,7 @@ pub(crate) mod tests {
         let (_playing, packets) = encoded(&store, &owner, &reader, id).await;
         let copies = [(owner.key(), id)];
         let tags = [("TITLE".to_string(), "Tone".to_string())];
-        let (path, encoded) = fetch_whole(&pairing, &copies, Quality::Opus256, &tags)
+        let (path, encoded) = fetch_whole(&pairing, &copies, Quality::Opus256, &tags, None, |_| {})
             .await
             .unwrap();
         assert!(encoded);
@@ -2453,6 +2489,43 @@ pub(crate) mod tests {
         let frames = samples.len() / decoder.channels();
         assert!(frames.abs_diff(3 * 48_000) <= 2, "{frames} frames");
         drop(packets);
+        let _ = std::fs::remove_dir_all(&store.0.dir);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_download_tells_how_far_it_is_a_few_times_a_second() {
+        let (library, dir) = library("progress", &[("a.wav", wav(10))]).await;
+        let id = ids(&library)[0];
+        // 1 MB/s: about two seconds for its 1.8 MB.
+        let pace = Pace {
+            rate: 1_000_000,
+            ..Default::default()
+        };
+        let (owner, reader) = pair(library, Some(pace)).await;
+        let pairing = Pairing::in_memory();
+        let store = pairing.store();
+        let _playing = open_in(&store, &owner, locate_at(&owner, &reader), id)
+            .await
+            .unwrap();
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let tell = told.clone();
+        let started = Instant::now();
+        fetch_whole(
+            &pairing,
+            &[(owner.key(), id)],
+            Quality::Original,
+            &[],
+            None,
+            move |share| tell.lock().unwrap().push(share),
+        )
+        .await
+        .unwrap();
+        let told = told.lock().unwrap().clone();
+        assert!(told.windows(2).all(|w| w[0] <= w[1]), "{told:?}");
+        assert!(told.iter().any(|&s| s > 0.0 && s < 1.0), "{told:?}");
+        let most = 1 + (started.elapsed().as_secs_f64() * 5.0) as usize;
+        assert!(told.len() <= most, "told {} times", told.len());
         let _ = std::fs::remove_dir_all(&store.0.dir);
         let _ = std::fs::remove_dir_all(dir);
     }

@@ -11,4 +11,9 @@ import type { Playlist } from "./Playlist";
 import type { PlaylistEntry } from "./PlaylistEntry";
 import type { TrackGroup } from "./TrackGroup";
 
-export type QueryResult = { "type": "status", status: LibraryStatus, } | { "type": "downloaded", members: Array<Downloadable>, } | { "type": "tracks", total: number, offset: number, tracks: Array<LibraryTrack>, } | { "type": "played", total: number, offset: number, plays: Array<PlayedTrack>, } | { "type": "groups", groups: Array<TrackGroup>, } | { "type": "albums", total: number, offset: number, albums: Array<LibraryAlbum>, } | { "type": "artists", total: number, offset: number, artists: Array<LibraryArtist>, } | { "type": "folders", total: number, offset: number, folders: Array<LibraryFolder>, } | { "type": "position", index: number | null, } | { "type": "waveform", levels: Array<number>, } | { "type": "lyrics", lyrics: Lyrics | null, } | { "type": "playlists", playlists: Array<Playlist>, } | { "type": "playlist_tracks", entries: Array<PlaylistEntry>, } | { "type": "done" };
+export type QueryResult = { "type": "status", status: LibraryStatus, } | { "type": "downloaded", members: Array<Downloadable>, 
+/**
+ * The linked engines' rows of songs taken out of a member that
+ * takes them in (Remove download on the song), so they stay out.
+ */
+excluded: Array<string>, } | { "type": "tracks", total: number, offset: number, tracks: Array<LibraryTrack>, } | { "type": "played", total: number, offset: number, plays: Array<PlayedTrack>, } | { "type": "groups", groups: Array<TrackGroup>, } | { "type": "albums", total: number, offset: number, albums: Array<LibraryAlbum>, } | { "type": "artists", total: number, offset: number, artists: Array<LibraryArtist>, } | { "type": "folders", total: number, offset: number, folders: Array<LibraryFolder>, } | { "type": "position", index: number | null, } | { "type": "waveform", levels: Array<number>, } | { "type": "lyrics", lyrics: Lyrics | null, } | { "type": "playlists", playlists: Array<Playlist>, } | { "type": "playlist_tracks", entries: Array<PlaylistEntry>, } | { "type": "done" };

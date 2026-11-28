@@ -39,9 +39,19 @@
     'playlist-add': 'M9 18V6l10-2v5M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM18 13v8M14 17h8',
   } as const;
 
+  // Material Symbols (Outlined, weight 400), Apache License 2.0, from github.com/google/material-design-icons:
+  // filled shapes on a 960-unit box, whose 80-unit lines draw as the 2-pixel strokes above do at 24.
+  const symbols = {
+    'cloud-download':
+      'M260-160q-91 0-155.5-63T40-377q0-78 47-139t123-78q17-72 85-137t145-65q33 0 56.5 23.5T520-716v242l64-62 56 56-160 160-160-160 56-56 64 62v-242q-76 14-118 73.5T280-520h-20q-58 0-99 41t-41 99q0 58 41 99t99 41h480q42 0 71-29t29-71q0-42-29-71t-71-29h-60v-80q0-48-22-89.5T600-680v-93q74 35 117 103.5T760-520q69 8 114.5 59.5T920-340q0 75-52.5 127.5T740-160H260Zm220-358Z',
+    'cloud-done':
+      'm414-280 226-226-58-58-169 169-84-84-57 57 142 142ZM260-160q-91 0-155.5-63T40-377q0-78 47-139t123-78q25-92 100-149t170-57q117 0 198.5 81.5T760-520q69 8 114.5 59.5T920-340q0 75-52.5 127.5T740-160H260Zm0-80h480q42 0 71-29t29-71q0-42-29-71t-71-29h-60v-80q0-83-58.5-141.5T480-720q-83 0-141.5 58.5T280-520h-20q-58 0-99 41t-41 99q0 58 41 99t99 41Zm220-240Z',
+  } as const;
+
   const filled = new Set<IconName>(['play', 'pause', 'next', 'previous']);
 
-  export type IconName = keyof typeof paths;
+  export type IconName = keyof typeof paths | keyof typeof symbols;
+  const isSymbol = (name: IconName): name is keyof typeof symbols => name in symbols;
 </script>
 
 <script lang="ts">
@@ -53,11 +63,15 @@
   height={size}
   viewBox="0 0 24 24"
   aria-hidden="true"
-  fill={solid || filled.has(name) ? 'currentColor' : 'none'}
-  stroke={filled.has(name) ? 'none' : 'currentColor'}
+  fill={solid || filled.has(name) || isSymbol(name) ? 'currentColor' : 'none'}
+  stroke={filled.has(name) || isSymbol(name) ? 'none' : 'currentColor'}
   stroke-width="2"
   stroke-linecap="square"
   stroke-linejoin="miter"
 >
-  <path d={paths[name]} />
+  {#if isSymbol(name)}
+    <path d={symbols[name]} transform="translate(0 24) scale(0.025)" />
+  {:else}
+    <path d={paths[name]} />
+  {/if}
 </svg>
