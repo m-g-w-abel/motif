@@ -191,6 +191,7 @@ impl Library {
                     tx.execute("DELETE FROM tracks WHERE path = ?1", [&path])?;
                     continue;
                 };
+                let hash = t.audio_hash.clone().filter(|h| !h.is_empty());
                 upsert.execute(params![
                     path,
                     device,
@@ -220,6 +221,9 @@ impl Library {
                     t.rg_album_peak,
                     t.added,
                 ])?;
+                if let Some(hash) = hash {
+                    crate::downloads::source_hashed(&tx, &path, &hash)?;
+                }
             }
             drop(upsert);
             tx.execute(
