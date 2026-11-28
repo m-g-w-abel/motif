@@ -13,6 +13,7 @@
   import { launcherItems } from '../../launcher';
   import { NO_FILTER, type LibraryTracks, type Shown } from '../../library.svelte';
   import { libraryMenu } from '../../menus';
+  import type { Downloadable } from '../../protocol/Downloadable';
   import type { LibraryTrack } from '../../protocol/LibraryTrack';
   import type { TrackFilter } from '../../protocol/TrackFilter';
   import type { TrackRef } from '../../protocol/TrackRef';
@@ -24,10 +25,12 @@
   import { swap } from '../../motion/swap';
   import { canDecorate } from '../../windowChrome';
   import Icon from '../Icon.svelte';
+  import DownloadMark from '../DownloadMark.svelte';
   import Artwork from '../player/Artwork.svelte';
   import AlbumGrid from '../widgets/AlbumGrid.svelte';
   import SongList from '../widgets/SongList.svelte';
   import PlaylistPage from '../playlists/PlaylistPage.svelte';
+  import DownloadedView from './DownloadedView.svelte';
   import NavButton from './NavButton.svelte';
   import SearchView from './SearchView.svelte';
   import SortMenu from './SortMenu.svelte';
@@ -38,7 +41,7 @@
   // The parent re-creates this component for each view.
   // `view`: another than the top one (the view a swipe back is going to, drawn beneath).
   const { view: given }: { view?: View } = $props();
-  const { engine, library, layout, settings, views, playlists } = getApp();
+  const { engine, library, layout, settings, views, playlists, downloads } = getApp();
   const view = untrack(() => given ?? views.top);
 
   // The Albums view's grid keeps its own search and selection, apart from All Songs'.
@@ -184,6 +187,9 @@
   );
   const first = $derived(rows[0]);
   const pageCloud = $derived(page ? pageMark(rows.map((r) => r.details), engine.pairing) : null);
+  /** The page's album or playlist as a member of the Downloaded group, and, with songs elsewhere or in the group, its Download or Remove download. */
+  const member: Downloadable | null = view.kind === 'album' ? { kind: 'album', album: view.key } : view.kind === 'playlist' ? { kind: 'playlist', id: view.id } : null;
+  const download = $derived(member && (pageCloud || downloads.has(member)) ? downloads.items([member])[0] : undefined);
   /** The page's cover and title fly from and to its card (`AlbumGrid`). */
   const card = view.kind === 'album' ? `album:${view.key}` : view.kind === 'playlist' ? `playlist:${view.id}` : '';
 </script>
@@ -214,8 +220,12 @@
     {:else if view.kind === 'songs'}
       <SortMenu rules={sortRules.rules[area.source]} defaults={DEFAULT_RULES} onchange={(rules) => sortRules.set(area.source, rules)} />
     {/if}
-    {#if pageCloud}
-      <!-- Informational for now; #247 makes this spot the download toggle. -->
+    {#if download && member}
+      {@const on = downloads.has(member)}
+      <button class="tool" class:active={on} aria-pressed={on} aria-label="Download" title={download.label} onclick={download.run}>
+        <DownloadMark {member} />
+      </button>
+    {:else if pageCloud}
       <span class="cloud" class:away={pageCloud.away} title={pageCloud.title} aria-label={pageCloud.title}><Icon name="cloud" size={18} /></span>
     {/if}
     {#if optionsKey}
@@ -379,6 +389,9 @@
       />
     {:else if view.kind === 'search'}
       <SearchView />
+    {:else if view.kind === 'downloaded'}
+      {@render head()}
+      <DownloadedView />
     {:else if view.kind === 'playlist' && editing}
       <PlaylistPage id={view.id} name={title} />
     {:else if songView && options}
@@ -539,7 +552,7 @@
     }
   }
 
-  /* Sized like a tool, so #247's download button can take its place. */
+  /* Sized like a tool, as the download button in its place is. */
   .cloud {
     display: grid;
     place-items: center;

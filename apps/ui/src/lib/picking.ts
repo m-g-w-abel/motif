@@ -1,6 +1,7 @@
 import type { IconName } from './components/Icon.svelte';
 import type { EngineClient } from './engine.svelte';
 import { playTracks, queueTracks } from './menus';
+import type { Downloadable } from './protocol/Downloadable';
 import type { TrackRef } from './protocol/TrackRef';
 import { ordered, type Selection } from './selection';
 
@@ -16,6 +17,8 @@ export interface Picking {
   /** The picked songs, in list order. */
   tracks: () => TrackRef[] | Promise<TrackRef[]>;
   toggleAll: () => void;
+  /** The picks as members of the Downloaded group, when they aren't songs (picked albums or playlists). */
+  members?: () => Downloadable[];
   /** Delete: takes the picks out of the list (a playlist's entries). */
   remove?: () => void;
   /** Leaves select mode, as every action but Select all does once it has run. */
@@ -65,7 +68,7 @@ export function keyPicking(
   picked: Selection<string>,
   count: number,
   songs: (keys: string[]) => Promise<TrackRef[]>,
-  rest: Pick<Picking, 'toggleAll' | 'done'>,
+  rest: Pick<Picking, 'toggleAll' | 'done' | 'members'>,
 ): Picking {
   return { count: picked.size, all: !!count && picked.size === count, tracks: () => songs(ordered(picked)), ...rest };
 }

@@ -22,6 +22,7 @@
   import type { SongListData } from '../../sources.svelte';
   import type { ViewMode } from '../../viewOptions';
   import Icon from '../Icon.svelte';
+  import Ring from '../Ring.svelte';
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
 
@@ -65,7 +66,7 @@
     memory?: string;
   } = $props();
 
-  const { engine, library, settings, playlists, views } = getApp();
+  const { engine, library, settings, playlists, views, downloads } = getApp();
   const view = getViewState();
   $effect(() => data.sync?.());
 
@@ -258,6 +259,7 @@
         {@const key = data.key(i)}
         {@const error = data.error?.(i)}
         {@const mark = deviceMark(details, engine.pairing)}
+        {@const song = track ? downloads.song(track) : null}
         <li>
           {#if track}
             <button
@@ -274,7 +276,7 @@
               onkeydown={(e) => onKey(e, i)}
               onpointerdown={(e) => press(e, i)}
               onclick={() => activate(i)}
-              use:menu={() => trackMenu(engine, library, settings.current.ratings, playlists, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
+              use:menu={() => trackMenu(engine, library, settings.current.ratings, playlists, downloads, data, view, i, openAlbum && ((key, title) => goToAlbum(i, key, title)))}
             >
               <span class="lead">
                 {#if mode !== 'list'}
@@ -297,7 +299,7 @@
                   <span class="title">{trackTitle(track)}</span>
                   {#if !inAlbum}<span class="artist">{track.artist || 'Unknown artist'}</span>{/if}
                 </span>
-                {#if mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={13} /></span>{/if}
+                {#if song?.kind === 'downloading'}<span class="device" title="Downloading" aria-label="Downloading"><Ring share={song.share} size={13} /></span>{:else if mark && !song}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={13} /></span>{/if}
                 {#if settings.current.ratings === 'hearts' ? details?.favourite : details?.rating}
                   <span class="marks" aria-label={settings.current.ratings === 'hearts' ? 'Loved' : starsLabel(starsOf(details?.rating))}>
                     {#if settings.current.ratings === 'hearts'}<Icon name="heart" size={12} solid />{:else}<span class="stars">{'★'.repeat(starsOf(details?.rating))}</span>{/if}
@@ -344,6 +346,9 @@
         {#if playlists.canAdd(chosen())}
           <button aria-haspopup="menu" onclick={addToPlaylist}>Add to playlist…</button>
         {/if}
+        {#each downloads.songItems(chosen()) as item (item.label)}
+          <button disabled={!picked.size} onclick={() => (item.run(), (selecting = false))}>{item.label}</button>
+        {/each}
         {#if onremove}
           <button class="danger" disabled={!picked.size} title="Delete from this playlist" onclick={remove}>Delete</button>
         {/if}

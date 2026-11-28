@@ -1,4 +1,5 @@
 import { getContext, setContext } from 'svelte';
+import type { Downloads } from './downloads.svelte';
 import type { EngineClient, PlaybackPosition } from './engine.svelte';
 import type { LibraryClient } from './library.svelte';
 import type { BrowseState, LayoutStore, Source } from './layout/store.svelte';
@@ -21,6 +22,7 @@ export interface AppContext {
   settingsView: SettingsView;
   views: Views;
   playlists: Playlists;
+  downloads: Downloads;
 }
 
 /** State shared by the widgets of one music area. */
