@@ -902,7 +902,11 @@ mod tests {
         };
         library.merge_catalog("e", page(0, None)).unwrap();
         library.set_downloaded(&album("Alpha"), true).unwrap();
-        let wanted = library.download_plan().unwrap().fetch.remove(0);
+        let wanted = library
+            .download_plan(Quality::Original)
+            .unwrap()
+            .fetch
+            .remove(0);
         assert_eq!(wanted.hash, None);
         let copy = library.download_folder().join("01 One.opus");
         library.add_download(&copy, &wanted).unwrap();
