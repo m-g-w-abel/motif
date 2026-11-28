@@ -5,6 +5,10 @@ out). Motif has no releases yet, so changes are grouped by phase of the plan.
 
 ## Phase 6: Sync
 
+- **Keep your most played songs offline**: an optional setting (off by
+  default) fills the Downloaded group up to a size you choose with your most
+  played songs across your devices, swapping them as your listening changes.
+  What you added yourself stays and never counts against the size.
 - **Downloads for offline listening**: each device has a Downloaded group.
   Playlists (their edits follow), albums, artists (their later albums too)
   and songs added to it download from your other devices to Music/Motif, as

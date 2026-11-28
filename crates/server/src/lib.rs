@@ -480,7 +480,8 @@ fn required_scope(message: &ClientMessage) -> Option<Scope> {
             | LibraryQuery::RemoveFromPlaylist { .. }
             | LibraryQuery::MovePlaylistItem { .. }
             | LibraryQuery::SetDownloaded { .. }
-            | LibraryQuery::SetDownloadFolder { .. } => Some(Scope::Library),
+            | LibraryQuery::SetDownloadFolder { .. }
+            | LibraryQuery::SetDownloadAuto { .. } => Some(Scope::Library),
         },
         ClientMessage::Subscribe { .. } => None,
         ClientMessage::SetIntegrations { .. } => Some(Scope::Settings),

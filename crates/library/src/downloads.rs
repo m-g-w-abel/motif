@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use protocol::{DownloadStatus, Downloadable, Fetching, QueryResult};
+use protocol::{DownloadStatus, Downloadable, Fetching, Quality, QueryResult};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::{Error, Library, Result, db};
@@ -208,6 +208,62 @@ fn tracks_of(conn: &Connection, member: &Downloadable, hash: Option<&str>) -> Re
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// The linked engines' most played tracks that fit in `cap` bytes, most
+/// played first: none a member takes in (`manual`), nor one the user has a
+/// file of. Copies already downloaded count against the cap.
+fn auto_fill(
+    conn: &Connection,
+    manual: &[Matched],
+    cap: u64,
+    quality: Quality,
+) -> Result<Vec<Matched>> {
+    // shortcut: plays without an audio hash don't count; fine while every scanned track has one.
+    let mut stmt = conn.prepare(&format!(
+        "WITH counts AS (SELECT hash, count(*) AS n FROM plays WHERE hash != '' GROUP BY hash)
+         SELECT {MATCHED}, duration_ms, size FROM counts JOIN tracks ON tracks.audio_hash = counts.hash
+         WHERE tracks.device != '' AND tracks.missing = 0 AND NOT EXISTS (
+             SELECT 1 FROM tracks mine WHERE mine.audio_hash = counts.hash AND mine.device = ''
+             AND mine.missing = 0 AND mine.path NOT IN (SELECT path FROM downloads))
+         AND NOT EXISTS (SELECT 1 FROM download_excluded e WHERE e.path = tracks.path OR e.hash = counts.hash)
+         ORDER BY n DESC, tracks.path"
+    ))?;
+    let rows = stmt.query_map([], |r| {
+        let (ms, size): (Option<i64>, Option<i64>) = (r.get(12)?, r.get(13)?);
+        Ok((
+            matched(r)?,
+            ms.map(|ms| ms.max(0) as u64),
+            size.unwrap_or(0).max(0) as u64,
+        ))
+    })?;
+    let mut taken: std::collections::HashSet<_> = manual
+        .iter()
+        .flat_map(|t| [Some(t.path.clone()), t.hash.clone()])
+        .flatten()
+        .collect();
+    let (mut used, mut fill) = (0, Vec::new());
+    for row in rows {
+        let (track, ms, size) = row?;
+        // An encoded copy's size follows from its length; else the file's.
+        // shortcut: estimated, not the copy's real size; read the files if it overfills disks noticeably.
+        let bytes = match (
+            crate::transcode::plan(track.codec.as_deref(), track.bitrate, quality),
+            ms,
+        ) {
+            (Some(kbps), Some(ms)) => ms * u64::from(kbps) / 8,
+            _ => size,
+        };
+        let key = track.hash.clone().unwrap_or_else(|| track.path.clone());
+        // One too big for what's left is passed over for smaller ones below it.
+        if used + bytes > cap || taken.contains(&key) || taken.contains(&track.path) {
+            continue;
+        }
+        taken.insert(key);
+        used += bytes;
+        fill.push(track);
+    }
+    Ok(fill)
+}
+
 impl Library {
     /// What the Downloaded group holds.
     pub(crate) fn downloaded(&self) -> Result<QueryResult> {
@@ -247,6 +303,10 @@ impl Library {
                     taken |= (tracks.iter())
                         .any(|t| t.path == source || (hash.is_some() && t.hash == hash));
                 }
+                // The auto-fill would take it back too.
+                taken |= conn
+                    .prepare_cached("SELECT 1 FROM settings WHERE key = 'download_auto_mb'")?
+                    .exists([])?;
                 if taken {
                     conn.execute(
                         "INSERT OR REPLACE INTO download_excluded (path, hash) VALUES (?1, ?2)",
@@ -308,9 +368,40 @@ impl Library {
         Ok(())
     }
 
+    /// The auto-fill's cap in megabytes, if it's on.
+    fn download_auto(&self) -> Option<u32> {
+        self.db()
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'download_auto_mb'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()?
+            .parse()
+            .ok()
+    }
+
+    /// Fills the group with the most played tracks up to `mb` megabytes
+    /// from now on, or stops (`None`). Safe to repeat.
+    pub(crate) fn set_download_auto(&self, mb: Option<u32>) -> Result<()> {
+        match mb {
+            Some(mb) => self.db().execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('download_auto_mb', ?1)",
+                [mb.to_string()],
+            )?,
+            None => self
+                .db()
+                .execute("DELETE FROM settings WHERE key = 'download_auto_mb'", [])?,
+        };
+        self.shared.update(|s| s.downloads.auto_mb = mb);
+        Ok(())
+    }
+
     /// The linked engines' tracks the Downloaded group takes in that aren't
     /// here, and the copies Motif downloaded that no member needs any more.
-    pub fn download_plan(&self) -> Result<Plan> {
+    /// `quality` is the download quality, which sizes the auto-fill's copies.
+    pub fn download_plan(&self, quality: Quality) -> Result<Plan> {
+        let auto = self.download_auto();
         let conn = self.db();
         let mut all = Vec::new();
         for (member, hash) in members(&conn)? {
@@ -357,6 +448,21 @@ impl Library {
                 bitrate: track.bitrate,
                 length: track.length,
             });
+        }
+        if let Some(mb) = auto {
+            for track in auto_fill(&conn, &all, u64::from(mb) * 1_000_000, quality)? {
+                if !here(&track.hash)? && !downloaded(&track.path)? {
+                    plan.fetch.push(Wanted {
+                        source: track.path.clone(),
+                        hash: track.hash.clone(),
+                        name: track.name.clone(),
+                        codec: track.codec.clone(),
+                        bitrate: track.bitrate,
+                        length: track.length,
+                    });
+                }
+                all.push(track);
+            }
         }
         let needed = |path: &str, source: &str, hash: &Option<String>| {
             all.iter()
@@ -513,6 +619,7 @@ impl Library {
             folder,
             waiting,
             error,
+            auto_mb: self.download_auto(),
             fetching: None,
         };
         self.shared.status.send_if_modified(|s| {
@@ -641,7 +748,7 @@ mod tests {
     }
 
     fn fetched(library: &Library) -> Vec<String> {
-        let plan = library.download_plan().unwrap();
+        let plan = library.download_plan(Quality::Original).unwrap();
         let mut sources: Vec<_> = plan.fetch.into_iter().map(|w| w.source).collect();
         sources.sort();
         sources
@@ -651,7 +758,7 @@ mod tests {
     fn download(library: &Library) -> Vec<PathBuf> {
         let folder = library.download_folder();
         let mut saved = Vec::new();
-        for wanted in library.download_plan().unwrap().fetch {
+        for wanted in library.download_plan(Quality::Original).unwrap().fetch {
             let path = folder.join(&wanted.name).with_extension("flac");
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, b"").unwrap();
@@ -662,7 +769,7 @@ mod tests {
     }
 
     fn removed(library: &Library) -> Vec<PathBuf> {
-        let mut removed = library.download_plan().unwrap().remove;
+        let mut removed = library.download_plan(Quality::Original).unwrap().remove;
         for path in &removed {
             library.remove_download(path).unwrap();
         }
@@ -680,7 +787,7 @@ mod tests {
         // Again: safe to repeat.
         library.set_downloaded(&album("Alpha"), true).unwrap();
         assert_eq!(fetched(&library), [a1, a2]);
-        let plan = library.download_plan().unwrap();
+        let plan = library.download_plan(Quality::Original).unwrap();
         assert_eq!(plan.fetch[0].name, Path::new("Band/Alpha/01 One"));
         let saved = download(&library);
         assert!(fetched(&library).is_empty(), "downloaded twice");
@@ -795,7 +902,11 @@ mod tests {
         };
         library.merge_catalog("e", page(0, None)).unwrap();
         library.set_downloaded(&album("Alpha"), true).unwrap();
-        let wanted = library.download_plan().unwrap().fetch.remove(0);
+        let wanted = library
+            .download_plan(Quality::Original)
+            .unwrap()
+            .fetch
+            .remove(0);
         assert_eq!(wanted.hash, None);
         let copy = library.download_folder().join("01 One.opus");
         library.add_download(&copy, &wanted).unwrap();
@@ -858,11 +969,91 @@ mod tests {
         assert_eq!(fetched(&library), [a1, later]);
         // Never the user's own file.
         library.set_downloaded(&artist, false).unwrap();
-        assert!(library.download_plan().unwrap().remove.is_empty());
+        assert!(
+            library
+                .download_plan(Quality::Original)
+                .unwrap()
+                .remove
+                .is_empty()
+        );
         let QueryResult::Downloaded { members, .. } = library.downloaded().unwrap() else {
             panic!()
         };
         assert!(members.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn play(library: &Library, path: &str, hash: &str, times: i64) {
+        for at in 0..times {
+            library
+                .db()
+                .execute(
+                    "INSERT OR IGNORE INTO plays (track_path, played_at, hash) VALUES (?1, ?2, ?3)",
+                    params![path, at, hash],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn auto_fill_takes_the_most_played_up_to_the_cap_and_leaves_members_alone() {
+        let (library, dir) = library("auto");
+        let mb = |path: &str, n: i64| {
+            library
+                .db()
+                .execute(
+                    "UPDATE tracks SET size = ?1 WHERE path = ?2",
+                    params![n * 1_000_000, path],
+                )
+                .unwrap();
+        };
+        let a1 = remote(&library, 1, "One", "Alpha", "h1");
+        let b2 = remote(&library, 2, "Two", "Beta", "h2");
+        let b3 = remote(&library, 3, "Three", "Beta", "h3");
+        let b4 = remote(&library, 4, "Four", "Beta", "h4");
+        for (path, size) in [(&a1, 50), (&b2, 4), (&b3, 4), (&b4, 4)] {
+            mb(path, size);
+        }
+        // The manual member is played most, and alone is over the cap.
+        library.set_downloaded(&album("Alpha"), true).unwrap();
+        play(&library, &a1, "h1", 9);
+        play(&library, "/elsewhere/two.flac", "h2", 3);
+        play(&library, &b3, "h3", 2);
+        play(&library, &b4, "h4", 1);
+        // Off by default.
+        assert_eq!(fetched(&library), std::slice::from_ref(&a1));
+
+        library.set_download_auto(Some(9)).unwrap();
+        library.set_download_auto(Some(9)).unwrap();
+        assert_eq!(library.subscribe().borrow().downloads.auto_mb, Some(9));
+        assert_eq!(fetched(&library), [a1.clone(), b2.clone(), b3.clone()]);
+        download(&library);
+        assert!(fetched(&library).is_empty());
+
+        // Four overtakes Three, which goes; the album stays.
+        play(&library, &b4, "h4", 5);
+        assert_eq!(fetched(&library), std::slice::from_ref(&b4));
+        let gone = removed(&library);
+        assert_eq!(gone.len(), 1);
+        assert!(gone[0].ends_with("03 Three.flac"), "{gone:?}");
+        download(&library);
+
+        // Taken out by hand, an auto copy stays out; Three fills its room.
+        let two = Downloadable::Track { path: b2.clone() };
+        library.set_downloaded(&two, false).unwrap();
+        assert_eq!(removed(&library).len(), 1);
+        assert_eq!(fetched(&library), std::slice::from_ref(&b3));
+        download(&library);
+
+        // Off again: only the auto copies go.
+        library.set_download_auto(None).unwrap();
+        assert_eq!(removed(&library).len(), 2);
+        assert!(
+            library
+                .download_folder()
+                .join("Band/Alpha/01 One.flac")
+                .exists()
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
