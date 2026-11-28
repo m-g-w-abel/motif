@@ -11,7 +11,7 @@ use std::{
 };
 
 use library::{Library, downloads::Wanted, transcode};
-use protocol::{Quality, TrackKeys, TrackRef};
+use protocol::{Fetching, Quality, TrackKeys, TrackRef};
 
 use crate::{Pairing, files};
 
@@ -119,7 +119,16 @@ async fn download(
         None => Quality::Original,
     };
     let tags = library.download_tags(&wanted.source);
-    let (fetched, encoded) = files::fetch_whole(pairing, &copies, quality, &tags).await?;
+    let (source, told) = (wanted.source.clone(), library.clone());
+    let tell = move |share: f32| {
+        let percent = (share * 100.0) as u8;
+        let source = source.clone();
+        told.set_download_fetching(Some(Fetching { source, percent }));
+    };
+    tell(0.0);
+    let fetched = files::fetch_whole(pairing, &copies, quality, &tags, wanted.length, tell).await;
+    library.set_download_fetching(None);
+    let (fetched, encoded) = fetched?;
     let ext = match encoded {
         true => "opus".into(),
         false => wanted.extension(),
@@ -309,6 +318,7 @@ mod tests {
         let status = library.status();
         assert_eq!(status.downloads.waiting, 0);
         assert_eq!(status.downloads.error, None);
+        assert_eq!(status.downloads.fetching, None);
 
         library.query(set(false)).unwrap();
         until("deleted", || !copy.exists()).await;

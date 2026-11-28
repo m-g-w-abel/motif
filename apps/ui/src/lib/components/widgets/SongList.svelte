@@ -23,6 +23,7 @@
   import type { SongListData } from '../../sources.svelte';
   import type { ViewMode } from '../../viewOptions';
   import Icon from '../Icon.svelte';
+  import Ring from '../Ring.svelte';
   import Artwork from '../player/Artwork.svelte';
   import Scrollbar from '../Scrollbar.svelte';
 
@@ -259,6 +260,7 @@
         {@const key = data.key(i)}
         {@const error = data.error?.(i)}
         {@const mark = deviceMark(details, engine.pairing)}
+        {@const song = track ? downloads.song(track) : null}
         <li>
           {#if track}
             <button
@@ -298,8 +300,7 @@
                   <span class="title">{trackTitle(track)}</span>
                   {#if !inAlbum}<span class="artist">{track.artist || 'Unknown artist'}</span>{/if}
                 </span>
-                {#if mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={13} /></span>{/if}
-                {#if downloads.isCopy(track)}<span class="device" title="Downloaded" aria-label="Downloaded"><Icon name="cloud-done" size={13} /></span>{/if}
+                {#if song?.kind === 'downloading'}<span class="device" title="Downloading" aria-label="Downloading"><Ring share={song.share} size={13} /></span>{:else if mark && !song}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={13} /></span>{/if}
                 {#if settings.current.ratings === 'hearts' ? details?.favourite : details?.rating}
                   <span class="marks" aria-label={settings.current.ratings === 'hearts' ? 'Loved' : starsLabel(starsOf(details?.rating))}>
                     {#if settings.current.ratings === 'hearts'}<Icon name="heart" size={12} solid />{:else}<span class="stars">{'★'.repeat(starsOf(details?.rating))}</span>{/if}

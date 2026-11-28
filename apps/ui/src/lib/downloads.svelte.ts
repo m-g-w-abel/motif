@@ -49,6 +49,9 @@ export class Downloads {
   #keys = $derived(new Set(this.members.map(keyOf)));
   /** Each member's songs here and in all, by member; worked out again as the library changes. */
   progress = $state.raw(new Map<string, { here: number; total: number }>());
+  /** The members' songs still to come (their linked engines' rows), and the audio of those here. */
+  #coming = $state.raw(new Set<string>());
+  #here = $state.raw(new Set<string>());
   #synced = '';
   private engine: EngineClient;
   /** Asks the user to confirm `action`, `detail` saying why; true to go ahead. */
@@ -75,9 +78,12 @@ export class Downloads {
       .then(async (r) => {
         if (r.type !== 'downloaded') return;
         this.members = r.members;
-        const counts = await Promise.all(r.members.map((m) => this.tracksOf(m).then(progress, () => undefined)));
+        const songs = await Promise.all(r.members.map((m) => this.tracksOf(m).catch(() => undefined)));
         if (this.#synced !== key) return;
-        this.progress = new Map(r.members.flatMap((m, i) => (counts[i] ? [[keyOf(m), counts[i]]] : [])));
+        this.progress = new Map(r.members.flatMap((m, i) => (songs[i] ? [[keyOf(m), progress(songs[i])]] : [])));
+        const all = songs.flatMap((s) => s ?? []);
+        this.#coming = new Set(all.filter(elsewhere).map((r) => r.track.id));
+        this.#here = new Set(all.flatMap((r) => (!elsewhere(r) && r.track.keys?.audio_hash ? [r.track.keys.audio_hash] : [])));
       })
       .catch(() => {});
   }
@@ -87,6 +93,18 @@ export class Downloads {
     if (!this.has(member)) return { kind: 'off' };
     const p = this.progress.get(keyOf(member));
     return p && p.here < p.total ? { kind: 'downloading', share: p.here / p.total } : { kind: 'done' };
+  }
+
+  /**
+   * A song's own download: how much of it is here while it waits its turn or comes, `here` once it is
+   * (the linked engine's row too, as a playlist lists), null when no member takes it in.
+   */
+  song(track: TrackRef): { kind: 'downloading'; share: number } | { kind: 'here' } | null {
+    const fetching = this.status?.fetching;
+    if (fetching?.source === track.id) return { kind: 'downloading', share: fetching.percent / 100 };
+    const hash = track.keys?.audio_hash;
+    if (this.isCopy(track) || (hash && this.#here.has(hash))) return { kind: 'here' };
+    return this.#coming.has(track.id) ? { kind: 'downloading', share: 0 } : null;
   }
 
   async #songs(albums: string[]): Promise<LibraryTrack[]> {

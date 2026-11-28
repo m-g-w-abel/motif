@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use protocol::{DownloadStatus, Downloadable, QueryResult};
+use protocol::{DownloadStatus, Downloadable, Fetching, QueryResult};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::{Error, Library, Result, db};
@@ -39,6 +39,7 @@ pub struct Wanted {
     /// ([`crate::transcode::plan`]).
     pub codec: Option<String>,
     pub bitrate: Option<u32>,
+    pub length: Option<std::time::Duration>,
 }
 
 impl Wanted {
@@ -75,10 +76,11 @@ struct Matched {
     name: PathBuf,
     codec: Option<String>,
     bitrate: Option<u32>,
+    length: Option<std::time::Duration>,
 }
 
 const MATCHED: &str = "tracks.path, tracks.device, nullif(tracks.audio_hash, ''), tracks.missing,
-    coalesce(album_artist, artist), album, disc_no, track_no, title, codec, bitrate";
+    coalesce(album_artist, artist), album, disc_no, track_no, title, codec, bitrate, duration_ms";
 
 fn matched(r: &Row) -> rusqlite::Result<Matched> {
     let part = |i: usize| -> rusqlite::Result<String> {
@@ -99,6 +101,9 @@ fn matched(r: &Row) -> rusqlite::Result<Matched> {
         name: [part(4)?, part(5)?, title].iter().collect(),
         codec: r.get(9)?,
         bitrate: r.get(10)?,
+        length: r
+            .get::<_, Option<u32>>(11)?
+            .map(|ms| std::time::Duration::from_millis(ms.into())),
     })
 }
 
@@ -283,6 +288,7 @@ impl Library {
                 name: track.name.clone(),
                 codec: track.codec.clone(),
                 bitrate: track.bitrate,
+                length: track.length,
             });
         }
         let needed = |path: &str, source: &str, hash: &Option<String>| {
@@ -436,14 +442,27 @@ impl Library {
     /// Says how downloading is going.
     pub fn set_download_status(&self, waiting: u32, error: Option<String>) {
         let folder = self.download_folder().to_string_lossy().into_owned();
-        let now = DownloadStatus {
+        let mut now = DownloadStatus {
             folder,
             waiting,
             error,
+            fetching: None,
         };
-        self.shared
-            .status
-            .send_if_modified(|s| (s.downloads != now).then(|| s.downloads = now).is_some());
+        self.shared.status.send_if_modified(|s| {
+            now.fetching = s.downloads.fetching.take();
+            let changed = s.downloads != now;
+            s.downloads = now;
+            changed
+        });
+    }
+
+    /// Says which track is downloading now and how far it is.
+    pub fn set_download_fetching(&self, now: Option<Fetching>) {
+        self.shared.status.send_if_modified(|s| {
+            (s.downloads.fetching != now)
+                .then(|| s.downloads.fetching = now)
+                .is_some()
+        });
     }
 }
 

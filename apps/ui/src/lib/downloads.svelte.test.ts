@@ -116,4 +116,27 @@ describe('downloads', () => {
     downloads.sync();
     await vi.waitFor(() => expect(downloads.state(album)).toEqual({ kind: 'downloading', share: 0.5 }));
   });
+
+  it("shows each song's own progress while it waits or comes, and nothing once it is here", async () => {
+    const { e } = engine([album]);
+    const remote = (id: number, hash: string) => ({ source: 'local', id: `remote:k:${id}`, keys: { audio_hash: hash } }) as unknown as TrackRef;
+    const copy = { source: 'local', id: '/music/Motif/2.opus', keys: { audio_hash: 'h2' } } as unknown as TrackRef;
+    const rows = [
+      { track: remote(1, 'h1'), devices: ['desk'] },
+      { track: remote(3, 'h3'), devices: ['desk'] },
+      { track: copy, devices: [] },
+    ];
+    (e as unknown as { query: unknown }).query = vi.fn(async (q: LibraryQuery) =>
+      q.type === 'album_tracks' ? { type: 'tracks', total: 3, offset: 0, tracks: rows } : q.type === 'downloaded' ? { type: 'downloaded', members: [album] } : { type: 'done' },
+    );
+    e.library!.downloads.fetching = { source: 'remote:k:1', percent: 40 };
+    const downloads = new Downloads(e);
+    downloads.sync();
+    await vi.waitFor(() => expect(downloads.song(remote(3, 'h3'))).toEqual({ kind: 'downloading', share: 0 }));
+    expect(downloads.song(remote(1, 'h1'))).toEqual({ kind: 'downloading', share: 0.4 });
+    expect(downloads.song(copy)).toEqual({ kind: 'here' });
+    // A playlist lists the linked engine's row of a song with a copy here.
+    expect(downloads.song(remote(2, 'h2'))).toEqual({ kind: 'here' });
+    expect(downloads.song(remote(9, 'h9'))).toBeNull();
+  });
 });

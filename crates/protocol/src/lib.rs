@@ -820,8 +820,21 @@ pub struct DownloadStatus {
     pub folder: String,
     /// Tracks still to download.
     pub waiting: u32,
+    /// The one downloading now.
+    #[serde(default)]
+    pub fetching: Option<Fetching>,
     /// Why the last one failed (the disk is full, its engine is unreachable).
     pub error: Option<String>,
+}
+
+/// The track downloading now and how far it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Fetching {
+    /// Its catalog row's path, `remote:<engine>:<id>`.
+    pub source: String,
+    /// How much of it is here, in percent.
+    pub percent: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

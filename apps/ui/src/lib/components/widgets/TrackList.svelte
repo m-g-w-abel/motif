@@ -22,6 +22,7 @@
   import { inSelection, ordered, span, toggle, type ItemAt } from '../../selection';
   import { DEFAULT_WIDTHS, fitColumns, flexReserve, indexWidth, visibleRange } from '../../table';
   import Icon from '../Icon.svelte';
+  import Ring from '../Ring.svelte';
   import Scrollbar from '../Scrollbar.svelte';
 
   let {
@@ -662,6 +663,7 @@
               {@const error = data.error?.(i)}
               {@const details = data.details?.(i)}
               {@const mark = deviceMark(details, engine.pairing)}
+              {@const song = track ? downloads.song(track) : null}
               <tr
                 class="track"
                 class:alt={i % 2 === 1}
@@ -697,8 +699,7 @@
                       {/if}
                     {:else}
                       {cell(column, i)}
-                      {#if column === 'title' && mark}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={12} /></span>{/if}
-                      {#if column === 'title' && track && downloads.isCopy(track)}<span class="device" title="Downloaded" aria-label="Downloaded"><Icon name="cloud-done" size={12} /></span>{/if}
+                      {#if column === 'title' && song?.kind === 'downloading'}<span class="device" title="Downloading" aria-label="Downloading"><Ring share={song.share} size={12} /></span>{:else if column === 'title' && mark && !song}<span class="device" title={mark.title} aria-label={mark.title}><Icon name="cloud" size={12} /></span>{/if}
                       {#if column === 'title' && error}<span class="reason">{error}</span>{/if}
                     {/if}
                   </td>
