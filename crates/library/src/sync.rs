@@ -141,7 +141,7 @@ impl Library {
             return Err(Error::Other("an engine needs a key".into()));
         }
         let conn = self.db();
-        let tx = conn.unchecked_transaction()?;
+        let tx = crate::db::write_tx(&conn)?;
         let seeded = tx
             .query_row(
                 "SELECT 1 FROM settings WHERE key = 'synced'",
@@ -228,7 +228,7 @@ impl Library {
         let (mut plays, mut playlists, mut ratings) = (false, false, false);
         {
             let conn = self.db();
-            let tx = conn.unchecked_transaction()?;
+            let tx = crate::db::write_tx(&conn)?;
             for logged in ops {
                 let Logged {
                     device,
@@ -322,7 +322,7 @@ impl Library {
             seq,
         };
         let conn = self.db();
-        let tx = conn.unchecked_transaction()?;
+        let tx = crate::db::write_tx(&conn)?;
         let done = tx
             .query_row(
                 "SELECT 1 FROM scrobbled WHERE service = ?1 AND device = ?2 AND seq = ?3",

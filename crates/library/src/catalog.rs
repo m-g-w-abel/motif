@@ -151,7 +151,7 @@ impl Library {
         let mut changed = false;
         {
             let conn = self.db();
-            let tx = conn.unchecked_transaction()?;
+            let tx = crate::db::write_tx(&conn)?;
             let seen = seen(&tx, device)?;
             let refuse = |why: &str| Err(Error::Other(format!("catalog of {device}: {why}")));
             let mut version = match &seen.epoch {
@@ -239,7 +239,7 @@ impl Library {
         let devices = serde_json::to_string(devices).map_err(|e| Error::Other(e.to_string()))?;
         let dropped = {
             let conn = self.db();
-            let tx = conn.unchecked_transaction()?;
+            let tx = crate::db::write_tx(&conn)?;
             let dropped = tx.execute(
                 "DELETE FROM tracks WHERE device != ''
                  AND device NOT IN (SELECT value FROM json_each(?1))",

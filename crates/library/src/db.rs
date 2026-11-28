@@ -89,6 +89,12 @@ pub const ALBUM_ART: &str = "(SELECT f.art FROM tracks f WHERE f.art IS NOT NULL
              = coalesce(tracks.album_artist, tracks.artist, '') || char(31) || coalesce(tracks.album, '')
          ORDER BY coalesce(f.disc_no, 1), coalesce(f.track_no, 0), f.path LIMIT 1)";
 
+// Immediate: a deferred read-to-write upgrade fails at once with SQLITE_BUSY (the busy timeout
+// is skipped) when the scanner holds the write lock; BEGIN IMMEDIATE waits for it instead.
+pub fn write_tx(conn: &Connection) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+    rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+}
+
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     // Versions 1–15 were upgraded step by step until every library in use was 16.
