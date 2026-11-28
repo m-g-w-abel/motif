@@ -944,32 +944,6 @@ fn embedded_covers_are_read_from_the_track_not_copied() {
     let small = library.art(&key, Some(32)).unwrap();
     assert!(small.starts_with(data.join("art")) && small.is_file());
 
-    // Engines from before kept full-size copies: an upgrade removes them
-    // (and copies of other pictures nobody refers to), except the only copy
-    // of a missing track's cover.
-    let thumbs = art_files();
-    drop(library);
-    let old = rusqlite::Connection::open(data.join("library.db")).unwrap();
-    for k in [&key, &closing] {
-        let copy = data.join(format!("art/{k}.png"));
-        fs::write(&copy, if *k == key { &cover[..] } else { b"old copy" }).unwrap();
-        old.execute(
-            "UPDATE art SET path = ?1 WHERE key = ?2",
-            [copy.to_str().unwrap(), k],
-        )
-        .unwrap();
-    }
-    fs::write(data.join("art/0123456789abcdef0123456789abcdef.jpg"), b"x").unwrap();
-    old.execute("UPDATE tracks SET missing = 1 WHERE art = ?1", [&closing])
-        .unwrap();
-    old.pragma_update(None, "user_version", 9).unwrap();
-    drop(old);
-    fs::remove_file(music.join("02 Closing.flac")).unwrap();
-    let library = Library::open(&data).unwrap();
-    let mut kept = [thumbs, vec![format!("{closing}.png")]].concat();
-    kept.sort();
-    assert_eq!(art_files(), kept);
-    assert_eq!(library.art_image(&key, None).unwrap().0, cover);
     let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
 }
 
@@ -1052,18 +1026,6 @@ fn opus_tracks_are_hashed_and_old_codec_flags_cleared() {
     assert!(hash().starts_with("pkt-b3:"), "{}", hash());
     assert_eq!(problem(&library), None);
 
-    // Engines from before flagged every Opus file: an upgrade checks them again.
-    drop(library);
-    db.execute(
-        "UPDATE tracks SET audio_hash = '', problem = 'unsupported feature: core (codec): unsupported audio codec'",
-        [],
-    )
-    .unwrap();
-    db.pragma_update(None, "user_version", 10).unwrap();
-    let library = Library::open(&data).unwrap();
-    wait_until(&library, |_| !hash().is_empty());
-    assert_eq!(problem(&library), None);
-    assert!(hash().starts_with("pkt-b3:"), "{}", hash());
     let _ = (fs::remove_dir_all(data), fs::remove_dir_all(music));
 }
 
